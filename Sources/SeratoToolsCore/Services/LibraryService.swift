@@ -13,7 +13,10 @@ public final class LibraryService: ObservableObject {
     }
 
     public func reload() throws {
+        let rootDirectory = SeratoLibraryLocator.rootDirectory(for: libraryDirectory)
         let databaseFile = SeratoLibraryLocator.databaseFile(in: libraryDirectory)
-        tracks = try SeratoDatabaseParser.parseTracks(at: databaseFile)
+        tracks = try SeratoDatabaseParser.parseTracks(at: databaseFile, rootDirectory: rootDirectory)
+        crates = SeratoLibraryLocator.subcrateFiles(in: libraryDirectory)
+            .compactMap { try? SeratoCrateParser.parseCrate(at: $0) }
     }
 }

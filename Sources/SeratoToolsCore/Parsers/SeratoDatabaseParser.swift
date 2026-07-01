@@ -1,21 +1,79 @@
 import Foundation
 
-/// Parses Serato's binary `database V2` track database format.
+/// Parses Serato's binary `database V2` track database format: a flat
+/// sequence of tagged chunks (see `SeratoChunkCodec`), where each `otrk`
+/// chunk is itself a nested sequence of per-field chunks.
 ///
-/// Format reference: a flat sequence of tagged chunks (4-byte ASCII tag +
-/// 4-byte big-endian length + payload). Not yet implemented — this is a
-/// placeholder so the app skeleton compiles end to end.
+/// Field tags below were cross-checked against Mixxx's open-source Serato
+/// database reader (`src/library/serato/seratofeature.cpp`).
 public enum SeratoDatabaseParser {
     public enum ParserError: Error {
         case fileNotFound(URL)
-        case malformedData(String)
     }
 
-    public static func parseTracks(at fileURL: URL) throws -> [Track] {
+    /// Parses every `otrk` record in `fileURL`, resolving each track's
+    /// stored path against `rootDirectory` (see
+    /// `SeratoLibraryLocator.rootDirectory`).
+    public static func parseTracks(at fileURL: URL, rootDirectory: URL) throws -> [Track] {
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             throw ParserError.fileNotFound(fileURL)
         }
-        // TODO: implement chunk parsing (otrk/ttyp/pfil/tsng/tart/tbpm/tkey...)
-        return []
+        let data = try Data(contentsOf: fileURL)
+        return parseTracks(from: data, rootDirectory: rootDirectory)
+    }
+
+    public static func parseTracks(from data: Data, rootDirectory: URL) -> [Track] {
+        SeratoChunkCodec.readChunks(from: data)
+            .filter { $0.tag == "otrk" }
+            .compactMap { track(from: $0.payload, rootDirectory: rootDirectory) }
+    }
+
+    private static func track(from payload: Data, rootDirectory: URL) -> Track? {
+        let fields = SeratoChunkCodec.readChunks(from: payload)
+        guard let seratoStoredPath = string(in: fields, tag: "pfil"), !seratoStoredPath.isEmpty else {
+            // Serato uses the file path as the track's identity; a record
+            // without one can't be referenced by crates and is unusable.
+            return nil
+        }
+
+        return Track(
+            seratoStoredPath: seratoStoredPath,
+            fileURL: SeratoLibraryLocator.resolve(seratoStoredPath: seratoStoredPath, rootDirectory: rootDirectory),
+            title: string(in: fields, tag: "tsng") ?? "",
+            artist: string(in: fields, tag: "tart") ?? "",
+            album: string(in: fields, tag: "talb") ?? "",
+            genre: string(in: fields, tag: "tgen") ?? "",
+            comment: string(in: fields, tag: "tcom") ?? "",
+            grouping: string(in: fields, tag: "tgrp") ?? "",
+            label: string(in: fields, tag: "tlbl") ?? "",
+            year: string(in: fields, tag: "ttyr").flatMap { Int($0) },
+            duration: string(in: fields, tag: "tlen").flatMap { TimeInterval($0) },
+            bitrate: string(in: fields, tag: "tbit"),
+            sampleRate: string(in: fields, tag: "tsmp"),
+            bpm: string(in: fields, tag: "tbpm").flatMap { Double($0) },
+            key: string(in: fields, tag: "tkey"),
+            isBeatgridLocked: bool(in: fields, tag: "bbgl"),
+            isMissing: bool(in: fields, tag: "bmis"),
+            dateAdded: uint32(in: fields, tag: "uadd").map { Date(timeIntervalSince1970: TimeInterval($0)) }
+        )
+    }
+
+    private static func string(in fields: [SeratoChunk], tag: String) -> String? {
+        fields.first(where: { $0.tag == tag }).map { SeratoChunkCodec.decodeUTF16BEString($0.payload) }
+    }
+
+    private static func bool(in fields: [SeratoChunk], tag: String) -> Bool {
+        guard let field = fields.first(where: { $0.tag == tag }), let byte = field.payload.first else {
+            return false
+        }
+        return byte != 0
+    }
+
+    private static func uint32(in fields: [SeratoChunk], tag: String) -> UInt32? {
+        guard let field = fields.first(where: { $0.tag == tag }), field.payload.count == 4 else {
+            return nil
+        }
+        let bytes = [UInt8](field.payload)
+        return (UInt32(bytes[0]) << 24) | (UInt32(bytes[1]) << 16) | (UInt32(bytes[2]) << 8) | UInt32(bytes[3])
     }
 }

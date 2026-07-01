@@ -21,6 +21,9 @@ let package = Package(
         .testTarget(
             name: "SeratoToolsCoreTests",
             dependencies: ["SeratoToolsCore"],
+            resources: [
+                .copy("Fixtures")
+            ],
             swiftSettings: [
                 // swift-testing's framework isn't on the default search path
                 // when only Command Line Tools (no full Xcode) are installed.
