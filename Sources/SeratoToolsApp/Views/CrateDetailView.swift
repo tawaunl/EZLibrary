@@ -2,6 +2,25 @@ import SwiftUI
 import SeratoToolsCore
 
 struct CrateDetailView: View {
+    private enum QuickDeleteAction {
+        case fromCrate
+        case fromLibrary
+        case fromComputer
+
+        var title: String {
+            switch self {
+            case .fromCrate:
+                return "Delete From Crate"
+            case .fromLibrary:
+                return "Delete From Library"
+            case .fromComputer:
+                return "Delete From Computer"
+            }
+        }
+    }
+
+    private static let confirmDeleteActionsDefaultsKey = "SeratoToolsConfirmTrackDeleteActions"
+
     let node: CrateNode
     let onCratesChanged: () -> Void
     @EnvironmentObject private var libraryService: LibraryService
@@ -11,6 +30,11 @@ struct CrateDetailView: View {
     @State private var pendingDeleteTracks: [Track] = []
     @State private var pendingDeleteCrate: Crate?
     @State private var showTrackDeleteDialog = false
+    @State private var selectedTracksForActions: [Track] = []
+    @State private var quickDeleteAction: QuickDeleteAction?
+    @State private var showQuickDeleteConfirmation = false
+    @AppStorage(Self.confirmDeleteActionsDefaultsKey) private var confirmDeleteActions = true
+    @State private var selectedGenreFilter: String?
 
     var body: some View {
         Group {
@@ -23,6 +47,10 @@ struct CrateDetailView: View {
                 let matchedTracks = resolved.compactMap(\.track)
                 let unmatchedPaths = resolved.compactMap { $0.track == nil ? $0.path : nil }
                 let isEditableCrate = crate.fileURL?.pathExtension.lowercased() == "crate"
+                let genreTags = Array(Set(matchedTracks.map(\.genre).filter { !$0.isEmpty })).sorted()
+                let filteredMatchedTracks = selectedGenreFilter.map { genre in
+                    matchedTracks.filter { $0.genre == genre }
+                } ?? matchedTracks
 
                 VStack(alignment: .leading, spacing: 0) {
                     if isEditableCrate {
@@ -30,14 +58,67 @@ struct CrateDetailView: View {
                             Button("Manage Tracks") {
                                 isManagingTracks = true
                             }
+                            Button("Delete From Crate") {
+                                pendingDeleteTracks = selectedTracksForActions
+                                pendingDeleteCrate = crate
+                                performOrConfirmQuickDelete(.fromCrate)
+                            }
+                            .disabled(selectedTracksForActions.isEmpty)
+
+                            Button("Delete From Library") {
+                                pendingDeleteTracks = selectedTracksForActions
+                                pendingDeleteCrate = crate
+                                performOrConfirmQuickDelete(.fromLibrary)
+                            }
+                            .disabled(selectedTracksForActions.isEmpty)
+
+                            Button("Delete From Computer") {
+                                pendingDeleteTracks = selectedTracksForActions
+                                pendingDeleteCrate = crate
+                                performOrConfirmQuickDelete(.fromComputer)
+                            }
+                            .disabled(selectedTracksForActions.isEmpty)
+
+                            Toggle("Confirm Deletes", isOn: $confirmDeleteActions)
+                                .toggleStyle(.switch)
+                                .controlSize(.small)
+                                .help("When off, top delete buttons execute immediately.")
                             Spacer()
                         }
                         .padding(.horizontal, 8)
                         .padding(.top, 8)
                     }
 
+                    if genreTags.count > 1 {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 10) {
+                                statTag(title: "Tracks", value: matchedTracks.count, isActive: selectedGenreFilter == nil) {
+                                    selectedGenreFilter = nil
+                                }
+                                statTag(title: "Artists", value: Set(matchedTracks.map(\.artist).filter { !$0.isEmpty }).count)
+                                statTag(title: "Genres", value: genreTags.count)
+                                Spacer(minLength: 0)
+                            }
+
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 6) {
+                                    genreTag("All", isActive: selectedGenreFilter == nil) {
+                                        selectedGenreFilter = nil
+                                    }
+                                    ForEach(genreTags, id: \.self) { genre in
+                                        genreTag(genre, isActive: selectedGenreFilter == genre) {
+                                            selectedGenreFilter = selectedGenreFilter == genre ? nil : genre
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 8)
+                    }
+
                     TrackTableView(
-                        tracks: matchedTracks,
+                        tracks: filteredMatchedTracks,
                         numberingMode: .listOrder,
                         onDeleteRequested: { selected in
                             pendingDeleteTracks = selected
@@ -46,6 +127,9 @@ struct CrateDetailView: View {
                         },
                         onMetadataEditRequested: { track, metadata in
                             applyTrackMetadataEdit(track: track, metadata: metadata)
+                        },
+                        onSelectionChanged: { selected in
+                            selectedTracksForActions = selected
                         }
                     )
 
@@ -79,6 +163,15 @@ struct CrateDetailView: View {
                 }
             }
         }
+        .onChange(of: node.id) {
+            selectedGenreFilter = nil
+        }
+        .onDisappear {
+            selectedGenreFilter = nil
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willResignActiveNotification)) { _ in
+            selectedGenreFilter = nil
+        }
         .alert(
             "Couldn't Update Crate",
             isPresented: Binding(get: { trackEditErrorMessage != nil }, set: { if !$0 { trackEditErrorMessage = nil } })
@@ -108,6 +201,52 @@ struct CrateDetailView: View {
             }
         } message: {
             Text("Choose how to delete \(pendingDeleteTracks.count) selected track\(pendingDeleteTracks.count == 1 ? "" : "s").")
+        }
+        .confirmationDialog(
+            "Confirm Delete",
+            isPresented: $showQuickDeleteConfirmation,
+            titleVisibility: .visible
+        ) {
+            if let action = quickDeleteAction {
+                Button(action.title, role: .destructive) {
+                    executeQuickDelete(action)
+                }
+            }
+            Button("Turn Off Confirmations") {
+                confirmDeleteActions = false
+                if let action = quickDeleteAction {
+                    executeQuickDelete(action)
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                quickDeleteAction = nil
+            }
+        } message: {
+            if let action = quickDeleteAction {
+                Text("\(action.title) for \(pendingDeleteTracks.count) selected track\(pendingDeleteTracks.count == 1 ? "" : "s")?")
+            }
+        }
+    }
+
+    private func performOrConfirmQuickDelete(_ action: QuickDeleteAction) {
+        guard !pendingDeleteTracks.isEmpty else { return }
+        if confirmDeleteActions {
+            quickDeleteAction = action
+            showQuickDeleteConfirmation = true
+        } else {
+            executeQuickDelete(action)
+        }
+    }
+
+    private func executeQuickDelete(_ action: QuickDeleteAction) {
+        quickDeleteAction = nil
+        switch action {
+        case .fromCrate:
+            deleteSelectedTracksFromCrate()
+        case .fromLibrary:
+            deleteSelectedTracksFromLibrary()
+        case .fromComputer:
+            deleteSelectedTracksFromComputer()
         }
     }
 
@@ -198,6 +337,53 @@ struct CrateDetailView: View {
         } catch {
             trackEditErrorMessage = error.localizedDescription
         }
+    }
+
+    private func statTag(title: String, value: Int, isActive: Bool = false, action: (() -> Void)? = nil) -> some View {
+        let content = VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(isActive ? .white.opacity(0.92) : .secondary)
+            Text("\(value)")
+                .font(.system(size: 24, weight: .bold, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(isActive ? .white : .primary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 9)
+                .fill(isActive ? Color.accentColor.opacity(0.92) : Color(nsColor: .windowBackgroundColor))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 9)
+                .stroke(isActive ? Color.accentColor : Color.secondary.opacity(0.25), lineWidth: 1)
+        )
+
+        return Group {
+            if let action {
+                Button(action: action) { content }
+                    .buttonStyle(.plain)
+            } else {
+                content
+            }
+        }
+    }
+
+    private func genreTag(_ title: String, isActive: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(
+                    Capsule().fill(isActive ? Color.accentColor.opacity(0.92) : Color(nsColor: .windowBackgroundColor))
+                )
+                .overlay(
+                    Capsule().stroke(isActive ? Color.accentColor : Color.secondary.opacity(0.25), lineWidth: 1)
+                )
+                .foregroundStyle(isActive ? .white : .primary)
+        }
+        .buttonStyle(.plain)
     }
 
     private func effectiveTrackPaths(for node: CrateNode) -> [String] {

@@ -29,6 +29,7 @@ struct TrackTableView: View {
     let numberingMode: NumberingMode
     let onDeleteRequested: (([Track]) -> Void)?
     let onMetadataEditRequested: ((Track, SeratoTrackMetadataUpdate) -> Void)?
+    let onSelectionChanged: (([Track]) -> Void)?
 
     @State private var searchText = ""
     @State private var selectedTrackIDs: Set<Track.ID> = []
@@ -42,12 +43,14 @@ struct TrackTableView: View {
         tracks: [Track],
         numberingMode: NumberingMode = .metadata,
         onDeleteRequested: (([Track]) -> Void)? = nil,
-        onMetadataEditRequested: ((Track, SeratoTrackMetadataUpdate) -> Void)? = nil
+        onMetadataEditRequested: ((Track, SeratoTrackMetadataUpdate) -> Void)? = nil,
+        onSelectionChanged: (([Track]) -> Void)? = nil
     ) {
         self.tracks = tracks
         self.numberingMode = numberingMode
         self.onDeleteRequested = onDeleteRequested
         self.onMetadataEditRequested = onMetadataEditRequested
+        self.onSelectionChanged = onSelectionChanged
     }
 
     var body: some View {
@@ -110,6 +113,18 @@ struct TrackTableView: View {
             guard !selected.isEmpty else { return }
             onDeleteRequested(selected)
         }
+        .onChange(of: selectedTrackIDs) {
+            notifySelectionChanged()
+        }
+        .onChange(of: displayedTracks.map(\.id)) {
+            notifySelectionChanged()
+        }
+    }
+
+    private func notifySelectionChanged() {
+        guard let onSelectionChanged else { return }
+        let selected = displayedTracks.filter { selectedTrackIDs.contains($0.id) }
+        onSelectionChanged(selected)
     }
 
     private func scheduleRecompute(debounce: Bool = false) {
@@ -139,7 +154,8 @@ struct TrackTableView: View {
             await MainActor.run {
                 displayedTracks = result
                 displayedPathByID = Dictionary(
-                    uniqueKeysWithValues: result.map { ($0.id, $0.seratoStoredPath) }
+                    result.map { ($0.id, $0.seratoStoredPath) },
+                    uniquingKeysWith: { first, _ in first }
                 )
                 let validIDs = Set(result.map(\.id))
                 selectedTrackIDs = selectedTrackIDs.intersection(validIDs)

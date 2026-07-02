@@ -55,6 +55,7 @@ struct SeratoToolsApp: App {
                 .environmentObject(libraryService)
                 .environmentObject(hiddenCrateStore)
                 .environmentObject(missingTracksService)
+                .toolbar(.hidden, for: .windowToolbar)
         }
     }
 }

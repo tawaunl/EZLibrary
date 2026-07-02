@@ -9,6 +9,22 @@ enum SidebarSection: Hashable {
 }
 
 struct ContentView: View {
+    private enum QuickTrackDeleteAction {
+        case fromLibrary
+        case fromComputer
+
+        var title: String {
+            switch self {
+            case .fromLibrary:
+                return "Delete From Library"
+            case .fromComputer:
+                return "Delete From Computer"
+            }
+        }
+    }
+
+    private static let confirmDeleteActionsDefaultsKey = "SeratoToolsConfirmTrackDeleteActions"
+
     private let sidebarWidth: CGFloat = 220
     private let middlePaneWidth: CGFloat = 320
 
@@ -25,6 +41,11 @@ struct ContentView: View {
     @State private var showTrackDeleteDialog = false
     @State private var trackDeleteErrorMessage: String?
     @State private var crateListFilterMode: CrateListFilterMode = .all
+    @State private var selectedTracksForActions: [Track] = []
+    @State private var selectedTrackGenreFilter: String?
+    @State private var quickTrackDeleteAction: QuickTrackDeleteAction?
+    @State private var showQuickTrackDeleteConfirmation = false
+    @AppStorage(Self.confirmDeleteActionsDefaultsKey) private var confirmDeleteActions = true
 
     private var totalCratesCount: Int {
         libraryService.crates.count
@@ -40,6 +61,27 @@ struct ContentView: View {
 
     private var hiddenCratesCount: Int {
         Set((crateHierarchy.hiddenNodes + smartCrateHierarchy.hiddenNodes).map(\.id)).count
+    }
+
+    private var trackGenres: [String] {
+        Array(Set(libraryService.tracks.map(\.genre).filter { !$0.isEmpty })).sorted()
+    }
+
+    private var filteredLibraryTracks: [Track] {
+        guard let selectedTrackGenreFilter else { return libraryService.tracks }
+        return libraryService.tracks.filter { $0.genre == selectedTrackGenreFilter }
+    }
+
+    private var totalTrackCount: Int {
+        libraryService.tracks.count
+    }
+
+    private var totalArtistCount: Int {
+        Set(libraryService.tracks.map(\.artist).filter { !$0.isEmpty }).count
+    }
+
+    private var totalGenreCount: Int {
+        trackGenres.count
     }
 
     var body: some View {
@@ -85,6 +127,17 @@ struct ContentView: View {
             libraryPathDraft = libraryService.libraryDirectory.path
             reloadLibrary()
         }
+        .onChange(of: selectedSection) {
+            resetTransientFilters()
+        }
+        .onChange(of: selectedCrateNode?.id) {
+            if selectedSection == .crates {
+                crateListFilterMode = .all
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willResignActiveNotification)) { _ in
+            resetTransientFilters()
+        }
         .confirmationDialog(
             "Delete Selected Tracks",
             isPresented: $showTrackDeleteDialog,
@@ -116,6 +169,30 @@ struct ContentView: View {
             Button("OK") { trackDeleteErrorMessage = nil }
         } message: {
             Text(trackDeleteErrorMessage ?? "")
+        }
+        .confirmationDialog(
+            "Confirm Delete",
+            isPresented: $showQuickTrackDeleteConfirmation,
+            titleVisibility: .visible
+        ) {
+            if let action = quickTrackDeleteAction {
+                Button(action.title, role: .destructive) {
+                    executeQuickTrackDelete(action)
+                }
+            }
+            Button("Turn Off Confirmations") {
+                confirmDeleteActions = false
+                if let action = quickTrackDeleteAction {
+                    executeQuickTrackDelete(action)
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                quickTrackDeleteAction = nil
+            }
+        } message: {
+            if let action = quickTrackDeleteAction {
+                Text("\(action.title) for \(pendingTrackDeleteSelection.count) selected track\(pendingTrackDeleteSelection.count == 1 ? "" : "s")?")
+            }
         }
     }
 
@@ -251,8 +328,80 @@ struct ContentView: View {
                         .padding(.horizontal, 8)
                 }
 
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 10) {
+                        crateStatTag(title: "Tracks", value: totalTrackCount, isActive: selectedTrackGenreFilter == nil) {
+                            selectedTrackGenreFilter = nil
+                        }
+                        crateStatTag(title: "Artists", value: totalArtistCount)
+                        crateStatTag(title: "Genres", value: totalGenreCount)
+                        Spacer(minLength: 0)
+                    }
+
+                    if !trackGenres.isEmpty {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 6) {
+                                Button("All") {
+                                    selectedTrackGenreFilter = nil
+                                }
+                                .buttonStyle(.plain)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 4)
+                                .background(
+                                    Capsule().fill(selectedTrackGenreFilter == nil ? Color.accentColor.opacity(0.92) : Color(nsColor: .windowBackgroundColor))
+                                )
+                                .overlay(
+                                    Capsule().stroke(selectedTrackGenreFilter == nil ? Color.accentColor : Color.secondary.opacity(0.25), lineWidth: 1)
+                                )
+                                .foregroundStyle(selectedTrackGenreFilter == nil ? .white : .primary)
+
+                                ForEach(trackGenres, id: \.self) { genre in
+                                    Button(genre) {
+                                        selectedTrackGenreFilter = selectedTrackGenreFilter == genre ? nil : genre
+                                    }
+                                    .buttonStyle(.plain)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 4)
+                                    .background(
+                                        Capsule().fill(selectedTrackGenreFilter == genre ? Color.accentColor.opacity(0.92) : Color(nsColor: .windowBackgroundColor))
+                                    )
+                                    .overlay(
+                                        Capsule().stroke(selectedTrackGenreFilter == genre ? Color.accentColor : Color.secondary.opacity(0.25), lineWidth: 1)
+                                    )
+                                    .foregroundStyle(selectedTrackGenreFilter == genre ? .white : .primary)
+                                }
+                            }
+                            .padding(.horizontal, 8)
+                        }
+                    }
+
+                    HStack {
+                        Button("Delete From Library") {
+                            pendingTrackDeleteSelection = selectedTracksForActions
+                            performOrConfirmQuickTrackDelete(.fromLibrary)
+                        }
+                        .disabled(selectedTracksForActions.isEmpty)
+
+                        Button("Delete From Computer") {
+                            pendingTrackDeleteSelection = selectedTracksForActions
+                            performOrConfirmQuickTrackDelete(.fromComputer)
+                        }
+                        .disabled(selectedTracksForActions.isEmpty)
+
+                        Toggle("Confirm Deletes", isOn: $confirmDeleteActions)
+                            .toggleStyle(.switch)
+                            .controlSize(.small)
+                            .help("When off, top delete buttons execute immediately.")
+                        Spacer()
+                    }
+                    .padding(.horizontal, 8)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 8)
+                .background(Color(nsColor: .controlBackgroundColor).opacity(0.45))
+
                 TrackTableView(
-                    tracks: libraryService.tracks,
+                    tracks: filteredLibraryTracks,
                     numberingMode: .listOrder,
                     onDeleteRequested: { selected in
                         pendingTrackDeleteSelection = selected
@@ -260,6 +409,9 @@ struct ContentView: View {
                     },
                     onMetadataEditRequested: { track, metadata in
                         applyTrackMetadataEdit(track: track, metadata: metadata)
+                    },
+                    onSelectionChanged: { selected in
+                        selectedTracksForActions = selected
                     }
                 )
             }
@@ -314,6 +466,31 @@ struct ContentView: View {
 
     private func clearPendingTrackDelete() {
         pendingTrackDeleteSelection = []
+    }
+
+    private func resetTransientFilters() {
+        selectedTrackGenreFilter = nil
+        crateListFilterMode = .all
+    }
+
+    private func performOrConfirmQuickTrackDelete(_ action: QuickTrackDeleteAction) {
+        guard !pendingTrackDeleteSelection.isEmpty else { return }
+        if confirmDeleteActions {
+            quickTrackDeleteAction = action
+            showQuickTrackDeleteConfirmation = true
+        } else {
+            executeQuickTrackDelete(action)
+        }
+    }
+
+    private func executeQuickTrackDelete(_ action: QuickTrackDeleteAction) {
+        quickTrackDeleteAction = nil
+        switch action {
+        case .fromLibrary:
+            deleteSelectedTracksFromLibrary()
+        case .fromComputer:
+            deleteSelectedTracksFromComputer()
+        }
     }
 
     private func deleteSelectedTracksFromLibrary() {
