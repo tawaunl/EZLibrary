@@ -4,6 +4,10 @@ import Foundation
 /// and resolves the path convention Serato uses inside `database V2`/`.crate`
 /// files.
 public enum SeratoLibraryLocator {
+    /// Optional persistent override key for the app to read from
+    /// `UserDefaults.standard` when no environment override is provided.
+    public static let libraryDirectoryDefaultsKey = "SeratoToolsLibraryDirectory"
+
     /// A crate (or smart crate) file found on disk, along with the
     /// directory path it was nested under relative to its container
     /// (`Subcrates/` or `SmartCrates/`). Serato nests crates two ways: via
@@ -23,6 +27,75 @@ public enum SeratoLibraryLocator {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Music")
             .appendingPathComponent("_Serato_")
+    }
+
+    /// Resolves the best available `_Serato_` location in this order:
+    /// 1) `SERATOTOOLS_LIBRARY_DIR` environment variable
+    /// 2) `UserDefaults` override (`libraryDirectoryDefaultsKey`)
+    /// 3) largest valid `database V2` among default + mounted volumes
+    /// 4) fallback to default path
+    public static func discoverLibraryDirectory(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        userDefaults: UserDefaults = .standard,
+        fileManager: FileManager = .default
+    ) -> URL {
+        if let override = environment["SERATOTOOLS_LIBRARY_DIR"], !override.isEmpty {
+            let url = URL(fileURLWithPath: override)
+            if hasDatabase(in: url, fileManager: fileManager) {
+                return url
+            }
+        }
+
+        if let override = userDefaults.string(forKey: libraryDirectoryDefaultsKey), !override.isEmpty {
+            let url = URL(fileURLWithPath: override)
+            if hasDatabase(in: url, fileManager: fileManager) {
+                return url
+            }
+        }
+
+        let preferred = defaultLibraryDirectory
+        let autoCandidates = [preferred] + externalLibraryDirectories(fileManager: fileManager)
+        if let best = autoCandidates
+            .compactMap({ url -> (url: URL, size: Int64)? in
+                guard let size = databaseFileSize(in: url, fileManager: fileManager) else { return nil }
+                return (url, size)
+            })
+            .max(by: { $0.size < $1.size })?.url {
+            return best
+        }
+
+        return preferred
+    }
+
+    private static func hasDatabase(in libraryDirectory: URL, fileManager: FileManager) -> Bool {
+        fileManager.fileExists(atPath: databaseFile(in: libraryDirectory).path)
+    }
+
+    private static func externalLibraryDirectories(fileManager: FileManager) -> [URL] {
+        let volumesURL = URL(fileURLWithPath: "/Volumes", isDirectory: true)
+        guard let volumeNames = try? fileManager.contentsOfDirectory(atPath: volumesURL.path) else {
+            return []
+        }
+
+        var candidates: [URL] = []
+        for name in volumeNames.sorted() {
+            let candidate = volumesURL
+                .appendingPathComponent(name, isDirectory: true)
+                .appendingPathComponent("_Serato_", isDirectory: true)
+            if hasDatabase(in: candidate, fileManager: fileManager) {
+                candidates.append(candidate)
+            }
+        }
+        return candidates
+    }
+
+    private static func databaseFileSize(in libraryDirectory: URL, fileManager: FileManager) -> Int64? {
+        let databaseURL = databaseFile(in: libraryDirectory)
+        guard let attributes = try? fileManager.attributesOfItem(atPath: databaseURL.path),
+              let number = attributes[.size] as? NSNumber else {
+            return nil
+        }
+        return number.int64Value
     }
 
     public static func databaseFile(in libraryDirectory: URL = defaultLibraryDirectory) -> URL {

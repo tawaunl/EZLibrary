@@ -52,6 +52,8 @@ public enum SeratoDatabaseParser {
             sampleRate: string(in: fields, tag: "tsmp"),
             bpm: string(in: fields, tag: "tbpm").flatMap { Double($0) },
             key: string(in: fields, tag: "tkey"),
+            trackNumber: uint16(in: fields, tag: "utkn").map(Int.init),
+            colorCode: colorValue(in: fields, tag: "ulbl"),
             isBeatgridLocked: bool(in: fields, tag: "bbgl"),
             isMissing: bool(in: fields, tag: "bmis"),
             dateAdded: uint32(in: fields, tag: "uadd").map { Date(timeIntervalSince1970: TimeInterval($0)) }
@@ -75,5 +77,21 @@ public enum SeratoDatabaseParser {
         }
         let bytes = [UInt8](field.payload)
         return (UInt32(bytes[0]) << 24) | (UInt32(bytes[1]) << 16) | (UInt32(bytes[2]) << 8) | UInt32(bytes[3])
+    }
+
+    private static func uint16(in fields: [SeratoChunk], tag: String) -> UInt16? {
+        guard let field = fields.first(where: { $0.tag == tag }), field.payload.count == 2 else {
+            return nil
+        }
+        let bytes = [UInt8](field.payload)
+        return (UInt16(bytes[0]) << 8) | UInt16(bytes[1])
+    }
+
+    private static func colorValue(in fields: [SeratoChunk], tag: String) -> UInt32? {
+        guard let value = uint32(in: fields, tag: tag) else {
+            return nil
+        }
+        // Serato uses 0x00FFFFFF for "no color".
+        return value == 0x00FF_FFFF ? nil : value
     }
 }

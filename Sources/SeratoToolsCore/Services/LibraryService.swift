@@ -6,8 +6,9 @@ public final class LibraryService: ObservableObject {
     @Published public private(set) var tracks: [Track] = []
     @Published public private(set) var crates: [Crate] = []
     @Published public private(set) var smartCrates: [Crate] = []
+    @Published public private(set) var reloadErrorMessage: String?
 
-    public let libraryDirectory: URL
+    @Published public private(set) var libraryDirectory: URL
 
     public init(libraryDirectory: URL = SeratoLibraryLocator.defaultLibraryDirectory) {
         self.libraryDirectory = libraryDirectory
@@ -23,9 +24,22 @@ public final class LibraryService: ObservableObject {
 
     public func reload() throws {
         let rootDirectory = SeratoLibraryLocator.rootDirectory(for: libraryDirectory)
-        tracks = try SeratoDatabaseParser.parseTracks(at: databaseFile, rootDirectory: rootDirectory)
-        crates = Self.loadCrates(from: SeratoLibraryLocator.subcrateFiles(in: libraryDirectory))
-        smartCrates = Self.loadCrates(from: SeratoLibraryLocator.smartCrateFiles(in: libraryDirectory))
+        do {
+            tracks = try SeratoDatabaseParser.parseTracks(at: databaseFile, rootDirectory: rootDirectory)
+            crates = Self.loadCrates(from: SeratoLibraryLocator.subcrateFiles(in: libraryDirectory))
+            smartCrates = Self.loadCrates(from: SeratoLibraryLocator.smartCrateFiles(in: libraryDirectory))
+            reloadErrorMessage = nil
+        } catch {
+            tracks = []
+            crates = []
+            smartCrates = []
+            reloadErrorMessage = error.localizedDescription
+            throw error
+        }
+    }
+
+    public func setLibraryDirectory(_ newDirectory: URL) {
+        libraryDirectory = newDirectory
     }
 
     /// Parses each crate file and normalizes its `pathComponents` to include

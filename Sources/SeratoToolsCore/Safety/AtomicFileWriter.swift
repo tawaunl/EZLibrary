@@ -9,7 +9,11 @@ public enum AtomicFileWriter {
         let tempURL = directory.appendingPathComponent(".\(UUID().uuidString).tmp")
         try data.write(to: tempURL, options: .atomic)
         do {
-            _ = try FileManager.default.replaceItemAt(url, withItemAt: tempURL)
+            if FileManager.default.fileExists(atPath: url.path) {
+                _ = try FileManager.default.replaceItemAt(url, withItemAt: tempURL)
+            } else {
+                try FileManager.default.moveItem(at: tempURL, to: url)
+            }
         } catch {
             try? FileManager.default.removeItem(at: tempURL)
             throw error

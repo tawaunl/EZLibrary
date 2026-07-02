@@ -28,6 +28,8 @@ public struct Track: Identifiable, Hashable, Sendable {
     public var sampleRate: String?
     public var bpm: Double?
     public var key: String?
+    public var trackNumber: Int?
+    public var colorCode: UInt32?
     public var isBeatgridLocked: Bool
     public var isMissing: Bool
     public var dateAdded: Date?
@@ -49,6 +51,8 @@ public struct Track: Identifiable, Hashable, Sendable {
         sampleRate: String? = nil,
         bpm: Double? = nil,
         key: String? = nil,
+        trackNumber: Int? = nil,
+        colorCode: UInt32? = nil,
         isBeatgridLocked: Bool = false,
         isMissing: Bool = false,
         dateAdded: Date? = nil
@@ -69,6 +73,8 @@ public struct Track: Identifiable, Hashable, Sendable {
         self.sampleRate = sampleRate
         self.bpm = bpm
         self.key = key
+        self.trackNumber = trackNumber
+        self.colorCode = colorCode
         self.isBeatgridLocked = isBeatgridLocked
         self.isMissing = isMissing
         self.dateAdded = dateAdded

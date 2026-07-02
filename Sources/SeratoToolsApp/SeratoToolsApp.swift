@@ -10,15 +10,8 @@ struct SeratoToolsApp: App {
     @StateObject private var missingTracksService: MissingTracksService
 
     init() {
-        // A DEBUG-only override so Phase 1 can be smoke-tested against a
-        // scratch copy of a real library without touching the user's live
-        // ~/Music/_Serato_.
-        var libraryDirectory = SeratoLibraryLocator.defaultLibraryDirectory
-        #if DEBUG
-        if let override = ProcessInfo.processInfo.environment["SERATOTOOLS_LIBRARY_DIR"] {
-            libraryDirectory = URL(fileURLWithPath: override)
-        }
-        #endif
+        let libraryDirectory = SeratoLibraryLocator.discoverLibraryDirectory()
+        print("SeratoTools library directory: \(libraryDirectory.path)")
 
         let library = LibraryService(libraryDirectory: libraryDirectory)
         let hiddenStore = HiddenCrateStore()
