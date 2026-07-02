@@ -79,4 +79,12 @@ public struct Track: Identifiable, Hashable, Sendable {
         self.isMissing = isMissing
         self.dateAdded = dateAdded
     }
+
+    public static func == (lhs: Track, rhs: Track) -> Bool {
+        lhs.id == rhs.id
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+    }
 }

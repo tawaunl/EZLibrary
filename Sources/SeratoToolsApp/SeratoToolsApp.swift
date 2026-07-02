@@ -1,8 +1,26 @@
+import AppKit
 import SwiftUI
 import SeratoToolsCore
 
+final class SeratoToolsAppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+
+        // Ensure the first window becomes key/main after launch.
+        DispatchQueue.main.async {
+            if let window = NSApp.windows.first {
+                window.makeKeyAndOrderFront(nil)
+                window.makeMain()
+            }
+        }
+    }
+}
+
 @main
 struct SeratoToolsApp: App {
+    @NSApplicationDelegateAdaptor(SeratoToolsAppDelegate.self) private var appDelegate
+
     @StateObject private var libraryService: LibraryService
     @StateObject private var hiddenCrateStore: HiddenCrateStore
     @StateObject private var crateHierarchy: CrateHierarchyViewModel

@@ -40,4 +40,35 @@ public enum SeratoDatabaseWriter {
 
         return (SeratoChunkCodec.writeChunks(newChunks), didRewrite)
     }
+
+    /// Removes every `otrk` record whose `pfil` equals any of `paths`.
+    /// Returns rewritten bytes and whether at least one record was removed.
+    public static func removingPaths(
+        _ paths: Set<String>,
+        in fileData: Data
+    ) -> (data: Data, didRewrite: Bool) {
+        guard !paths.isEmpty else {
+            return (fileData, false)
+        }
+
+        var didRewrite = false
+        let topLevel = SeratoChunkCodec.readChunks(from: fileData)
+
+        let newChunks: [SeratoChunk] = topLevel.filter { chunk in
+            guard chunk.tag == "otrk" else { return true }
+            let fields = SeratoChunkCodec.readChunks(from: chunk.payload)
+            guard let pfilField = fields.first(where: { $0.tag == "pfil" }) else {
+                return true
+            }
+            let path = SeratoChunkCodec.decodeUTF16BEString(pfilField.payload)
+
+            if paths.contains(path) {
+                didRewrite = true
+                return false
+            }
+            return true
+        }
+
+        return (SeratoChunkCodec.writeChunks(newChunks), didRewrite)
+    }
 }

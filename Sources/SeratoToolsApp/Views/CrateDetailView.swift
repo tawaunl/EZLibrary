@@ -8,12 +8,16 @@ struct CrateDetailView: View {
 
     @State private var isManagingTracks = false
     @State private var trackEditErrorMessage: String?
+    @State private var pendingDeleteTracks: [Track] = []
+    @State private var pendingDeleteCrate: Crate?
+    @State private var showTrackDeleteDialog = false
 
     var body: some View {
         Group {
-            if let crate = node.crate {
+            let trackPaths = effectiveTrackPaths(for: node)
+            if let crate = node.crate ?? synthesizedCrateForAggregate(node: node, trackPaths: trackPaths), !trackPaths.isEmpty {
                 let resolver = TrackPathResolver(tracks: libraryService.tracks)
-                let resolved = crate.trackPaths.map { path in
+                let resolved = trackPaths.map { path in
                     (path: path, track: resolver.resolve(path: path))
                 }
                 let matchedTracks = resolved.compactMap(\.track)
@@ -32,7 +36,15 @@ struct CrateDetailView: View {
                         .padding(.top, 8)
                     }
 
-                    TrackTableView(tracks: matchedTracks, numberingMode: .listOrder)
+                    TrackTableView(
+                        tracks: matchedTracks,
+                        numberingMode: .listOrder,
+                        onDeleteRequested: { selected in
+                            pendingDeleteTracks = selected
+                            pendingDeleteCrate = crate
+                            showTrackDeleteDialog = true
+                        }
+                    )
 
                     // Confirmed to happen legitimately for some Smart Crate
                     // entries referencing a different Serato profile/volume
@@ -72,6 +84,128 @@ struct CrateDetailView: View {
         } message: {
             Text(trackEditErrorMessage ?? "")
         }
+        .confirmationDialog(
+            "Delete Selected Tracks",
+            isPresented: $showTrackDeleteDialog,
+            titleVisibility: .visible
+        ) {
+            if let pendingDeleteCrate, pendingDeleteCrate.fileURL?.pathExtension.lowercased() == "crate" {
+                Button("Delete From Crate", role: .destructive) {
+                    deleteSelectedTracksFromCrate()
+                }
+            }
+            Button("Delete From Library", role: .destructive) {
+                deleteSelectedTracksFromLibrary()
+            }
+            Button("Delete From Computer", role: .destructive) {
+                deleteSelectedTracksFromComputer()
+            }
+            Button("Cancel", role: .cancel) {
+                clearPendingTrackDelete()
+            }
+        } message: {
+            Text("Choose how to delete \(pendingDeleteTracks.count) selected track\(pendingDeleteTracks.count == 1 ? "" : "s").")
+        }
+    }
+
+    private func clearPendingTrackDelete() {
+        pendingDeleteTracks = []
+        pendingDeleteCrate = nil
+    }
+
+    private func deleteSelectedTracksFromCrate() {
+        guard let crate = pendingDeleteCrate,
+              crate.fileURL?.pathExtension.lowercased() == "crate" else {
+            clearPendingTrackDelete()
+            return
+        }
+
+        do {
+            let removedPaths = Set(pendingDeleteTracks.map(\.seratoStoredPath))
+            let rewritten = crate.trackPaths.filter { !removedPaths.contains($0) }
+            _ = try SeratoCrateEditor.rewriteTrackPaths(in: crate, to: rewritten)
+            clearPendingTrackDelete()
+            onCratesChanged()
+        } catch {
+            trackEditErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func deleteSelectedTracksFromLibrary() {
+        do {
+            let removedPaths = Set(pendingDeleteTracks.map(\.seratoStoredPath))
+            try removeTracksFromLibraryMetadata(paths: removedPaths)
+            clearPendingTrackDelete()
+            onCratesChanged()
+        } catch {
+            trackEditErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func deleteSelectedTracksFromComputer() {
+        do {
+            for track in pendingDeleteTracks {
+                guard FileManager.default.fileExists(atPath: track.fileURL.path) else { continue }
+                _ = try FileManager.default.trashItem(at: track.fileURL, resultingItemURL: nil)
+            }
+
+            let removedPaths = Set(pendingDeleteTracks.map(\.seratoStoredPath))
+            try removeTracksFromLibraryMetadata(paths: removedPaths)
+            clearPendingTrackDelete()
+            onCratesChanged()
+        } catch {
+            trackEditErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func removeTracksFromLibraryMetadata(paths: Set<String>) throws {
+        guard !paths.isEmpty else { return }
+        guard !SeratoProcessGuard.isSeratoRunning else {
+            throw SeratoPathRewriter.RewriteError.seratoIsRunning
+        }
+
+        let databaseURL = libraryService.databaseFile
+        if FileManager.default.fileExists(atPath: databaseURL.path) {
+            try SeratoBackupBeforeWrite.snapshot(of: databaseURL)
+        }
+
+        let databaseData = try Data(contentsOf: databaseURL)
+        let rewritten = SeratoDatabaseWriter.removingPaths(paths, in: databaseData)
+        if rewritten.didRewrite {
+            try AtomicFileWriter.write(rewritten.data, to: databaseURL)
+        }
+
+        for crate in libraryService.crates {
+            guard crate.fileURL?.pathExtension.lowercased() == "crate" else { continue }
+            if crate.trackPaths.contains(where: { paths.contains($0) }) {
+                let rewrittenPaths = crate.trackPaths.filter { !paths.contains($0) }
+                _ = try SeratoCrateEditor.rewriteTrackPaths(in: crate, to: rewrittenPaths)
+            }
+        }
+    }
+
+    private func effectiveTrackPaths(for node: CrateNode) -> [String] {
+        if let crate = node.crate {
+            return crate.trackPaths
+        }
+
+        let pathPrefix = node.pathComponents
+        let descendantCrates = (libraryService.crates + libraryService.smartCrates)
+            .filter { $0.pathComponents.starts(with: pathPrefix) }
+
+        var seen = Set<String>()
+        var merged: [String] = []
+        for crate in descendantCrates {
+            for path in crate.trackPaths where seen.insert(path).inserted {
+                merged.append(path)
+            }
+        }
+        return merged
+    }
+
+    private func synthesizedCrateForAggregate(node: CrateNode, trackPaths: [String]) -> Crate? {
+        guard !trackPaths.isEmpty else { return nil }
+        return Crate(pathComponents: node.pathComponents, trackPaths: trackPaths, fileURL: nil)
     }
 }
 

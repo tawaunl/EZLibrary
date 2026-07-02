@@ -48,18 +48,28 @@ public final class CrateHierarchyViewModel: ObservableObject {
     /// Every currently-hidden node anywhere in the full (unfiltered) tree,
     /// for the "Hidden (n)" one-click-unhide disclosure.
     public var hiddenNodes: [CrateNode] {
-        var result: [CrateNode] = []
+        var result: [CrateNode] = hiddenStore.hiddenIDs
+            .map { CrateNode(pathComponents: $0.split(separator: "/").map(String.init)) }
+
+        // Also include currently-loaded hidden descendants for context when
+        // a broad parent is hidden.
         func walk(_ nodes: [CrateNode]) {
             for node in nodes {
-                if hiddenStore.isHidden(node) {
+                if hiddenStore.isHidden(node), !result.contains(where: { $0.id == node.id }) {
                     result.append(node)
-                } else {
-                    walk(node.children)
                 }
+                walk(node.children)
             }
         }
         walk(CrateHierarchy.build(from: allCrates))
-        return result
+        return result.sorted { $0.id < $1.id }
+    }
+
+    /// Real crate files whose crate paths start with `pathComponents`.
+    public func fileURLs(startingWith pathComponents: [String]) -> [URL] {
+        allCrates
+            .filter { $0.pathComponents.starts(with: pathComponents) }
+            .compactMap(\.fileURL)
     }
 
     /// For a node with its own `.crate` file, trashes just that file. For a
