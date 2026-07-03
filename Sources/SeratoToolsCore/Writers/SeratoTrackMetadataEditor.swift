@@ -3,10 +3,32 @@ import Foundation
 /// Applies track metadata edits to both Serato `database V2` and audio file
 /// ID3 tags (for MP3 files).
 public enum SeratoTrackMetadataEditor {
-    public enum EditError: Error {
+    public enum EditError: Error, LocalizedError {
         case seratoIsRunning
-        case trackNotFoundInDatabase
+        case trackNotFoundInDatabase(String)
         case fileTypeNotSupportedForID3(URL)
+
+        public var errorDescription: String? {
+            switch self {
+            case .seratoIsRunning:
+                return "Serato appears to be running. Close Serato and try saving metadata again."
+            case let .trackNotFoundInDatabase(path):
+                return "Could not find this track in database V2 for path: \(path)"
+            case let .fileTypeNotSupportedForID3(fileURL):
+                return "ID3 writing is only supported for MP3 files. Unsupported file: \(fileURL.lastPathComponent)"
+            }
+        }
+
+        public var recoverySuggestion: String? {
+            switch self {
+            case .seratoIsRunning:
+                return "Quit Serato DJ, then retry the save."
+            case .trackNotFoundInDatabase:
+                return "Reload the library and retry. If it still fails, the track path in database V2 may have changed."
+            case .fileTypeNotSupportedForID3:
+                return "Metadata can still be written to Serato database V2 for this track type."
+            }
+        }
     }
 
     public static func update(
@@ -27,13 +49,33 @@ public enum SeratoTrackMetadataEditor {
         }
 
         let original = try Data(contentsOf: databaseFileURL)
-        let rewritten = SeratoDatabaseWriter.rewritingMetadata(
+        var rewritten = SeratoDatabaseWriter.rewritingMetadata(
             forStoredPath: track.seratoStoredPath,
             metadata: metadata,
             in: original
         )
+
+        // Fallback for path representation mismatches: derive the stored path
+        // from the file URL relative to this library's root and retry once.
+        if !rewritten.didRewrite {
+            let libraryDirectory = databaseFileURL.deletingLastPathComponent()
+            let rootDirectory = SeratoLibraryLocator.rootDirectory(for: libraryDirectory)
+            let derivedStoredPath = SeratoLibraryLocator.seratoStoredPath(
+                for: track.fileURL,
+                rootDirectory: rootDirectory
+            )
+
+            if derivedStoredPath != track.seratoStoredPath {
+                rewritten = SeratoDatabaseWriter.rewritingMetadata(
+                    forStoredPath: derivedStoredPath,
+                    metadata: metadata,
+                    in: original
+                )
+            }
+        }
+
         guard rewritten.didRewrite else {
-            throw EditError.trackNotFoundInDatabase
+            throw EditError.trackNotFoundInDatabase(track.seratoStoredPath)
         }
 
         try AtomicFileWriter.write(rewritten.data, to: databaseFileURL)
