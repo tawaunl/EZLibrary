@@ -31,6 +31,7 @@ struct CrateDetailView: View {
     @State private var pendingDeleteCrate: Crate?
     @State private var showTrackDeleteDialog = false
     @State private var selectedTracksForActions: [Track] = []
+    @State private var metadataLookupTrack: Track?
     @State private var quickDeleteAction: QuickDeleteAction?
     @State private var showQuickDeleteConfirmation = false
     @AppStorage(Self.confirmDeleteActionsDefaultsKey) private var confirmDeleteActions = true
@@ -58,6 +59,11 @@ struct CrateDetailView: View {
                             Button("Manage Tracks") {
                                 isManagingTracks = true
                             }
+                            Button("Lookup ID3 Online") {
+                                metadataLookupTrack = selectedTracksForActions.first
+                            }
+                            .disabled(selectedTracksForActions.count != 1)
+
                             Button("Delete From Crate") {
                                 pendingDeleteTracks = selectedTracksForActions
                                 pendingDeleteCrate = crate
@@ -161,6 +167,11 @@ struct CrateDetailView: View {
                 CrateTrackManagerView(crate: crate, libraryTracks: libraryService.tracks) {
                     onCratesChanged()
                 }
+            }
+        }
+        .sheet(item: $metadataLookupTrack) { track in
+            TrackMetadataEditorSheet(track: track) { metadata in
+                applyTrackMetadataEdit(track: track, metadata: metadata)
             }
         }
         .onChange(of: node.id) {

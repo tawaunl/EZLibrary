@@ -42,6 +42,7 @@ struct ContentView: View {
     @State private var trackDeleteErrorMessage: String?
     @State private var crateListFilterMode: CrateListFilterMode = .all
     @State private var selectedTracksForActions: [Track] = []
+    @State private var metadataLookupTrack: Track?
     @State private var selectedTrackGenreFilter: String?
     @State private var quickTrackDeleteAction: QuickTrackDeleteAction?
     @State private var showQuickTrackDeleteConfirmation = false
@@ -137,6 +138,11 @@ struct ContentView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willResignActiveNotification)) { _ in
             resetTransientFilters()
+        }
+        .sheet(item: $metadataLookupTrack) { track in
+            TrackMetadataEditorSheet(track: track) { metadata in
+                applyTrackMetadataEdit(track: track, metadata: metadata)
+            }
         }
         .confirmationDialog(
             "Delete Selected Tracks",
@@ -376,6 +382,11 @@ struct ContentView: View {
                     }
 
                     HStack {
+                        Button("Lookup ID3 Online") {
+                            metadataLookupTrack = selectedTracksForActions.first
+                        }
+                        .disabled(selectedTracksForActions.count != 1)
+
                         Button("Delete From Library") {
                             pendingTrackDeleteSelection = selectedTracksForActions
                             performOrConfirmQuickTrackDelete(.fromLibrary)

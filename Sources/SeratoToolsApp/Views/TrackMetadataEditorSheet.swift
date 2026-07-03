@@ -15,6 +15,10 @@ struct TrackMetadataEditorSheet: View {
     @State private var key: String
     @State private var bpmText: String
     @State private var yearText: String
+    @State private var sourceSelection: OnlineTrackMetadataLookupService.SourceSelection = .all
+    @State private var lookupResults: [OnlineTrackMetadataCandidate] = []
+    @State private var isSearchingOnline = false
+    @State private var lookupErrorMessage: String?
 
     init(track: Track, onSave: @escaping (SeratoTrackMetadataUpdate) -> Void) {
         self.track = track
@@ -36,6 +40,66 @@ struct TrackMetadataEditorSheet: View {
             Text(track.fileURL.lastPathComponent)
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+            HStack(spacing: 10) {
+                Picker("Source", selection: $sourceSelection) {
+                    ForEach(OnlineTrackMetadataLookupService.SourceSelection.allCases, id: \.self) { source in
+                        Text(source.displayName).tag(source)
+                    }
+                }
+                .pickerStyle(.menu)
+
+                Button("Search Online") {
+                    searchOnline()
+                }
+                .disabled(isSearchingOnline)
+
+                if isSearchingOnline {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+
+                Spacer()
+            }
+
+            if let lookupErrorMessage {
+                Text(lookupErrorMessage)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+
+            if !lookupResults.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Online Matches")
+                        .font(.subheadline.weight(.semibold))
+
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(lookupResults.prefix(10)) { candidate in
+                                HStack(alignment: .top, spacing: 10) {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("\(candidate.source.displayName): \(candidate.title.isEmpty ? "(untitled)" : candidate.title)")
+                                            .font(.callout)
+
+                                        Text(summary(for: candidate))
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(2)
+                                    }
+
+                                    Spacer(minLength: 0)
+
+                                    Button("Use") {
+                                        apply(candidate: candidate)
+                                    }
+                                }
+                                .padding(.vertical, 2)
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 170)
+                }
+            }
 
             Group {
                 row("Title", text: $title)
@@ -70,7 +134,7 @@ struct TrackMetadataEditorSheet: View {
             }
         }
         .padding(16)
-        .frame(width: 520)
+        .frame(width: 560)
     }
 
     private func row(_ label: String, text: Binding<String>) -> some View {
@@ -81,5 +145,68 @@ struct TrackMetadataEditorSheet: View {
             TextField(label, text: text)
                 .textFieldStyle(.roundedBorder)
         }
+    }
+
+    private func searchOnline() {
+        lookupErrorMessage = nil
+        isSearchingOnline = true
+
+        Task {
+            do {
+                let results = try await OnlineTrackMetadataLookupService.lookup(
+                    query: .init(title: title, artist: artist, album: album),
+                    sourceSelection: sourceSelection
+                )
+
+                await MainActor.run {
+                    lookupResults = results
+                    if results.isEmpty {
+                        lookupErrorMessage = "No matches found from the selected source(s)."
+                    }
+                    isSearchingOnline = false
+                }
+            } catch {
+                await MainActor.run {
+                    lookupResults = []
+                    lookupErrorMessage = error.localizedDescription
+                    isSearchingOnline = false
+                }
+            }
+        }
+    }
+
+    private func apply(candidate: OnlineTrackMetadataCandidate) {
+        if !candidate.title.isEmpty {
+            title = candidate.title
+        }
+        if !candidate.artist.isEmpty {
+            artist = candidate.artist
+        }
+        if !candidate.album.isEmpty {
+            album = candidate.album
+        }
+        if !candidate.genre.isEmpty {
+            genre = candidate.genre
+        }
+        if let year = candidate.year {
+            yearText = String(year)
+        }
+        if let bpm = candidate.bpm {
+            bpmText = String(format: "%.0f", bpm)
+        }
+        if !candidate.comment.isEmpty {
+            comment = candidate.comment
+        }
+    }
+
+    private func summary(for candidate: OnlineTrackMetadataCandidate) -> String {
+        [
+            candidate.artist,
+            candidate.album,
+            candidate.genre,
+            candidate.year.map(String.init) ?? ""
+        ]
+        .filter { !$0.isEmpty }
+        .joined(separator: " • ")
     }
 }
