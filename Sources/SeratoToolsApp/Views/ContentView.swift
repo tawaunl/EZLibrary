@@ -589,35 +589,93 @@ struct ContentView: View {
 private struct DiscogsTokenSettingsSheet: View {
     @Environment(\.dismiss) private var dismiss
 
-    @State private var tokenInput = ""
+    @State private var discogsTokenInput = ""
+    @State private var acoustIDKeyInput = ""
     @State private var statusMessage: String?
+    @State private var validatingAcoustIDKey = false
+    @State private var showHelp = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("API Keys")
-                .font(.headline)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("API Keys")
+                        .font(.headline)
 
-            Text("Discogs Token")
-                .font(.subheadline.weight(.semibold))
+                    DisclosureGroup("Help: How to create and add API keys", isExpanded: $showHelp) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Discogs (metadata lookup)")
+                                .font(.caption.weight(.semibold))
+                            Text("1. Create a Discogs account and create a personal access token.")
+                                .font(.caption)
+                            Link("Open Discogs developer settings", destination: URL(string: "https://www.discogs.com/settings/developers")!)
+                                .font(.caption)
 
-            SecureField("Paste Discogs token", text: $tokenInput)
-                .textFieldStyle(.roundedBorder)
+                            Text("AcoustID (audio fingerprint)")
+                                .font(.caption.weight(.semibold))
+                            Text("1. Create an AcoustID account. 2. Register a new application to get a client key. 3. Use that application client key (not your account login/API token). 4. Install fpcalc (Chromaprint).")
+                                .font(.caption)
+                            Link("Open AcoustID new application", destination: URL(string: "https://acoustid.org/new-application")!)
+                                .font(.caption)
+                            Link("Install Chromaprint (Homebrew)", destination: URL(string: "https://formulae.brew.sh/formula/chromaprint")!)
+                                .font(.caption)
 
-            Text("Used for Discogs metadata lookup. Stored in UserDefaults as SeratoToolsDiscogsToken.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                            Text("After creating keys, paste them below and click Save.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.top, 4)
+                    }
 
-            if let statusMessage {
-                Text(statusMessage)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    Text("Discogs Token")
+                        .font(.subheadline.weight(.semibold))
+
+                    SecureField("Paste Discogs token", text: $discogsTokenInput)
+                        .textFieldStyle(.roundedBorder)
+
+                    Text("Used for Discogs metadata lookup. Stored in UserDefaults as SeratoToolsDiscogsToken.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Divider()
+
+                    Text("AcoustID Client Key (Audio Fingerprint)")
+                        .font(.subheadline.weight(.semibold))
+
+                    SecureField("Paste AcoustID client key", text: $acoustIDKeyInput)
+                        .textFieldStyle(.roundedBorder)
+
+                    HStack {
+                        Button(validatingAcoustIDKey ? "Validating..." : "Validate AcoustID Key") {
+                            validateAcoustIDKey()
+                        }
+                        .disabled(validatingAcoustIDKey)
+
+                        if validatingAcoustIDKey {
+                            ProgressView()
+                                .controlSize(.small)
+                        }
+                    }
+
+                    Text("Used for external audio fingerprint recognition. Must be an AcoustID application client key from acoustid.org/new-application. Stored in UserDefaults as SeratoToolsAcoustIDKey.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    if let statusMessage {
+                        Text(statusMessage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
 
             HStack {
                 Button("Clear") {
                     UserDefaults.standard.removeObject(forKey: OnlineTrackMetadataLookupService.discogsTokenDefaultsKey)
-                    tokenInput = ""
-                    statusMessage = "Discogs token cleared."
+                    UserDefaults.standard.removeObject(forKey: AudioFingerprintService.tokenDefaultsKey)
+                    discogsTokenInput = ""
+                    acoustIDKeyInput = ""
+                    statusMessage = "API tokens cleared."
                 }
 
                 Spacer()
@@ -627,18 +685,55 @@ private struct DiscogsTokenSettingsSheet: View {
                 }
 
                 Button("Save") {
-                    let trimmed = tokenInput.trimmingCharacters(in: .whitespacesAndNewlines)
-                    UserDefaults.standard.set(trimmed, forKey: OnlineTrackMetadataLookupService.discogsTokenDefaultsKey)
-                    statusMessage = "Discogs token saved."
+                    let discogsTrimmed = discogsTokenInput.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let acoustIDTrimmed = acoustIDKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+
+                    if discogsTrimmed.isEmpty {
+                        UserDefaults.standard.removeObject(forKey: OnlineTrackMetadataLookupService.discogsTokenDefaultsKey)
+                    } else {
+                        UserDefaults.standard.set(discogsTrimmed, forKey: OnlineTrackMetadataLookupService.discogsTokenDefaultsKey)
+                    }
+
+                    if acoustIDTrimmed.isEmpty {
+                        UserDefaults.standard.removeObject(forKey: AudioFingerprintService.tokenDefaultsKey)
+                    } else {
+                        UserDefaults.standard.set(acoustIDTrimmed, forKey: AudioFingerprintService.tokenDefaultsKey)
+                    }
+
+                    statusMessage = "API tokens saved."
                 }
-                .disabled(tokenInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .keyboardShortcut(.defaultAction)
             }
         }
         .padding(16)
-        .frame(width: 500)
+        .frame(width: 560, height: 520)
         .onAppear {
-            tokenInput = UserDefaults.standard.string(forKey: OnlineTrackMetadataLookupService.discogsTokenDefaultsKey) ?? ""
+            discogsTokenInput = UserDefaults.standard.string(forKey: OnlineTrackMetadataLookupService.discogsTokenDefaultsKey) ?? ""
+            acoustIDKeyInput = UserDefaults.standard.string(forKey: AudioFingerprintService.tokenDefaultsKey) ?? ""
+        }
+    }
+
+    private func validateAcoustIDKey() {
+        let key = acoustIDKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else {
+            statusMessage = "Enter an AcoustID client key first."
+            return
+        }
+
+        validatingAcoustIDKey = true
+        statusMessage = "Validating AcoustID key..."
+
+        Task {
+            let result = await AudioFingerprintService.validateClientKey(key)
+            await MainActor.run {
+                validatingAcoustIDKey = false
+                switch result {
+                case .valid:
+                    statusMessage = "AcoustID key is valid."
+                case let .invalid(message):
+                    statusMessage = message
+                }
+            }
         }
     }
 }

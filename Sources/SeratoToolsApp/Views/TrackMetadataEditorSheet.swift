@@ -41,8 +41,11 @@ struct TrackMetadataEditorSheet: View {
     @State private var yearText: String
     @State private var sourceSelection: OnlineTrackMetadataLookupService.SourceSelection = .all
     @State private var lookupResults: [OnlineTrackMetadataCandidate] = []
+    @State private var fingerprintSuggestions: [AudioFingerprintSuggestion] = []
     @State private var isSearchingOnline = false
+    @State private var isScanningFingerprint = false
     @State private var lookupErrorMessage: String?
+    @State private var fingerprintErrorMessage: String?
     @State private var saveErrorMessage: String?
     @State private var lockedFields: Set<MetadataField> = []
 
@@ -80,7 +83,17 @@ struct TrackMetadataEditorSheet: View {
                 }
                 .disabled(isSearchingOnline)
 
+                Button("Audio Fingerprint Scan") {
+                    scanFingerprint()
+                }
+                .disabled(isScanningFingerprint)
+
                 if isSearchingOnline {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+
+                if isScanningFingerprint {
                     ProgressView()
                         .controlSize(.small)
                 }
@@ -90,6 +103,12 @@ struct TrackMetadataEditorSheet: View {
 
             if let lookupErrorMessage {
                 Text(lookupErrorMessage)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+
+            if let fingerprintErrorMessage {
+                Text(fingerprintErrorMessage)
                     .font(.caption)
                     .foregroundStyle(.red)
             }
@@ -161,6 +180,69 @@ struct TrackMetadataEditorSheet: View {
                                     }
                                     if !candidate.comment.isEmpty {
                                         fieldButton("Comment") { apply(field: .comment, from: candidate) }
+                                    }
+                                }
+                                .padding(.vertical, 2)
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 170)
+                }
+            }
+
+            if !fingerprintSuggestions.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("External Fingerprint Suggestions")
+                        .font(.subheadline.weight(.semibold))
+
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(fingerprintSuggestions, id: \.id) { suggestion in
+                                HStack(alignment: .top, spacing: 10) {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(suggestion.title.isEmpty ? "(untitled)" : suggestion.title)
+                                            .font(.callout)
+
+                                        Text(
+                                            [
+                                                suggestion.artist,
+                                                suggestion.album,
+                                                suggestion.provider,
+                                                suggestion.confidence.map { "confidence \(Int($0.rounded()))" } ?? ""
+                                            ]
+                                            .filter { !$0.isEmpty }
+                                            .joined(separator: " • ")
+                                        )
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(2)
+                                    }
+
+                                    Spacer(minLength: 0)
+
+                                    Button("Use All") {
+                                        apply(suggestion: suggestion)
+                                    }
+                                }
+
+                                FlowLayout(spacing: 6) {
+                                    if !suggestion.title.isEmpty {
+                                        fieldButton("Title") { applyField(.title, value: suggestion.title) }
+                                    }
+                                    if !suggestion.artist.isEmpty {
+                                        fieldButton("Artist") { applyField(.artist, value: suggestion.artist) }
+                                    }
+                                    if !suggestion.album.isEmpty {
+                                        fieldButton("Album") { applyField(.album, value: suggestion.album) }
+                                    }
+                                    if !suggestion.genre.isEmpty {
+                                        fieldButton("Genre") { applyField(.genre, value: suggestion.genre) }
+                                    }
+                                    if let year = suggestion.year {
+                                        fieldButton("Year") { applyField(.year, value: String(year)) }
+                                    }
+                                    if !suggestion.comment.isEmpty {
+                                        fieldButton("Comment") { applyField(.comment, value: suggestion.comment) }
                                     }
                                 }
                                 .padding(.vertical, 2)
@@ -249,6 +331,7 @@ struct TrackMetadataEditorSheet: View {
 
     private func searchOnline() {
         lookupErrorMessage = nil
+        saveErrorMessage = nil
         isSearchingOnline = true
 
         Task {
@@ -283,6 +366,65 @@ struct TrackMetadataEditorSheet: View {
         apply(field: .year, from: candidate)
         apply(field: .bpm, from: candidate)
         apply(field: .comment, from: candidate)
+    }
+
+    private func scanFingerprint() {
+        isScanningFingerprint = true
+        fingerprintErrorMessage = nil
+        saveErrorMessage = nil
+
+        Task {
+            do {
+                let suggestions = try await AudioFingerprintService.suggestMetadata(
+                    for: track
+                )
+
+                await MainActor.run {
+                    fingerprintSuggestions = suggestions
+                    if suggestions.isEmpty {
+                        fingerprintErrorMessage = "No external fingerprint suggestions were returned for this track."
+                    }
+                    isScanningFingerprint = false
+                }
+            } catch {
+                await MainActor.run {
+                    fingerprintSuggestions = []
+                    fingerprintErrorMessage = error.localizedDescription
+                    isScanningFingerprint = false
+                }
+            }
+        }
+    }
+
+    private func apply(suggestion: AudioFingerprintSuggestion) {
+        applyField(.title, value: suggestion.title)
+        applyField(.artist, value: suggestion.artist)
+        applyField(.album, value: suggestion.album)
+        applyField(.genre, value: suggestion.genre)
+        if let year = suggestion.year {
+            applyField(.year, value: String(year))
+        }
+        applyField(.comment, value: suggestion.comment)
+    }
+
+    private func applyField(_ field: MetadataField, value: String) {
+        guard !lockedFields.contains(field) else { return }
+        switch field {
+        case .title:
+            if !value.isEmpty { title = value }
+        case .artist:
+            if !value.isEmpty { artist = value }
+        case .album:
+            if !value.isEmpty { album = value }
+        case .genre:
+            if !value.isEmpty { genre = value }
+        case .year:
+            if !value.isEmpty { yearText = value }
+        case .bpm:
+            if !value.isEmpty { bpmText = value }
+        case .comment:
+            if !value.isEmpty { comment = value }
+        }
     }
 
     private func apply(field: MetadataField, from candidate: OnlineTrackMetadataCandidate) {
