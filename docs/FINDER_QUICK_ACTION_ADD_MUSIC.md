@@ -10,30 +10,23 @@ right-click imports can flow into SeratoTools.
 - Creates a dated crate in your Serato `Subcrates` folder.
 - Runs while Serato is open for quick add workflow.
 
-## One-time setup in Automator
+## Automatic install (recommended)
 
-1. Open Automator.
-2. Create a new `Quick Action`.
-3. Configure:
-   - `Workflow receives current`: `files or folders`
-   - `in`: `Finder`
-4. Add `Run Shell Script` action.
-5. Set:
-   - `Shell`: `/bin/bash`
-   - `Pass input`: `as arguments`
-6. Use this script body (update the repository path if needed):
+From repository root:
 
 ```bash
-export SERATOTOOLS_ADD_MODE=move
-export SERATOTOOLS_ADD_DESTINATION="$HOME/Music"
-export SERATOTOOLS_ADD_CRATE_PREFIX="New Music"
-
-/Users/tawaunlucas/projects/SeratoTools/Scripts/finder-add-music.sh "$@"
+./Scripts/install-finder-quick-action.sh
 ```
 
-7. Save as `Add To Serato Library`.
+This creates `~/Library/Services/Add To Serato Library.workflow` automatically.
 
-Now right-click any files/folders in Finder and run `Quick Actions` -> `Add To Serato Library`.
+After install, right-click any files/folders in Finder and run `Quick Actions` -> `Add To Serato Library`.
+
+If the action does not appear immediately, relaunch Finder.
+
+## Manual setup (fallback)
+
+If you prefer manual setup, use Automator and call `Scripts/finder-add-music.sh` with input passed as arguments.
 
 ## Configuration via environment variables
 
@@ -41,6 +34,15 @@ Now right-click any files/folders in Finder and run `Quick Actions` -> `Add To S
 - `SERATOTOOLS_ADD_DESTINATION`: destination main music folder (default `~/Music`)
 - `SERATOTOOLS_ADD_CRATE_PREFIX`: crate prefix before date (default `New Music`)
 - `SERATOTOOLS_LIBRARY_DIR`: optional explicit `_Serato_` directory override
+
+Example custom install:
+
+```bash
+SERATOTOOLS_ADD_MODE=copy \
+SERATOTOOLS_ADD_DESTINATION="$HOME/Music" \
+SERATOTOOLS_ADD_CRATE_PREFIX="Promo Imports" \
+./Scripts/install-finder-quick-action.sh
+```
 
 ## Direct CLI usage
 

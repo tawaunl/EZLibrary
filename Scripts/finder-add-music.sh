@@ -13,7 +13,19 @@ if [[ "$#" -eq 0 ]]; then
   exit 2
 fi
 
-cmd=(swift run --quiet SeratoToolsCLI --mode "$MODE" --destination "$DESTINATION" --crate-prefix "$CRATE_PREFIX")
+cd "$ROOT_DIR"
+
+if CLI_BIN_PATH="$(swift build --product SeratoToolsCLI --show-bin-path 2>/dev/null)"; then
+  CLI_BIN="$CLI_BIN_PATH/SeratoToolsCLI"
+else
+  CLI_BIN=""
+fi
+
+if [[ -n "$CLI_BIN" && -x "$CLI_BIN" ]]; then
+  cmd=("$CLI_BIN" --mode "$MODE" --destination "$DESTINATION" --crate-prefix "$CRATE_PREFIX")
+else
+  cmd=(swift run --quiet SeratoToolsCLI --mode "$MODE" --destination "$DESTINATION" --crate-prefix "$CRATE_PREFIX")
+fi
 
 if [[ -n "$LIBRARY_DIR" ]]; then
   cmd+=(--library-dir "$LIBRARY_DIR")
@@ -24,5 +36,4 @@ for path in "$@"; do
   cmd+=("$path")
 done
 
-cd "$ROOT_DIR"
 "${cmd[@]}"
