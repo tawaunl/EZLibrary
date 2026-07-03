@@ -112,9 +112,10 @@ struct LibraryBackupView: View {
     private var statsCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Pre-Backup Stats")
-                .font(.title3.weight(.semibold))
+                .font(.system(size: 24, weight: .semibold, design: .default))
+                .foregroundStyle(.primary)
 
-            HStack(spacing: 10) {
+            HStack(spacing: 14) {
                 statTag(title: "Tracks", value: "\(activePreview?.trackCount ?? 0)")
                 statTag(title: "Crates", value: "\(activePreview?.crateCount ?? 0)")
                 statTag(title: "Backup Size", value: activePreview.map { formatBytes($0.estimatedByteCount) } ?? "--")
@@ -125,23 +126,44 @@ struct LibraryBackupView: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
-        .padding(16)
-        .background(RoundedRectangle(cornerRadius: 12).fill(Color(nsColor: .controlBackgroundColor).opacity(0.55)))
+        .padding(20)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(
+                    LinearGradient(
+                        colors: [Color(nsColor: .controlBackgroundColor).opacity(0.95), Color(nsColor: .windowBackgroundColor).opacity(0.92)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(Color.accentColor.opacity(0.18), lineWidth: 1.2)
+        )
+        .shadow(color: Color.black.opacity(0.08), radius: 10, x: 0, y: 4)
     }
 
     private func statTag(title: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 4) {
             Text(title)
-                .font(.caption)
+                .font(.system(size: 12, weight: .semibold, design: .default))
                 .foregroundStyle(.secondary)
             Text(value)
-                .font(.headline.weight(.semibold))
+                .font(.system(size: 28, weight: .bold, design: .rounded))
                 .monospacedDigit()
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .windowBackgroundColor)))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.25), lineWidth: 1))
+        .frame(minWidth: 120, alignment: .leading)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(nsColor: .windowBackgroundColor))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.secondary.opacity(0.28), lineWidth: 1)
+        )
     }
 
     private var destinationCard: some View {
