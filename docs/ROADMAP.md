@@ -6,6 +6,8 @@ The skeleton macOS SwiftUI app (`SeratoToolsCore` + `SeratoToolsApp`) is in plac
 
 Decisions already confirmed with the user: macOS-only (the Windows mention in Feature 1's spec is leftover boilerplate, ignored), native Swift/SwiftUI, and the user delegated MVP/phase selection to us.
 
+Project rule reference: see `docs/ENGINEERING_RULES.md` for code standards that apply across all phases, including the requirement that new user-facing errors must be human-readable.
+
 **Note on research method**: to validate the plan's format assumptions, I had an agent inspect the real (if mostly empty) `~/Music/_Serato_/` files already on this machine — `database V2` and `Subcrates/*.crate` — read-only, to confirm the binary layout before we design around it. Findings below (UTF-16BE strings, the real nesting delimiter) came from that inspection.
 
 ## Two corrections to the original feature spec
