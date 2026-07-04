@@ -180,23 +180,28 @@ public enum YouTubeAudioImportService {
     }
 
     public static func dependencyStatus(environment: [String: String] = ProcessInfo.processInfo.environment) -> DependencyStatus {
+        let bundledYTDLP = bundledExecutablePath(named: "yt-dlp")
+        let bundledFFmpeg = bundledExecutablePath(named: "ffmpeg")
+
         let ytDLPPath = findExecutablePath(
             named: "yt-dlp",
             preferredPaths: [
+                bundledYTDLP,
                 "/opt/homebrew/bin/yt-dlp",
                 "/usr/local/bin/yt-dlp",
                 "/usr/bin/yt-dlp"
-            ],
+            ].compactMap { $0 },
             environment: environment
         )
 
         let ffmpegPath = findExecutablePath(
             named: "ffmpeg",
             preferredPaths: [
+                bundledFFmpeg,
                 "/opt/homebrew/bin/ffmpeg",
                 "/usr/local/bin/ffmpeg",
                 "/usr/bin/ffmpeg"
-            ],
+            ].compactMap { $0 },
             environment: environment
         )
 
@@ -317,13 +322,16 @@ public enum YouTubeAudioImportService {
     }
 
     private static func resolveYTDLPExecutable() -> (executable: URL, prefixArguments: [String]) {
+        let bundledYTDLP = bundledExecutablePath(named: "yt-dlp")
+
         if let path = findExecutablePath(
             named: "yt-dlp",
             preferredPaths: [
+                bundledYTDLP,
                 "/opt/homebrew/bin/yt-dlp",
                 "/usr/local/bin/yt-dlp",
                 "/usr/bin/yt-dlp"
-            ],
+            ].compactMap { $0 },
             environment: ProcessInfo.processInfo.environment
         ) {
             return (URL(fileURLWithPath: path), [])
@@ -349,6 +357,27 @@ public enum YouTubeAudioImportService {
                 if fileManager.isExecutableFile(atPath: candidate) {
                     return candidate
                 }
+            }
+        }
+
+        return nil
+    }
+
+    private static func bundledExecutablePath(named name: String) -> String? {
+        let fileManager = FileManager.default
+        let bundle = Bundle.main
+        let candidates: [URL?] = [
+            bundle.resourceURL?.appendingPathComponent("bin/\(name)", isDirectory: false),
+            bundle.bundleURL
+                .appendingPathComponent("Contents", isDirectory: true)
+                .appendingPathComponent("Resources", isDirectory: true)
+                .appendingPathComponent("bin", isDirectory: true)
+                .appendingPathComponent(name, isDirectory: false)
+        ]
+
+        for candidate in candidates.compactMap({ $0 }) {
+            if fileManager.isExecutableFile(atPath: candidate.path) {
+                return candidate.path
             }
         }
 

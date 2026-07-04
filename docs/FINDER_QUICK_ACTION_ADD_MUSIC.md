@@ -24,6 +24,16 @@ After install, right-click any files/folders in Finder and run `Quick Actions` -
 
 If the action does not appear immediately, relaunch Finder.
 
+## Install from packaged app (no source checkout)
+
+If SeratoTools was installed to `/Applications/SeratoTools.app`, run:
+
+```bash
+/Applications/SeratoTools.app/Contents/Resources/scripts/install-finder-quick-action.sh
+```
+
+This uses the bundled `SeratoToolsCLI` binary, so users do not need Swift or source files.
+
 ## Manual setup (fallback)
 
 If you prefer manual setup, use Automator and call `Scripts/finder-add-music.sh` with input passed as arguments.
