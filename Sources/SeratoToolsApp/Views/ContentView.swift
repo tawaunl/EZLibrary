@@ -592,9 +592,6 @@ struct ContentView: View {
             databaseFileURL: libraryService.databaseFile,
             rewriteFilenameFromMetadata: SeratoFeatureFlags.isAutoRenameFromMetadataEnabled()
         )
-        if let analyzeWarning = SeratoAutomationService.triggerAnalyzeFilesIfRunning() {
-            trackDeleteErrorMessage = analyzeWarning
-        }
         reloadLibrary()
     }
 }
@@ -607,7 +604,6 @@ private struct DiscogsTokenSettingsSheet: View {
     @State private var statusMessage: String?
     @State private var validatingAcoustIDKey = false
     @State private var showHelp = false
-    @AppStorage(SeratoFeatureFlags.autoAnalyzeAfterWriteDefaultsKey) private var autoAnalyzeAfterWrite = true
     @AppStorage(SeratoFeatureFlags.autoRenameFromMetadataDefaultsKey) private var autoRenameFromMetadata = true
 
     var body: some View {
@@ -687,14 +683,6 @@ private struct DiscogsTokenSettingsSheet: View {
                     Text("Automation")
                         .font(.subheadline.weight(.semibold))
 
-                    Toggle("Auto Analyze in Serato after writes", isOn: $autoAnalyzeAfterWrite)
-                        .toggleStyle(.switch)
-                        .controlSize(.small)
-
-                    Text("Triggers Serato's Analyze Files command automatically after metadata saves and imports when Serato is running.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
                     Toggle("Auto rename files from metadata", isOn: $autoRenameFromMetadata)
                         .toggleStyle(.switch)
                         .controlSize(.small)
@@ -752,9 +740,6 @@ private struct DiscogsTokenSettingsSheet: View {
 
     private func initializeFeatureDefaultsIfNeeded() {
         let defaults = UserDefaults.standard
-        if defaults.object(forKey: SeratoFeatureFlags.autoAnalyzeAfterWriteDefaultsKey) == nil {
-            defaults.set(true, forKey: SeratoFeatureFlags.autoAnalyzeAfterWriteDefaultsKey)
-        }
         if defaults.object(forKey: SeratoFeatureFlags.autoRenameFromMetadataDefaultsKey) == nil {
             defaults.set(true, forKey: SeratoFeatureFlags.autoRenameFromMetadataDefaultsKey)
         }
