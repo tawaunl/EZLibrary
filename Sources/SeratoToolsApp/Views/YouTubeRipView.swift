@@ -849,10 +849,6 @@ struct YouTubeRipView: View {
                         }
                     }
 
-                    if let analyzeWarning = SeratoAutomationService.triggerAnalyzeFilesIfRunning() {
-                        successMessage = (successMessage ?? "") + " " + analyzeWarning
-                    }
-
                     appendRecentDownload(
                         title: loadedInfo?.title ?? result.title,
                         fileName: result.outputFileURL.lastPathComponent,

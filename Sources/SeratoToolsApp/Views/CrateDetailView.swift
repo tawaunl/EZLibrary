@@ -350,9 +350,6 @@ struct CrateDetailView: View {
             databaseFileURL: libraryService.databaseFile,
             rewriteFilenameFromMetadata: SeratoFeatureFlags.isAutoRenameFromMetadataEnabled()
         )
-        if let analyzeWarning = SeratoAutomationService.triggerAnalyzeFilesIfRunning() {
-            trackEditErrorMessage = analyzeWarning
-        }
         onCratesChanged()
     }
 
