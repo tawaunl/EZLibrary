@@ -4,6 +4,7 @@ import SeratoToolsCore
 
 enum SidebarSection: Hashable {
     case tracks
+    case playlistMatch
     case addMusic
     case youtubeRip
     case crates
@@ -287,6 +288,7 @@ struct ContentView: View {
     private var sidebar: some View {
         List(selection: $selectedSection) {
             Label("Tracks", systemImage: "music.note.list").tag(SidebarSection.tracks)
+            Label("PlaylistMatch", systemImage: "music.quarternote.3").tag(SidebarSection.playlistMatch)
             Label("Add Music", systemImage: "plus.square.on.square").tag(SidebarSection.addMusic)
             Label("YouTube Rip", systemImage: "arrow.down.circle").tag(SidebarSection.youtubeRip)
             Label("Crates", systemImage: "square.stack").tag(SidebarSection.crates)
@@ -441,6 +443,8 @@ struct ContentView: View {
                     )
                 }
             }
+        case .playlistMatch:
+            PlaylistMatchView(onLibraryChanged: reloadLibrary)
         case .addMusic:
             AddMusicView(onLibraryChanged: reloadLibrary)
         case .youtubeRip:
