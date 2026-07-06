@@ -495,17 +495,39 @@ struct ContentView: View {
     }
 
     private func reloadLibrary() {
+        let previousSelectedNodeID = selectedCrateNode?.id
+
         do {
             try libraryService.reload()
             loadErrorMessage = nil
             crateHierarchy.rebuild(from: libraryService.crates)
             smartCrateHierarchy.rebuild(from: libraryService.smartCrates)
+            selectedCrateNode = refreshedSelectedCrateNode(previousID: previousSelectedNodeID)
         } catch {
             loadErrorMessage = error.localizedDescription
             crateHierarchy.rebuild(from: [])
             smartCrateHierarchy.rebuild(from: [])
             selectedCrateNode = nil
         }
+    }
+
+    private func refreshedSelectedCrateNode(previousID: String?) -> CrateNode? {
+        guard let previousID else { return nil }
+
+        let rebuilt = CrateHierarchy.build(from: libraryService.crates + libraryService.smartCrates)
+        return findCrateNode(withID: previousID, in: rebuilt)
+    }
+
+    private func findCrateNode(withID nodeID: String, in nodes: [CrateNode]) -> CrateNode? {
+        for node in nodes {
+            if node.id == nodeID {
+                return node
+            }
+            if let child = findCrateNode(withID: nodeID, in: node.children) {
+                return child
+            }
+        }
+        return nil
     }
 
     private func chooseLibraryDirectory() {
