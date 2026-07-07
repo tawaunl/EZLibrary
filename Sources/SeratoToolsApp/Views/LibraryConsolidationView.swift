@@ -138,12 +138,19 @@ struct LibraryConsolidationView: View {
             .pickerStyle(.segmented)
             .controlSize(.large)
 
-            HStack(spacing: 10) {
-                TextField("Destination folder", text: $destinationPath)
-                    .textFieldStyle(.roundedBorder)
-                Button("Browse…") {
-                    chooseDestinationFolder()
+            FinderFolderControls(
+                label: "Destination folder",
+                path: $destinationPath,
+                browsePrompt: "Use Folder",
+                browseStartURL: currentDestinationURL,
+                allowsNewFolderCreation: true,
+                onPathChanged: {
+                    refreshDestinationCapacity()
+                    schedulePreviewRefresh()
                 }
+            )
+
+            HStack(spacing: 10) {
                 Button("Refresh Preview") {
                     schedulePreviewRefresh()
                 }
@@ -316,20 +323,6 @@ struct LibraryConsolidationView: View {
                 .stroke(accent ? Color.accentColor : Color.secondary.opacity(0.25), lineWidth: 1)
         )
         .glowCardStyle(radius: 8, opacity: 0.05)
-    }
-
-    private func chooseDestinationFolder() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.prompt = "Use Folder"
-        panel.directoryURL = currentDestinationURL.deletingLastPathComponent()
-
-        if panel.runModal() == .OK, let url = panel.url {
-            destinationPath = url.path
-            schedulePreviewRefresh()
-        }
     }
 
     private var actionButtonTitle: String {

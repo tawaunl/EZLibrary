@@ -180,8 +180,42 @@ public enum SeratoLibraryLocator {
 
     /// Resolves a raw Serato-stored path (as found in `pfil`/`ptrk`) to an
     /// absolute file URL, given the library's root directory.
-    public static func resolve(seratoStoredPath: String, rootDirectory: URL) -> URL {
-        rootDirectory.appendingPathComponent(seratoStoredPath)
+    ///
+    /// Some libraries contain mixed conventions where a stored path behaves
+    /// like filesystem-root-relative (`Users/...`) even when the active
+    /// profile root is an external volume. In that case prefer whichever
+    /// candidate exists on disk.
+    public static func resolve(
+        seratoStoredPath: String,
+        rootDirectory: URL,
+        fileManager: FileManager = .default
+    ) -> URL {
+        let candidates = resolvedPathCandidates(
+            seratoStoredPath: seratoStoredPath,
+            rootDirectory: rootDirectory
+        )
+
+        if let existing = candidates.first(where: { fileManager.fileExists(atPath: $0.path) }) {
+            return existing
+        }
+
+        return candidates[0]
+    }
+
+    private static func resolvedPathCandidates(seratoStoredPath: String, rootDirectory: URL) -> [URL] {
+        let primary = rootDirectory.appendingPathComponent(seratoStoredPath)
+        let absoluteRoot = URL(fileURLWithPath: "/", isDirectory: true)
+        let absoluteFallback = absoluteRoot.appendingPathComponent(seratoStoredPath)
+
+        var seen = Set<String>()
+        var output: [URL] = []
+        for candidate in [primary, absoluteFallback] {
+            let key = candidate.standardizedFileURL.path
+            if seen.insert(key).inserted {
+                output.append(candidate)
+            }
+        }
+        return output
     }
 
     /// Converts an absolute file URL back into the Serato-stored path

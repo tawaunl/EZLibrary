@@ -174,13 +174,14 @@ struct LibraryBackupView: View {
             Text("Backup Destination")
                 .font(.title.weight(.semibold))
 
-            HStack(spacing: 10) {
-                TextField("Destination folder", text: $destinationPath)
-                    .textFieldStyle(.roundedBorder)
-                Button("Browse…") {
-                    chooseDestinationFolder()
-                }
-            }
+            FinderFolderControls(
+                label: "Destination folder",
+                path: $destinationPath,
+                browsePrompt: "Use Folder",
+                browseStartURL: destinationURL,
+                allowsNewFolderCreation: true,
+                onPathChanged: refreshPreview
+            )
 
             Text("SeratoBackups will be created inside: \(destinationURL.path)")
                 .font(.callout)
@@ -290,19 +291,6 @@ struct LibraryBackupView: View {
             return availableCrates.isEmpty || selectedCrateID == nil
         }
         return libraryService.tracks.isEmpty
-    }
-
-    private func chooseDestinationFolder() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.prompt = "Use Folder"
-        panel.directoryURL = destinationURL
-
-        if panel.runModal() == .OK, let url = panel.url {
-            destinationPath = url.path
-        }
     }
 
     private func refreshPreview() {
