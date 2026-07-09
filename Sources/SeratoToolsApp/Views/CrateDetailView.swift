@@ -24,6 +24,7 @@ struct CrateDetailView: View {
     let node: CrateNode
     let filterMode: CrateListFilterMode
     let onCratesChanged: () -> Void
+    let onTrackActivated: ((Track) -> Void)?
     @EnvironmentObject private var libraryService: LibraryService
 
     @State private var isManagingTracks = false
@@ -139,6 +140,9 @@ struct CrateDetailView: View {
                         },
                         onSelectionChanged: { selected in
                             selectedTracksForActions = selected
+                        },
+                        onTrackActivated: { track in
+                            onTrackActivated?(track)
                         }
                     )
 

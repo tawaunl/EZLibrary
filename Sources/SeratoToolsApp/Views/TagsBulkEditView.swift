@@ -52,6 +52,7 @@ struct TagsBulkEditView: View {
     @State private var metadataLookupTrack: Track?
     @State private var searchText = ""
     @State private var bulkArtist = ""
+    @State private var bulkAlbum = ""
     @State private var bulkGenre = ""
     @State private var bulkYear = ""
     @State private var onlyFillEmpty = true
@@ -113,6 +114,10 @@ struct TagsBulkEditView: View {
         displayedTracks.filter { !$0.artist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count
     }
 
+    private var albumFilledCount: Int {
+        displayedTracks.filter { !$0.album.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count
+    }
+
     private var genreFilledCount: Int {
         displayedTracks.filter { !$0.genre.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count
     }
@@ -123,6 +128,10 @@ struct TagsBulkEditView: View {
 
     private var globalArtistFilledCount: Int {
         libraryService.tracks.filter { !$0.artist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count
+    }
+
+    private var globalAlbumFilledCount: Int {
+        libraryService.tracks.filter { !$0.album.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count
     }
 
     private var globalGenreFilledCount: Int {
@@ -137,7 +146,7 @@ struct TagsBulkEditView: View {
         VStack(spacing: 0) {
             SectionHeaderCard(
                 title: "Tags",
-                description: "Bulk-fill missing artist, genre, and year metadata across the scope you choose, then apply lookup results track by track.",
+                description: "Bulk-fill missing artist, album, genre, and year metadata across the scope you choose, then apply lookup results track by track.",
                 icon: "tag"
             )
 
@@ -148,6 +157,7 @@ struct TagsBulkEditView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     statsHeader
                     bulkEditor
+                    selectionStatusBar
 
                     TrackTableView(
                         tracks: displayedTracks,
@@ -217,9 +227,11 @@ struct TagsBulkEditView: View {
 
     private var statsHeader: some View {
         let scopeArtistPercent = percentValue(filled: artistFilledCount, total: displayedTracks.count)
+        let scopeAlbumPercent = percentValue(filled: albumFilledCount, total: displayedTracks.count)
         let scopeGenrePercent = percentValue(filled: genreFilledCount, total: displayedTracks.count)
         let scopeYearPercent = percentValue(filled: yearFilledCount, total: displayedTracks.count)
         let globalArtistPercent = percentValue(filled: globalArtistFilledCount, total: libraryService.tracks.count)
+        let globalAlbumPercent = percentValue(filled: globalAlbumFilledCount, total: libraryService.tracks.count)
         let globalGenrePercent = percentValue(filled: globalGenreFilledCount, total: libraryService.tracks.count)
         let globalYearPercent = percentValue(filled: globalYearFilledCount, total: libraryService.tracks.count)
 
@@ -231,6 +243,13 @@ struct TagsBulkEditView: View {
                 subtitle: "Scope \(artistFilledCount)/\(displayedTracks.count)",
                 baseline: baselineText(globalPercent: globalArtistPercent, scopePercent: scopeArtistPercent),
                 trend: trend(scopePercent: scopeArtistPercent, globalPercent: globalArtistPercent)
+            )
+            statTag(
+                title: "Album Filled",
+                valueText: percentText(filled: albumFilledCount, total: displayedTracks.count),
+                subtitle: "Scope \(albumFilledCount)/\(displayedTracks.count)",
+                baseline: baselineText(globalPercent: globalAlbumPercent, scopePercent: scopeAlbumPercent),
+                trend: trend(scopePercent: scopeAlbumPercent, globalPercent: globalAlbumPercent)
             )
             statTag(
                 title: "Genre Filled",
@@ -288,6 +307,8 @@ struct TagsBulkEditView: View {
             HStack(spacing: 8) {
                 TextField("Artist", text: $bulkArtist)
                     .textFieldStyle(.roundedBorder)
+                TextField("Album", text: $bulkAlbum)
+                    .textFieldStyle(.roundedBorder)
                 TextField("Genre", text: $bulkGenre)
                     .textFieldStyle(.roundedBorder)
                 TextField("Year", text: $bulkYear)
@@ -305,9 +326,45 @@ struct TagsBulkEditView: View {
         .glowCardStyle(radius: 8, opacity: 0.05)
     }
 
+    private var selectionStatusBar: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(selectedTracks.isEmpty ? Color.secondary : Color.green)
+                .font(.caption)
+
+            Text(selectedTracks.isEmpty
+                ? "No tracks selected"
+                : "\(selectedTracks.count) track\(selectedTracks.count == 1 ? "" : "s") selected")
+                .font(.caption.weight(.semibold))
+                .monospacedDigit()
+
+            Spacer(minLength: 0)
+
+            Text(selectedScopeTitle)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(
+                    selectedTracks.isEmpty ? Color.secondary.opacity(0.2) : Color.green.opacity(0.45),
+                    lineWidth: 1
+                )
+        )
+        .padding(.horizontal, 10)
+    }
+
     private func applyBulkMetadata() {
         bulkLookupMessage = nil
         let artistInput = bulkArtist.trimmingCharacters(in: .whitespacesAndNewlines)
+        let albumInput = bulkAlbum.trimmingCharacters(in: .whitespacesAndNewlines)
         let genreInput = bulkGenre.trimmingCharacters(in: .whitespacesAndNewlines)
         let yearInput = bulkYear.trimmingCharacters(in: .whitespacesAndNewlines)
         let yearValue = yearInput.isEmpty ? nil : Int(yearInput)
@@ -317,8 +374,8 @@ struct TagsBulkEditView: View {
             return
         }
 
-        guard !artistInput.isEmpty || !genreInput.isEmpty || yearValue != nil else {
-            operationErrorMessage = "Enter at least one value (Artist, Genre, or Year) before applying."
+        guard !artistInput.isEmpty || !albumInput.isEmpty || !genreInput.isEmpty || yearValue != nil else {
+            operationErrorMessage = "Enter at least one value (Artist, Album, Genre, or Year) before applying."
             return
         }
 
@@ -336,6 +393,9 @@ struct TagsBulkEditView: View {
 
             if !artistInput.isEmpty && (!onlyFillEmpty || track.artist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) {
                 metadata.artist = artistInput
+            }
+            if !albumInput.isEmpty && (!onlyFillEmpty || track.album.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) {
+                metadata.album = albumInput
             }
             if !genreInput.isEmpty && (!onlyFillEmpty || track.genre.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) {
                 metadata.genre = genreInput
