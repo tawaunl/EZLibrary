@@ -136,6 +136,24 @@ struct TrackTableView: View {
         let inputSortAscending = sortAscending
         let inputNumberingMode = numberingMode
 
+        let seedTracks: [Track]
+        switch inputNumberingMode {
+        case .metadata:
+            seedTracks = inputTracks
+        case .listOrder:
+            seedTracks = inputTracks.enumerated().map { index, track in
+                var track = track
+                track.trackNumber = index + 1
+                return track
+            }
+        }
+
+        displayedTracks = seedTracks
+        displayedPathByID = Dictionary(
+            seedTracks.map { ($0.id, $0.seratoStoredPath) },
+            uniquingKeysWith: { first, _ in first }
+        )
+
         recomputeTask = Task(priority: .userInitiated) {
             if debounce {
                 try? await Task.sleep(nanoseconds: 120_000_000)

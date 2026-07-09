@@ -130,10 +130,8 @@ public enum LibraryConsolidationService {
             let groupDirectory = sourceGroupDirectory(for: sourceURL, baseURL: descriptor.baseURL)
             let groupKey = groupDirectory.path
 
-            let relativePath = relativePath(from: sourceURL, baseURL: descriptor.baseURL)
             var destinationURL = destinationRoot
-                .appendingPathComponent(descriptor.destinationPrefix, isDirectory: true)
-                .appendingPathComponent(relativePath)
+                .appendingPathComponent(sourceURL.lastPathComponent)
 
             destinationURL = uniquedDestinationURL(
                 destinationURL,
@@ -371,19 +369,6 @@ public enum LibraryConsolidationService {
         )
     }
 
-    private static func relativePath(from fileURL: URL, baseURL: URL) -> String {
-        let baseComponents = baseURL.standardizedFileURL.pathComponents
-        var fileComponents = fileURL.standardizedFileURL.pathComponents
-        if fileComponents.starts(with: baseComponents) {
-            fileComponents.removeFirst(baseComponents.count)
-        }
-
-        if fileComponents.isEmpty {
-            return fileURL.lastPathComponent
-        }
-        return NSString.path(withComponents: fileComponents)
-    }
-
     private static func uniquedDestinationURL(
         _ destinationURL: URL,
         reservedDestinations: inout Set<String>,
@@ -419,18 +404,6 @@ public enum LibraryConsolidationService {
 
     private static func sourceGroupDirectory(for sourceURL: URL, baseURL: URL) -> URL {
         let sourceDirectory = sourceURL.deletingLastPathComponent().standardizedFileURL
-        let baseComponents = baseURL.standardizedFileURL.pathComponents
-        let sourceComponents = sourceDirectory.pathComponents
-
-        guard sourceComponents.starts(with: baseComponents) else {
-            return sourceDirectory
-        }
-
-        let relativeComponents = Array(sourceComponents.dropFirst(baseComponents.count))
-        guard let first = relativeComponents.first else {
-            return baseURL.standardizedFileURL
-        }
-
-        return baseURL.standardizedFileURL.appendingPathComponent(first, isDirectory: true)
+        return sourceDirectory
     }
 }

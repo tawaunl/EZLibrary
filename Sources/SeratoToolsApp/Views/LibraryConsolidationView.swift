@@ -7,6 +7,7 @@ struct LibraryConsolidationView: View {
 
     let onLibraryChanged: () -> Void
 
+    @State private var libraryPathDraft = ""
     @State private var destinationPath = ""
     @State private var transferMode: LibraryConsolidationService.FileTransferMode = .move
     @State private var preview: LibraryConsolidationPreview?
@@ -21,6 +22,7 @@ struct LibraryConsolidationView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                libraryLocationCard
                 heroCard
                 summaryRow
                 destinationCard
@@ -30,11 +32,18 @@ struct LibraryConsolidationView: View {
             .padding(16)
         }
         .task {
+            if libraryPathDraft.isEmpty {
+                libraryPathDraft = libraryService.libraryDirectory.path
+            }
             if destinationPath.isEmpty {
                 destinationPath = defaultDestinationFolder.path
             }
             schedulePreviewRefresh()
             refreshDestinationCapacity()
+        }
+        .onChange(of: libraryService.libraryDirectory.path) {
+            libraryPathDraft = libraryService.libraryDirectory.path
+            schedulePreviewRefresh()
         }
         .onChange(of: libraryService.tracks.count) {
             schedulePreviewRefresh()
@@ -124,6 +133,32 @@ struct LibraryConsolidationView: View {
                 .stroke(Color.accentColor.opacity(0.22), lineWidth: 1)
         )
         .glowCardStyle(radius: 10, opacity: 0.08)
+    }
+
+    private var libraryLocationCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Main Serato Library")
+                .font(.title.weight(.semibold))
+
+            HStack(spacing: 10) {
+                TextField("Library folder", text: $libraryPathDraft)
+                    .textFieldStyle(.roundedBorder)
+                Button("Browse…") {
+                    chooseLibraryDirectory()
+                }
+                Button("Apply") {
+                    applyLibraryDirectory()
+                }
+            }
+            .controlSize(.large)
+
+            Text("Using: \(libraryService.libraryDirectory.path)")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
+        .padding(20)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Color(nsColor: .controlBackgroundColor).opacity(0.55)))
+        .glowCardStyle(radius: 8, opacity: 0.05)
     }
 
     private var destinationCard: some View {
@@ -323,6 +358,32 @@ struct LibraryConsolidationView: View {
                 .stroke(accent ? Color.accentColor : Color.secondary.opacity(0.25), lineWidth: 1)
         )
         .glowCardStyle(radius: 8, opacity: 0.05)
+    }
+
+    private func chooseLibraryDirectory() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Use Library"
+        panel.directoryURL = URL(fileURLWithPath: libraryPathDraft.trimmingCharacters(in: .whitespacesAndNewlines))
+
+        if panel.runModal() == .OK, let url = panel.url {
+            libraryPathDraft = url.path
+            applyLibraryDirectory()
+        }
+    }
+
+    private func applyLibraryDirectory() {
+        let path = libraryPathDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !path.isEmpty else { return }
+
+        let url = URL(fileURLWithPath: path)
+        libraryService.setLibraryDirectory(url)
+        UserDefaults.standard.set(path, forKey: SeratoLibraryLocator.libraryDirectoryDefaultsKey)
+        onLibraryChanged()
+        schedulePreviewRefresh()
+        refreshDestinationCapacity()
     }
 
     private var actionButtonTitle: String {

@@ -176,10 +176,32 @@ public enum OnlineTrackMetadataLookupService {
 
     private static func normalize(query: Query) -> Query {
         Query(
-            title: query.title.trimmingCharacters(in: .whitespacesAndNewlines),
-            artist: query.artist.trimmingCharacters(in: .whitespacesAndNewlines),
-            album: query.album.trimmingCharacters(in: .whitespacesAndNewlines)
+            title: searchableTerm(query.title),
+            artist: searchableTerm(query.artist),
+            album: searchableTerm(query.album)
         )
+    }
+
+    static func searchableTerm(_ rawValue: String) -> String {
+        var value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        while removeTrailingDescriptor(from: &value) {
+            value = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        return value
+    }
+
+    private static func removeTrailingDescriptor(from value: inout String) -> Bool {
+        let patterns = [#"\s*\([^()]*\)\s*$"#, #"\s*\[[^\[\]]*\]\s*$"#]
+
+        for pattern in patterns {
+            if let range = value.range(of: pattern, options: .regularExpression) {
+                value.removeSubrange(range)
+                return true
+            }
+        }
+
+        return false
     }
 
     private static func deduplicated(candidates: [OnlineTrackMetadataCandidate]) -> [OnlineTrackMetadataCandidate] {

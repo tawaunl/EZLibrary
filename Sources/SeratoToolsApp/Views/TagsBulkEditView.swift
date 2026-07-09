@@ -55,6 +55,8 @@ struct TagsBulkEditView: View {
     @State private var bulkGenre = ""
     @State private var bulkYear = ""
     @State private var onlyFillEmpty = true
+    @State private var isBulkLookupRunning = false
+    @State private var bulkLookupMessage: String?
     @State private var operationErrorMessage: String?
 
     private var regularTree: [CrateNode] {
@@ -264,9 +266,23 @@ struct TagsBulkEditView: View {
                     metadataLookupTrack = selectedTracks.first
                 }
                 .disabled(selectedTracks.count != 1)
+                Button("Fill Missing Genre/Year") {
+                    lookupMissingGenreAndYear()
+                }
+                .disabled(selectedTracks.isEmpty || isBulkLookupRunning)
+                if isBulkLookupRunning {
+                    ProgressView()
+                        .controlSize(.small)
+                }
                 Toggle("Only Fill Empty", isOn: $onlyFillEmpty)
                     .toggleStyle(.switch)
                     .controlSize(.small)
+            }
+
+            if let bulkLookupMessage {
+                Text(bulkLookupMessage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             HStack(spacing: 8) {
@@ -290,6 +306,7 @@ struct TagsBulkEditView: View {
     }
 
     private func applyBulkMetadata() {
+        bulkLookupMessage = nil
         let artistInput = bulkArtist.trimmingCharacters(in: .whitespacesAndNewlines)
         let genreInput = bulkGenre.trimmingCharacters(in: .whitespacesAndNewlines)
         let yearInput = bulkYear.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -334,6 +351,160 @@ struct TagsBulkEditView: View {
                 return
             }
         }
+    }
+
+    private func lookupMissingGenreAndYear() {
+        guard !selectedTracks.isEmpty else { return }
+
+        bulkLookupMessage = nil
+        operationErrorMessage = nil
+        isBulkLookupRunning = true
+
+        let tracksSnapshot = selectedTracks
+        let lookupItems: [(key: String, track: Track, query: OnlineTrackMetadataLookupService.Query)] = tracksSnapshot.compactMap { track in
+            let needsGenre = track.genre.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            let needsYear = track.year == nil
+            guard needsGenre || needsYear else { return nil }
+
+            return (
+                key: bulkLookupKey(for: track),
+                track: track,
+                query: OnlineTrackMetadataLookupService.Query(
+                    title: track.title,
+                    artist: track.artist,
+                    album: track.album
+                )
+            )
+        }
+
+        Task.detached(priority: .userInitiated) {
+            do {
+                let candidateMap = try await Self.fetchBulkLookupCandidates(
+                    for: lookupItems.map { ($0.key, $0.query) }
+                )
+
+                var updates: [(Track, SeratoTrackMetadataUpdate)] = []
+                for item in lookupItems {
+                    let needsGenre = item.track.genre.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    let needsYear = item.track.year == nil
+
+                    guard let candidate = candidateMap[item.key] else {
+                        continue
+                    }
+
+                    var metadata = SeratoTrackMetadataUpdate(
+                        title: item.track.title,
+                        artist: item.track.artist,
+                        album: item.track.album,
+                        genre: item.track.genre,
+                        comment: item.track.comment,
+                        key: item.track.key ?? "",
+                        bpm: item.track.bpm,
+                        year: item.track.year
+                    )
+
+                    if needsGenre, !candidate.genre.isEmpty {
+                        metadata.genre = candidate.genre
+                    }
+                    if needsYear, let year = candidate.year {
+                        metadata.year = year
+                    }
+
+                    guard metadata.genre != item.track.genre || metadata.year != item.track.year else {
+                        continue
+                    }
+
+                    updates.append((item.track, metadata))
+                }
+
+                var updatedCount = 0
+                for (track, metadata) in updates {
+                    try await MainActor.run {
+                        try onApplyMetadata(track, metadata)
+                    }
+                    updatedCount += 1
+                }
+
+                await MainActor.run {
+                    isBulkLookupRunning = false
+                    bulkLookupMessage = updatedCount > 0
+                        ? "Updated genre/year for \(updatedCount) track\(updatedCount == 1 ? "" : "s")."
+                        : "No missing genre/year values were filled."
+                }
+            } catch {
+                await MainActor.run {
+                    isBulkLookupRunning = false
+                    operationErrorMessage = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private static func fetchBulkLookupCandidates(
+        for lookups: [(key: String, query: OnlineTrackMetadataLookupService.Query)]
+    ) async throws -> [String: OnlineTrackMetadataCandidate] {
+        guard !lookups.isEmpty else { return [:] }
+
+        var results: [String: OnlineTrackMetadataCandidate] = [:]
+        var iterator = lookups.makeIterator()
+        let parallelism = min(8, lookups.count)
+
+        await withTaskGroup(of: (String, OnlineTrackMetadataCandidate?).self) { group in
+            func addNextTask() {
+                guard let item = iterator.next() else { return }
+                group.addTask {
+                    do {
+                        let lookupResults = try await OnlineTrackMetadataLookupService.lookup(
+                            query: item.query,
+                            sourceSelection: .itunes
+                        )
+                        return (item.key, lookupResults.first)
+                    } catch {
+                        return (item.key, nil)
+                    }
+                }
+            }
+
+            for _ in 0..<parallelism {
+                addNextTask()
+            }
+
+            while let (key, candidate) = await group.next() {
+                if let candidate {
+                    results[key] = candidate
+                }
+                addNextTask()
+            }
+        }
+
+        return results
+    }
+
+    private func bulkLookupKey(for track: Track) -> String {
+        [track.title, track.artist, track.album]
+            .map(normalizedLookupTerm)
+            .joined(separator: "|")
+    }
+
+    private func normalizedLookupTerm(_ rawValue: String) -> String {
+        var value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        while removeTrailingLookupDescriptor(from: &value) {
+            value = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return value.lowercased()
+    }
+
+    private func removeTrailingLookupDescriptor(from value: inout String) -> Bool {
+        let patterns = [#"\s*\([^()]*\)\s*$"#, #"\s*\[[^\[\]]*\]\s*$"#]
+
+        for pattern in patterns {
+            if let range = value.range(of: pattern, options: .regularExpression) {
+                value.removeSubrange(range)
+                return true
+            }
+        }
+
+        return false
     }
 
     private func percentText(filled: Int, total: Int) -> String {
