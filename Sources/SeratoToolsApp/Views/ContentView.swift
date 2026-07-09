@@ -56,6 +56,7 @@ struct ContentView: View {
     @State private var metadataSaveMessage: String?
     @State private var metadataSaveMessageTask: Task<Void, Never>?
     @State private var activeAudioTrack: Track?
+    @State private var audioActivationToken = 0
     @AppStorage(Self.confirmDeleteActionsDefaultsKey) private var confirmDeleteActions = true
 
     private var totalCratesCount: Int {
@@ -97,10 +98,23 @@ struct ContentView: View {
 
     var body: some View {
         Group {
-            HSplitView {
-                sidebar
-                middleContent
-                    .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
+            VStack(spacing: 0) {
+                HSplitView {
+                    sidebar
+                    middleContent
+                        .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
+                }
+
+                if let activeAudioTrack {
+                    Divider()
+                    HStack {
+                        TrackAudioPlayerPanel(track: activeAudioTrack, activationToken: audioActivationToken)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 8)
+                    .background(Color(nsColor: .controlBackgroundColor).opacity(0.35))
+                }
             }
         }
         .task {
@@ -442,20 +456,15 @@ struct ContentView: View {
                         },
                         onSelectionChanged: { selected in
                             selectedTracksForActions = selected
-                            if selected.count != 1 {
-                                activeAudioTrack = nil
-                            }
+                        },
+                        onTrackSingleClick: { track in
+                            metadataLookupTrack = track
                         },
                         onTrackActivated: { track in
                             activeAudioTrack = track
+                            audioActivationToken += 1
                         }
                     )
-
-                    if let activeAudioTrack {
-                        TrackAudioPlayerPanel(track: activeAudioTrack)
-                            .padding(.horizontal, 8)
-                            .padding(.bottom, 8)
-                    }
                 }
             }
         case .playlistMatch:
@@ -496,7 +505,15 @@ struct ContentView: View {
 
                     Group {
                         if let node = selectedCrateNode {
-                            CrateDetailView(node: node, filterMode: crateListFilterMode, onCratesChanged: reloadLibrary)
+                            CrateDetailView(
+                                node: node,
+                                filterMode: crateListFilterMode,
+                                onCratesChanged: reloadLibrary,
+                                onTrackActivated: { track in
+                                    activeAudioTrack = track
+                                    audioActivationToken += 1
+                                }
+                            )
                         } else {
                             Text("Select an item")
                                 .foregroundStyle(.secondary)
@@ -566,9 +583,6 @@ struct ContentView: View {
     private func resetTransientFilters() {
         selectedTrackGenreFilter = nil
         crateListFilterMode = .all
-        if selectedSection != .tracks {
-            activeAudioTrack = nil
-        }
     }
 
     private func performOrConfirmQuickTrackDelete(_ action: QuickTrackDeleteAction) {

@@ -24,6 +24,7 @@ struct CrateDetailView: View {
     let node: CrateNode
     let filterMode: CrateListFilterMode
     let onCratesChanged: () -> Void
+    let onTrackActivated: ((Track) -> Void)?
     @EnvironmentObject private var libraryService: LibraryService
 
     @State private var isManagingTracks = false
@@ -37,7 +38,6 @@ struct CrateDetailView: View {
     @State private var showQuickDeleteConfirmation = false
     @State private var metadataSaveMessage: String?
     @State private var metadataSaveMessageTask: Task<Void, Never>?
-    @State private var activeAudioTrack: Track?
     @AppStorage(Self.confirmDeleteActionsDefaultsKey) private var confirmDeleteActions = true
     @State private var selectedGenreFilter: String?
 
@@ -140,20 +140,14 @@ struct CrateDetailView: View {
                         },
                         onSelectionChanged: { selected in
                             selectedTracksForActions = selected
-                            if selected.count != 1 {
-                                activeAudioTrack = nil
-                            }
+                        },
+                        onTrackSingleClick: { track in
+                            metadataLookupTrack = track
                         },
                         onTrackActivated: { track in
-                            activeAudioTrack = track
+                            onTrackActivated?(track)
                         }
                     )
-
-                    if let activeAudioTrack {
-                        TrackAudioPlayerPanel(track: activeAudioTrack)
-                            .padding(.horizontal, 8)
-                            .padding(.bottom, 8)
-                    }
 
                     // Confirmed to happen legitimately for some Smart Crate
                     // entries referencing a different Serato profile/volume
@@ -192,11 +186,9 @@ struct CrateDetailView: View {
         }
         .onChange(of: node.id) {
             selectedGenreFilter = nil
-            activeAudioTrack = nil
         }
         .onDisappear {
             selectedGenreFilter = nil
-            activeAudioTrack = nil
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willResignActiveNotification)) { _ in
             selectedGenreFilter = nil

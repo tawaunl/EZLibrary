@@ -30,6 +30,7 @@ struct TrackTableView: View {
     let onDeleteRequested: (([Track]) -> Void)?
     let onMetadataEditRequested: ((Track, SeratoTrackMetadataUpdate) -> Void)?
     let onSelectionChanged: (([Track]) -> Void)?
+    let onTrackSingleClick: ((Track) -> Void)?
     let onTrackActivated: ((Track) -> Void)?
 
     @State private var searchText = ""
@@ -45,6 +46,7 @@ struct TrackTableView: View {
         onDeleteRequested: (([Track]) -> Void)? = nil,
         onMetadataEditRequested: ((Track, SeratoTrackMetadataUpdate) -> Void)? = nil,
         onSelectionChanged: (([Track]) -> Void)? = nil,
+        onTrackSingleClick: ((Track) -> Void)? = nil,
         onTrackActivated: ((Track) -> Void)? = nil
     ) {
         self.tracks = tracks
@@ -52,6 +54,7 @@ struct TrackTableView: View {
         self.onDeleteRequested = onDeleteRequested
         self.onMetadataEditRequested = onMetadataEditRequested
         self.onSelectionChanged = onSelectionChanged
+        self.onTrackSingleClick = onTrackSingleClick
         self.onTrackActivated = onTrackActivated
     }
 
@@ -79,6 +82,7 @@ struct TrackTableView: View {
                     dragPayload(for: rowIndex, selectedKeys: selectedKeys)
                 },
                 onMetadataEditRequested: onMetadataEditRequested,
+                onTrackSingleClick: onTrackSingleClick,
                 onTrackActivated: onTrackActivated
             )
         }
@@ -286,6 +290,7 @@ private struct TrackNSTableView: NSViewRepresentable {
     @Binding var sortAscending: Bool
     let dragPayloadForRow: (_ rowIndex: Int, _ selectedKeys: Set<String>) -> String
     let onMetadataEditRequested: ((Track, SeratoTrackMetadataUpdate) -> Void)?
+    let onTrackSingleClick: ((Track) -> Void)?
     let onTrackActivated: ((Track) -> Void)?
 
     func makeCoordinator() -> Coordinator {
@@ -300,6 +305,7 @@ private struct TrackNSTableView: NSViewRepresentable {
         table.intercellSpacing = NSSize(width: 6, height: 4)
         table.delegate = context.coordinator
         table.dataSource = context.coordinator
+        table.action = #selector(Coordinator.handleSingleClick(_:))
         table.target = context.coordinator
         table.doubleAction = #selector(Coordinator.handleDoubleClick(_:))
         table.registerForDraggedTypes([.string])
@@ -359,6 +365,7 @@ private struct TrackNSTableView: NSViewRepresentable {
         var parent: TrackNSTableView
         weak var tableView: NSTableView?
         private var applyingSortDescriptor = false
+        private var lastSingleClickedSelectionKey: String?
         private let editableColumnIDs: Set<String> = ["title", "artist", "album", "genre", "year", "comment", "key", "bpm"]
 
         init(parent: TrackNSTableView) {
@@ -417,12 +424,46 @@ private struct TrackNSTableView: NSViewRepresentable {
             })
             parent.selectedTrackKeys = keys
 
-            if table.selectedRowIndexes.count == 1,
-               let row = table.selectedRowIndexes.first,
-               row >= 0,
-               row < parent.tracks.count {
-                parent.onTrackActivated?(parent.tracks[row])
+            if table.selectedRowIndexes.count != 1 {
+                lastSingleClickedSelectionKey = nil
             }
+        }
+
+        @objc func handleSingleClick(_ sender: Any?) {
+            guard let table = tableView,
+                  let onTrackSingleClick = parent.onTrackSingleClick
+            else {
+                return
+            }
+
+            guard let event = NSApp.currentEvent,
+                  event.type == .leftMouseDown || event.type == .leftMouseUp,
+                  event.clickCount == 1
+            else {
+                return
+            }
+
+            if !event.modifierFlags.intersection([.shift, .command, .control, .option]).isEmpty {
+                return
+            }
+
+            let row = table.clickedRow
+            guard row >= 0,
+                  row < parent.tracks.count,
+                  table.selectedRowIndexes.count == 1,
+                  table.selectedRowIndexes.contains(row)
+            else {
+                return
+            }
+
+            let track = parent.tracks[row]
+            let key = selectionKey(for: track)
+
+            if lastSingleClickedSelectionKey == key {
+                onTrackSingleClick(track)
+            }
+
+            lastSingleClickedSelectionKey = key
         }
 
         func tableView(_ tableView: NSTableView, sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) {
@@ -442,18 +483,9 @@ private struct TrackNSTableView: NSViewRepresentable {
         @objc func handleDoubleClick(_ sender: Any?) {
             guard let table = tableView else { return }
             let row = table.clickedRow
-            let column = table.clickedColumn
-            guard row >= 0, row < parent.tracks.count, column >= 0 else { return }
-
-            let columnID = table.tableColumns[column].identifier.rawValue
-            guard editableColumnIDs.contains(columnID) else { return }
-
-            guard let cell = table.view(atColumn: column, row: row, makeIfNecessary: false) as? NSTableCellView,
-                  let textField = cell.textField as? EditableTextField else { return }
-
-            textField.isEditable = true
-            table.window?.makeFirstResponder(textField)
-            textField.currentEditor()?.selectAll(nil)
+            guard row >= 0, row < parent.tracks.count else { return }
+            lastSingleClickedSelectionKey = selectionKey(for: parent.tracks[row])
+            parent.onTrackActivated?(parent.tracks[row])
         }
 
         func controlTextDidEndEditing(_ obj: Notification) {

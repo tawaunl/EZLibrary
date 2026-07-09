@@ -82,21 +82,34 @@ final class TrackAudioPlayerViewModel: NSObject, ObservableObject {
 
 struct TrackAudioPlayerPanel: View {
     let track: Track
+    let activationToken: Int
 
     @StateObject private var player = TrackAudioPlayerViewModel()
     @State private var keyMonitor: Any?
+    @AppStorage("TrackAudioPlayerMiniModeEnabled") private var miniModeEnabled = false
     @FocusState private var isPanelFocused: Bool
 
+    init(track: Track, activationToken: Int = 0) {
+        self.track = track
+        self.activationToken = activationToken
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
                 Text(track.title.isEmpty ? track.fileURL.lastPathComponent : track.title)
-                    .font(.subheadline.weight(.semibold))
+                    .font(.caption.weight(.semibold))
                     .lineLimit(1)
                 Spacer()
-                Text("\(formatTime(player.currentTime)) / \(formatTime(player.duration))")
-                    .font(.caption.monospacedDigit())
+                Text(timeLabel)
+                    .font(.caption2.monospacedDigit())
                     .foregroundStyle(.secondary)
+
+                Button(miniModeEnabled ? "Full" : "Mini") {
+                    miniModeEnabled.toggle()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.mini)
             }
 
             Slider(
@@ -106,28 +119,43 @@ struct TrackAudioPlayerPanel: View {
                 ),
                 in: 0...max(player.duration, 1)
             )
+            .controlSize(.small)
             .disabled(player.loadedTrackPath == nil)
 
-            HStack(spacing: 8) {
-                Button("Start") {
+            HStack(spacing: 6) {
+                Button {
                     player.startPlayback()
+                } label: {
+                    if miniModeEnabled {
+                        Image(systemName: "play.fill")
+                    } else {
+                        Text("Start")
+                    }
                 }
                 .buttonStyle(.borderedProminent)
-                .controlSize(.small)
+                .controlSize(.mini)
                 .disabled(player.loadedTrackPath == nil)
 
-                Button("Stop") {
+                Button {
                     player.stopPlayback()
+                } label: {
+                    if miniModeEnabled {
+                        Image(systemName: "stop.fill")
+                    } else {
+                        Text("Stop")
+                    }
                 }
                 .buttonStyle(.bordered)
-                .controlSize(.small)
+                .controlSize(.mini)
                 .disabled(player.loadedTrackPath == nil)
 
                 Spacer()
 
-                Text("Space: Start/Stop")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                if !miniModeEnabled {
+                    Text("Space: Start/Stop")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
 
                 if let error = player.errorMessage {
                     Text(error)
@@ -137,13 +165,14 @@ struct TrackAudioPlayerPanel: View {
                 }
             }
         }
-        .padding(8)
+        .frame(maxWidth: miniModeEnabled ? 320 : 420)
+        .padding(6)
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.55))
         .overlay(
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: 6)
                 .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
         )
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
         .focusable(true)
         .focused($isPanelFocused)
         .simultaneousGesture(
@@ -155,12 +184,20 @@ struct TrackAudioPlayerPanel: View {
             player.load(track: track)
             installKeyboardMonitor()
             isPanelFocused = true
+            if activationToken > 0 {
+                player.startPlayback()
+            }
         }
         .onDisappear {
             removeKeyboardMonitor()
         }
         .onChange(of: track.id) {
             player.load(track: track)
+            isPanelFocused = true
+        }
+        .onChange(of: activationToken) {
+            guard player.loadedTrackPath != nil else { return }
+            player.startPlayback()
             isPanelFocused = true
         }
         .onReceive(Timer.publish(every: 0.12, on: .main, in: .common).autoconnect()) { _ in
@@ -202,5 +239,11 @@ struct TrackAudioPlayerPanel: View {
         let minutes = total / 60
         let remainder = total % 60
         return String(format: "%d:%02d", minutes, remainder)
+    }
+
+    private var timeLabel: String {
+        let current = formatTime(player.currentTime)
+        let total = formatTime(player.duration)
+        return miniModeEnabled ? "\(current)/\(total)" : "\(current) / \(total)"
     }
 }
