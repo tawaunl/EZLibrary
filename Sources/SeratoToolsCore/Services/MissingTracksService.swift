@@ -34,6 +34,7 @@ public final class MissingTracksService: ObservableObject {
 
     @Published public private(set) var candidates: [MissingTrackCandidate] = []
     @Published public private(set) var isScanning = false
+    @Published public private(set) var hasScannedForMatches = false
 
     private let rootDirectory: URL
     private let databaseFileURL: URL
@@ -49,6 +50,7 @@ public final class MissingTracksService: ObservableObject {
     /// walk. Call this before `scanForMatches` so the UI can show the
     /// missing list immediately.
     public func detectMissingTracks(in tracks: [Track]) {
+        hasScannedForMatches = false
         candidates = tracks
             .filter { !fileManager.fileExists(atPath: $0.fileURL.path) }
             .map { MissingTrackCandidate(track: $0) }
@@ -60,7 +62,10 @@ public final class MissingTracksService: ObservableObject {
     public func scanForMatches(roots: [URL] = FileSystemScanner.defaultScanRoots) async {
         guard !candidates.isEmpty else { return }
         isScanning = true
-        defer { isScanning = false }
+        defer {
+            isScanning = false
+            hasScannedForMatches = true
+        }
 
         let index = await Task.detached(priority: .userInitiated) {
             FileSystemScanner.scanRoots(roots)
@@ -123,6 +128,24 @@ public final class MissingTracksService: ObservableObject {
 
         candidates.removeAll { $0.id == candidate.id }
         return true
+    }
+
+    /// Removes every missing-track candidate that currently has no match.
+    /// Intended for use after a scan pass populates candidate matches.
+    @discardableResult
+    public func deleteAllWithoutMatches(in crates: [Crate]) throws -> Int {
+        let targets = candidates.filter { $0.matches.isEmpty }
+        guard !targets.isEmpty else {
+            return 0
+        }
+
+        var deletedCount = 0
+        for candidate in targets {
+            if try deleteFromLibrary(candidate, in: crates) {
+                deletedCount += 1
+            }
+        }
+        return deletedCount
     }
 
     /// Returns the best match that lives inside `preferredDirectory`.

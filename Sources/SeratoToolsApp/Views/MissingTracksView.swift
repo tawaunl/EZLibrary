@@ -8,6 +8,7 @@ struct MissingTracksView: View {
 
     @State private var resultMessage: String?
     @State private var preferredLocationPath: String = ""
+    @State private var showBulkDeleteUnmatchedConfirmation = false
 
     private static let preferredLocationDefaultsKey = "MissingTracksPreferredLocationPath"
 
@@ -49,6 +50,14 @@ struct MissingTracksView: View {
                     fixAllUsingPreferredLocation()
                 }
                 .disabled(missingTracksService.candidates.isEmpty || preferredLocationDirectory == nil)
+                Button("Delete All (No Match)", role: .destructive) {
+                    showBulkDeleteUnmatchedConfirmation = true
+                }
+                .disabled(
+                    missingTracksService.candidates.isEmpty ||
+                    !missingTracksService.hasScannedForMatches ||
+                    unmatchedCandidateCount == 0
+                )
             }
             .padding(.horizontal)
             .padding(.bottom, 8)
@@ -82,6 +91,18 @@ struct MissingTracksView: View {
             Button("OK") { resultMessage = nil }
         } message: {
             Text(resultMessage ?? "")
+        }
+        .confirmationDialog(
+            "Delete All Unmatched Tracks?",
+            isPresented: $showBulkDeleteUnmatchedConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Delete Unmatched Track References", role: .destructive) {
+                deleteAllUnmatchedFromLibrary()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes missing tracks with no found match from Serato library metadata and crates. Audio files are not deleted.")
         }
         .padding(.horizontal, 8)
     }
@@ -153,6 +174,31 @@ struct MissingTracksView: View {
         }
     }
 
+    private func deleteAllUnmatchedFromLibrary() {
+        guard missingTracksService.hasScannedForMatches else {
+            resultMessage = "Scan for matches first, then bulk delete unmatched tracks."
+            return
+        }
+
+        do {
+            let deletedCount = try missingTracksService.deleteAllWithoutMatches(in: libraryService.crates)
+            if deletedCount == 0 {
+                resultMessage = "No unmatched tracks were found. Nothing was changed."
+            } else if deletedCount == 1 {
+                resultMessage = "Deleted 1 unmatched track reference from the library."
+            } else {
+                resultMessage = "Deleted \(deletedCount) unmatched track references from the library."
+            }
+            try? libraryService.reload()
+        } catch {
+            resultMessage = "Couldn't bulk delete unmatched tracks: \(error.localizedDescription)"
+        }
+    }
+
+    private var unmatchedCandidateCount: Int {
+        missingTracksService.candidates.filter { $0.matches.isEmpty }.count
+    }
+
     private var preferredLocationSummaryText: String {
         guard let preferredDirectory = preferredLocationDirectory else {
             return "Choose a preferred location to see eligible fixes."
@@ -163,10 +209,19 @@ struct MissingTracksView: View {
         }.count
 
         if eligibleCount == 0 {
+            if missingTracksService.hasScannedForMatches {
+                return "0 tracks currently match the preferred location. \(unmatchedCandidateCount) tracks have no match."
+            }
             return "0 tracks currently match the preferred location."
         }
         if eligibleCount == 1 {
+            if missingTracksService.hasScannedForMatches {
+                return "1 track can be fixed from the preferred location. \(unmatchedCandidateCount) tracks have no match."
+            }
             return "1 track can be fixed from the preferred location."
+        }
+        if missingTracksService.hasScannedForMatches {
+            return "\(eligibleCount) tracks can be fixed from the preferred location. \(unmatchedCandidateCount) tracks have no match."
         }
         return "\(eligibleCount) tracks can be fixed from the preferred location."
     }

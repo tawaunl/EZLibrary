@@ -137,4 +137,48 @@ struct MissingTracksServiceTests {
         let reparsed = try SeratoDatabaseParser.parseTracks(at: scratch.databaseFile, rootDirectory: scratch.tempRoot)
         #expect(!reparsed.contains { $0.seratoStoredPath == targetTrack.seratoStoredPath })
     }
+
+    @Test func deleteAllWithoutMatchesRemovesOnlyUnmatchedTracks() async throws {
+        let oldBackupDirectory = SeratoBackupBeforeWrite.backupDirectory
+        let scratch = try makeScratchDatabaseCopy()
+        defer {
+            SeratoBackupBeforeWrite.backupDirectory = oldBackupDirectory
+            try? FileManager.default.removeItem(at: scratch.tempRoot)
+        }
+
+        SeratoBackupBeforeWrite.backupDirectory = scratch.tempRoot.appendingPathComponent("Backups")
+
+        let parseRoot = URL(fileURLWithPath: "/Volumes/Crucial X10")
+        let tracks = try SeratoDatabaseParser.parseTracks(at: scratch.databaseFile, rootDirectory: parseRoot)
+        let selectedTracks = Array(tracks.prefix(2))
+        #expect(selectedTracks.count == 2)
+
+        let preferredDir = scratch.tempRoot.appendingPathComponent("Preferred", isDirectory: true)
+        try FileManager.default.createDirectory(at: preferredDir, withIntermediateDirectories: true)
+
+        let matchedTrack = selectedTracks[0]
+        let unmatchedTrack = selectedTracks[1]
+        let matchedFile = preferredDir.appendingPathComponent(matchedTrack.fileURL.lastPathComponent)
+        try Data("matched".utf8).write(to: matchedFile)
+
+        let service = await MainActor.run {
+            MissingTracksService(rootDirectory: scratch.tempRoot, databaseFileURL: scratch.databaseFile)
+        }
+        await MainActor.run {
+            service.detectMissingTracks(in: selectedTracks)
+        }
+        await service.scanForMatches(roots: [preferredDir])
+
+        let deletedCount = try await MainActor.run {
+            try service.deleteAllWithoutMatches(in: [])
+        }
+        #expect(deletedCount == 1)
+
+        let remainingCount = await MainActor.run { service.candidates.count }
+        #expect(remainingCount == 1)
+
+        let reparsed = try SeratoDatabaseParser.parseTracks(at: scratch.databaseFile, rootDirectory: scratch.tempRoot)
+        #expect(reparsed.contains { $0.seratoStoredPath == matchedTrack.seratoStoredPath })
+        #expect(!reparsed.contains { $0.seratoStoredPath == unmatchedTrack.seratoStoredPath })
+    }
 }
