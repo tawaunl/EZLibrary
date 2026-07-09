@@ -6,8 +6,6 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="$ROOT_DIR/dist"
 APP_NAME="SeratoTools"
 APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
-PKGROOT="$DIST_DIR/pkgroot"
-PKGSCRIPTS="$DIST_DIR/pkgscripts"
 
 APP_VERSION="$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$ROOT_DIR/Packaging/Info.plist")"
 APP_BUILD="$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$ROOT_DIR/Packaging/Info.plist")"
@@ -18,10 +16,16 @@ fi
 
 PKG_ID="com.seratotools.app"
 PKG_PATH="$DIST_DIR/$APP_NAME-$PKG_VERSION.pkg"
+PKGROOT="$DIST_DIR/pkgroot-$$"
+PKGSCRIPTS="$DIST_DIR/pkgscripts-$$"
+
+cleanup() {
+  rm -rf "$PKGROOT" "$PKGSCRIPTS" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
 
 "$ROOT_DIR/Scripts/build-app.sh"
 
-rm -rf "$PKGROOT" "$PKGSCRIPTS"
 mkdir -p "$PKGROOT/Applications" "$PKGSCRIPTS"
 cp -R "$APP_BUNDLE" "$PKGROOT/Applications/$APP_NAME.app"
 

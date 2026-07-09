@@ -4,6 +4,7 @@ import SeratoToolsCore
 
 enum SidebarSection: Hashable {
     case tracks
+    case playlistMatch
     case addMusic
     case youtubeRip
     case crates
@@ -287,6 +288,7 @@ struct ContentView: View {
     private var sidebar: some View {
         List(selection: $selectedSection) {
             Label("Tracks", systemImage: "music.note.list").tag(SidebarSection.tracks)
+            Label("PlaylistMatch", systemImage: "music.quarternote.3").tag(SidebarSection.playlistMatch)
             Label("Add Music", systemImage: "plus.square.on.square").tag(SidebarSection.addMusic)
             Label("YouTube Rip", systemImage: "arrow.down.circle").tag(SidebarSection.youtubeRip)
             Label("Crates", systemImage: "square.stack").tag(SidebarSection.crates)
@@ -304,12 +306,14 @@ struct ContentView: View {
         case .tracks:
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
-                    TextField("Library directory", text: $libraryPathDraft)
-                        .textFieldStyle(.roundedBorder)
-                        .onTapGesture {
-                            NSApp.activate(ignoringOtherApps: true)
-                        }
-                    Button("Browse…") { chooseLibraryDirectory() }
+                    FinderFolderControls(
+                        label: "Library directory",
+                        path: $libraryPathDraft,
+                        browsePrompt: "Use Library",
+                        browseStartURL: URL(fileURLWithPath: libraryPathDraft.isEmpty ? libraryService.libraryDirectory.path : libraryPathDraft),
+                        allowsNewFolderCreation: false,
+                        onPathChanged: applyLibraryDirectory
+                    )
                     Button("Apply") { applyLibraryDirectory() }
                     Button("Reload") { reloadLibrary() }
                     Button("API Keys…") { showDiscogsTokenSheet = true }
@@ -441,6 +445,8 @@ struct ContentView: View {
                     )
                 }
             }
+        case .playlistMatch:
+            PlaylistMatchView(onLibraryChanged: reloadLibrary)
         case .addMusic:
             AddMusicView(onLibraryChanged: reloadLibrary)
         case .youtubeRip:
@@ -528,20 +534,6 @@ struct ContentView: View {
             }
         }
         return nil
-    }
-
-    private func chooseLibraryDirectory() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.prompt = "Use Library"
-        panel.directoryURL = URL(fileURLWithPath: libraryPathDraft)
-
-        if panel.runModal() == .OK, let url = panel.url {
-            libraryPathDraft = url.path
-            applyLibraryDirectory()
-        }
     }
 
     private func applyLibraryDirectory() {

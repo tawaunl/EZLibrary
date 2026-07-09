@@ -22,6 +22,18 @@ From repository root:
 ./Scripts/build-app.sh
 ```
 
+Build universal2 app bundle (Apple Silicon + Intel):
+
+```bash
+SERATOTOOLS_BUILD_UNIVERSAL=1 ./Scripts/build-app.sh
+```
+
+Universal build note:
+
+- The script validates that bundled runtime tools and libraries are universal2.
+- Universal mode now performs a fast preflight before compile to fail early when required runtime tools are single-arch.
+- If your build host only has single-arch Homebrew dependencies, universal mode fails with an actionable error.
+
 Output:
 
 - `dist/SeratoTools.app`
@@ -34,9 +46,24 @@ From repository root:
 ./Scripts/build-installer.sh
 ```
 
+Build universal2 installer package:
+
+```bash
+SERATOTOOLS_BUILD_UNIVERSAL=1 ./Scripts/build-installer.sh
+```
+
+Universal installer note:
+
+- `build-installer.sh` delegates to `build-app.sh`, so the same universal dependency validation applies.
+
 Output:
 
 - `dist/SeratoTools-<version>.pkg`
+
+Installer behavior on target machines:
+
+- Removes quarantine attributes from `/Applications/SeratoTools.app` when present.
+- Does not require Homebrew or network access to run postinstall.
 
 Install locally for testing:
 
@@ -63,5 +90,8 @@ After installing the app into `/Applications`, install Finder Quick Action:
 ## Notes
 
 - `fpcalc` is required and will be installed via Homebrew during build if missing.
-- `yt-dlp` and `ffmpeg` are optional at build time; if not bundled, users can still install them later with Homebrew.
 - Runtime now prefers bundled binaries before checking system PATH.
+- `yt-dlp` is bundled as a portable standalone binary.
+- `ffmpeg` and `ffprobe` are bundled along with their non-system dynamic libraries.
+- `fpcalc` is bundled along with its non-system dynamic libraries.
+- Result: shipped app and pkg are self-contained for these runtime dependencies.

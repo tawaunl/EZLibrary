@@ -44,6 +44,7 @@ public enum YouTubeAudioImportService {
     }
 
     public enum ImportError: Error, LocalizedError {
+        case emptySearchQuery
         case invalidVideoURL
         case ytDLPNotFound
         case commandFailed(String)
@@ -53,6 +54,8 @@ public enum YouTubeAudioImportService {
 
         public var errorDescription: String? {
             switch self {
+            case .emptySearchQuery:
+                return "Enter a track title or artist before searching YouTube."
             case .invalidVideoURL:
                 return "Paste a valid YouTube URL first."
             case .ytDLPNotFound:
@@ -70,6 +73,8 @@ public enum YouTubeAudioImportService {
 
         public var recoverySuggestion: String? {
             switch self {
+            case .emptySearchQuery:
+                return "Provide at least a title, artist, or both, then search again."
             case .invalidVideoURL:
                 return "Use a full https://www.youtube.com/... or https://youtu.be/... link."
             case .ytDLPNotFound:
@@ -94,6 +99,33 @@ public enum YouTubeAudioImportService {
         public let webpageURL: URL?
         public let uploadDate: String
         public let description: String
+    }
+
+    public struct SearchResult: Identifiable, Sendable, Hashable {
+        public var id: String { videoID }
+
+        public let videoID: String
+        public let title: String
+        public let channel: String
+        public let durationSeconds: Int?
+        public let webpageURL: URL
+        public let thumbnailURL: URL?
+
+        public init(
+            videoID: String,
+            title: String,
+            channel: String,
+            durationSeconds: Int?,
+            webpageURL: URL,
+            thumbnailURL: URL?
+        ) {
+            self.videoID = videoID
+            self.title = title
+            self.channel = channel
+            self.durationSeconds = durationSeconds
+            self.webpageURL = webpageURL
+            self.thumbnailURL = thumbnailURL
+        }
     }
 
     public struct DownloadRequest: Sendable {
@@ -206,6 +238,88 @@ public enum YouTubeAudioImportService {
         )
 
         return DependencyStatus(ytDLPPath: ytDLPPath, ffmpegPath: ffmpegPath)
+    }
+
+    public static func searchVideos(query: String, maxResults: Int = 5) throws -> [SearchResult] {
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedQuery.isEmpty else {
+            throw ImportError.emptySearchQuery
+        }
+
+        let safeCount = max(1, min(maxResults, 15))
+        let searchTerm = "ytsearch\(safeCount):\(trimmedQuery)"
+        let args = [
+            "--flat-playlist",
+            "--dump-json",
+            "--no-warnings",
+            "--skip-download",
+            searchTerm
+        ]
+
+        let result = try runYTCommand(arguments: args)
+        let lines = result.stdout
+            .split(separator: "\n")
+            .map(String.init)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        var output: [SearchResult] = []
+        for line in lines {
+            guard let data = line.data(using: .utf8),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                continue
+            }
+
+            let videoID = (json["id"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let title = (json["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !videoID.isEmpty, !title.isEmpty else {
+                continue
+            }
+
+            let channel =
+                (json["channel"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ??
+                (json["uploader"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ??
+                ""
+
+            let durationSeconds: Int?
+            if let duration = json["duration"] as? Int {
+                durationSeconds = duration
+            } else if let durationString = json["duration"] as? String {
+                durationSeconds = Int(durationString)
+            } else {
+                durationSeconds = nil
+            }
+
+            let webpageURL: URL
+            if let pageURLString = (json["webpage_url"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+               let parsed = URL(string: pageURLString),
+               !pageURLString.isEmpty {
+                webpageURL = parsed
+            } else {
+                webpageURL = URL(string: "https://www.youtube.com/watch?v=\(videoID)")!
+            }
+
+            let thumbnailURL: URL?
+            if let thumb = (json["thumbnail"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !thumb.isEmpty {
+                thumbnailURL = URL(string: thumb)
+            } else {
+                thumbnailURL = nil
+            }
+
+            output.append(
+                SearchResult(
+                    videoID: videoID,
+                    title: title,
+                    channel: channel,
+                    durationSeconds: durationSeconds,
+                    webpageURL: webpageURL,
+                    thumbnailURL: thumbnailURL
+                )
+            )
+        }
+
+        return output
     }
 
     public static func downloadAudio(_ request: DownloadRequest) throws -> DownloadResult {

@@ -91,6 +91,7 @@ struct YouTubeRipView: View {
 
     @State private var urlText = ""
     @State private var importedLinksFileName: String?
+    @State private var importedLinksFileURL: URL?
     @AppStorage(Self.destinationDefaultsKey) private var destinationPath = ""
     @AppStorage(Self.cratePrefixDefaultsKey) private var cratePrefix = "New Music"
     @AppStorage(Self.crateAssignmentDefaultsKey) private var crateAssignmentModeRaw = CrateAssignmentMode.dated.rawValue
@@ -236,6 +237,9 @@ struct YouTubeRipView: View {
                 urlCard
                 if !parsedVideoURLs.isEmpty {
                     linkThumbnailsCard
+                }
+                if importedLinksFileURL != nil {
+                    importedLinksCard
                 }
                 if let loadedInfo, !isBulkDownload {
                     videoPreviewCard(loadedInfo)
@@ -553,13 +557,14 @@ struct YouTubeRipView: View {
                 }
             }
 
-            HStack(spacing: 10) {
-                TextField("Main music folder", text: $destinationPath)
-                    .textFieldStyle(.roundedBorder)
-                Button("Browse...") {
-                    chooseDestinationFolder()
-                }
-            }
+            FinderFolderControls(
+                label: "Main music folder",
+                path: $destinationPath,
+                browsePrompt: "Use Folder",
+                browseStartURL: destinationFolderURL,
+                allowsNewFolderCreation: true,
+                onPathChanged: nil
+            )
 
             HStack(spacing: 10) {
                 Text("Crate Prefix")
@@ -770,6 +775,45 @@ struct YouTubeRipView: View {
         .background(RoundedRectangle(cornerRadius: 12).fill(Color(nsColor: .controlBackgroundColor).opacity(0.55)))
     }
 
+    private var importedLinksCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Imported Links File")
+                .font(.title3.weight(.semibold))
+
+            if let importedLinksFileName {
+                Text("Imported from: \(importedLinksFileName)")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let fileURL = importedLinksFileURL {
+                HStack(spacing: 8) {
+                    Button("Open File") {
+                        NSWorkspace.shared.open(fileURL)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+
+                    Button("Reveal") {
+                        NSWorkspace.shared.activateFileViewerSelecting([fileURL])
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+
+                    Button("Open Containing Folder") {
+                        NSWorkspace.shared.open(fileURL.deletingLastPathComponent())
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+        .padding(16)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Color(nsColor: .controlBackgroundColor).opacity(0.55)))
+    }
+
     private func fieldRow(_ label: String, text: Binding<String>) -> some View {
         HStack(spacing: 10) {
             Text(label)
@@ -786,23 +830,11 @@ struct YouTubeRipView: View {
             .controlSize(.small)
     }
 
-    private func chooseDestinationFolder() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.prompt = "Use Folder"
-        panel.directoryURL = destinationFolderURL
-
-        if panel.runModal() == .OK, let url = panel.url {
-            destinationPath = url.path
-        }
-    }
-
     private func chooseLinksFile() {
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
+        panel.canCreateDirectories = true
         panel.allowsMultipleSelection = false
         panel.prompt = "Import Links"
 
@@ -824,6 +856,7 @@ struct YouTubeRipView: View {
             let merged = deduplicatedURLs(parsedVideoURLs + imported)
             urlText = merged.map(\.absoluteString).joined(separator: "\n")
             importedLinksFileName = fileURL.lastPathComponent
+            importedLinksFileURL = fileURL
             successMessage = "Imported \(imported.count) links from \(fileURL.lastPathComponent)."
             errorMessage = nil
         } catch {
@@ -1227,6 +1260,7 @@ struct YouTubeRipView: View {
     private func resetAfterSuccessfulDownload() {
         urlText = ""
         importedLinksFileName = nil
+        importedLinksFileURL = nil
         loadedInfo = nil
         id3Title = ""
         id3Artist = ""
