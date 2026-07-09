@@ -362,10 +362,21 @@ struct CrateDetailView: View {
 
     private func applyTrackMetadataEdit(track: Track, metadata: SeratoTrackMetadataUpdate) {
         do {
-            try saveTrackMetadataEdit(track: track, metadata: metadata)
+            try saveTrackMetadataEditInline(track: track, metadata: metadata)
         } catch {
             trackEditErrorMessage = error.localizedDescription
         }
+    }
+
+    private func saveTrackMetadataEditInline(track: Track, metadata: SeratoTrackMetadataUpdate) throws {
+        try SeratoTrackMetadataEditor.update(
+            track: track,
+            metadata: metadata,
+            databaseFileURL: libraryService.databaseFile,
+            rewriteFilenameFromMetadata: false
+        )
+        onCratesChanged()
+        showMetadataSaveSuccess()
     }
 
     private func saveTrackMetadataEdit(track: Track, metadata: SeratoTrackMetadataUpdate) throws {

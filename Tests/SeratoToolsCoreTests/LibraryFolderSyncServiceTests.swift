@@ -143,7 +143,7 @@ private func makeSyncScratchEnvironment() throws -> (tempRoot: URL, libraryDirec
     let insertedTrack = try #require(tracks.first(where: { $0.seratoStoredPath == storedPath }))
 
     #expect(insertedTrack.artist == "Artist feat. Guest")
-    #expect(insertedTrack.title == "Big Tune (Extended Mix)")
+    #expect(insertedTrack.title == "Big Tune [Intro] (Extended Mix)")
 }
 
 @Test func syncAudioFolderStripsCommonVideoNoiseFromTitle() throws {
@@ -188,4 +188,48 @@ private func makeSyncScratchEnvironment() throws -> (tempRoot: URL, libraryDirec
 
     #expect(insertedTrack.artist == "DJNova")
     #expect(insertedTrack.title == "SunriseCut")
+}
+
+@Test func syncAudioFolderPreservesDJDescriptorsInTitle() throws {
+    let env = try makeSyncScratchEnvironment()
+    defer { try? FileManager.default.removeItem(at: env.tempRoot) }
+
+    let file = env.destinationRoot.appendingPathComponent("Artist Name - Anthem (Official Video) [Quick Hit Intro] (Extended Remix Edit).mp3")
+    try Data("track".utf8).write(to: file)
+
+    let rootDirectory = SeratoLibraryLocator.rootDirectory(for: env.libraryDirectory, homeDirectory: env.tempRoot)
+    _ = try LibraryFolderSyncService.syncAudioFolder(
+        env.destinationRoot,
+        databaseFileURL: env.databaseFile,
+        rootDirectory: rootDirectory
+    )
+
+    let tracks = try SeratoDatabaseParser.parseTracks(at: env.databaseFile, rootDirectory: rootDirectory)
+    let storedPath = SeratoLibraryLocator.seratoStoredPath(for: file, rootDirectory: rootDirectory)
+    let insertedTrack = try #require(tracks.first(where: { $0.seratoStoredPath == storedPath }))
+
+    #expect(insertedTrack.artist == "Artist Name")
+    #expect(insertedTrack.title == "Anthem [Quick Hit Intro] (Extended Remix Edit)")
+}
+
+@Test func syncAudioFolderPreservesAdditionalDJDescriptorsInTitle() throws {
+    let env = try makeSyncScratchEnvironment()
+    defer { try? FileManager.default.removeItem(at: env.tempRoot) }
+
+    let file = env.destinationRoot.appendingPathComponent("DJ Metro - Night Run (Official Audio) [Transition] (Bootleg Mashup Acapella Edit).mp3")
+    try Data("track".utf8).write(to: file)
+
+    let rootDirectory = SeratoLibraryLocator.rootDirectory(for: env.libraryDirectory, homeDirectory: env.tempRoot)
+    _ = try LibraryFolderSyncService.syncAudioFolder(
+        env.destinationRoot,
+        databaseFileURL: env.databaseFile,
+        rootDirectory: rootDirectory
+    )
+
+    let tracks = try SeratoDatabaseParser.parseTracks(at: env.databaseFile, rootDirectory: rootDirectory)
+    let storedPath = SeratoLibraryLocator.seratoStoredPath(for: file, rootDirectory: rootDirectory)
+    let insertedTrack = try #require(tracks.first(where: { $0.seratoStoredPath == storedPath }))
+
+    #expect(insertedTrack.artist == "DJ Metro")
+    #expect(insertedTrack.title == "Night Run [Transition] (Bootleg Mashup Acapella Edit)")
 }

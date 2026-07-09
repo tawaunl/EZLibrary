@@ -128,50 +128,70 @@ public enum OnlineTrackMetadataLookupService {
             throw LookupError.missingSearchTerms
         }
 
-        var combined: [OnlineTrackMetadataCandidate] = []
-        for source in sourceSelection.enabledSources {
-            do {
-                switch source {
-                case .itunes:
-                    let results = try await fetchITunes(
-                        query: normalized,
-                        maxResults: maxResultsPerSource,
-                        session: session
-                    )
-                    combined.append(contentsOf: results)
-                case .musicBrainz:
-                    let results = try await fetchMusicBrainz(
-                        query: normalized,
-                        maxResults: maxResultsPerSource,
-                        session: session
-                    )
-                    combined.append(contentsOf: results)
-                case .discogs:
-                    guard let token = discogsToken() else {
-                        if sourceSelection == .discogs {
-                            throw LookupError.missingDiscogsToken
+        if sourceSelection == .all {
+            let token = discogsToken()
+            let combined = await withTaskGroup(of: [OnlineTrackMetadataCandidate].self) { group in
+                for source in sourceSelection.enabledSources {
+                    group.addTask {
+                        do {
+                            return try await fetchCandidates(
+                                from: source,
+                                query: normalized,
+                                maxResults: maxResultsPerSource,
+                                session: session,
+                                discogsToken: token,
+                                sourceSelection: sourceSelection
+                            )
+                        } catch {
+                            return []
                         }
-                        continue
                     }
-                    let results = try await fetchDiscogs(
-                        query: normalized,
-                        maxResults: maxResultsPerSource,
-                        session: session,
-                        token: token
-                    )
-                    combined.append(contentsOf: results)
                 }
-            } catch {
-                // In All Sources mode, one failing provider should not block
-                // successful results from other providers.
-                if sourceSelection == .all {
-                    continue
+
+                var all: [OnlineTrackMetadataCandidate] = []
+                for await sourceResults in group {
+                    all.append(contentsOf: sourceResults)
                 }
-                throw error
+                return all
             }
+
+            return deduplicated(candidates: combined)
         }
 
-        return deduplicated(candidates: combined)
+        let results = try await fetchCandidates(
+            from: sourceSelection.enabledSources[0],
+            query: normalized,
+            maxResults: maxResultsPerSource,
+            session: session,
+            discogsToken: discogsToken(),
+            sourceSelection: sourceSelection
+        )
+
+        return deduplicated(candidates: results)
+    }
+
+    private static func fetchCandidates(
+        from source: OnlineMetadataSource,
+        query: Query,
+        maxResults: Int,
+        session: URLSession,
+        discogsToken: String?,
+        sourceSelection: SourceSelection
+    ) async throws -> [OnlineTrackMetadataCandidate] {
+        switch source {
+        case .itunes:
+            return try await fetchITunes(query: query, maxResults: maxResults, session: session)
+        case .musicBrainz:
+            return try await fetchMusicBrainz(query: query, maxResults: maxResults, session: session)
+        case .discogs:
+            guard let discogsToken else {
+                if sourceSelection == .discogs {
+                    throw LookupError.missingDiscogsToken
+                }
+                return []
+            }
+            return try await fetchDiscogs(query: query, maxResults: maxResults, session: session, token: discogsToken)
+        }
     }
 
     private static func normalize(query: Query) -> Query {

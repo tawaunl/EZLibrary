@@ -205,8 +205,30 @@ public enum LibraryFolderSyncService {
     }
 
     private static func removeInlineNoisyBracketDescriptors(from value: String) -> String {
-        let pattern = #"\s*[\(\[\{]\s*(official(\s+(video|audio))?|music\s+video|lyric(s)?(\s+video)?|visualizer|audio|video|hq|hd|4k|free\s+download|out\s+now|intro|clean|dirty|explicit)\s*[\)\]\}]"#
-        return value.replacingOccurrences(of: pattern, with: "", options: [.regularExpression, .caseInsensitive])
+        let pattern = #"\s*[\(\[\{]([^\)\]\}]*)[\)\]\}]"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+            return value
+        }
+
+        var output = value
+        let fullRange = NSRange(output.startIndex..<output.endIndex, in: output)
+        let matches = regex.matches(in: output, range: fullRange)
+
+        for match in matches.reversed() {
+            guard let descriptorRange = Range(match.range(at: 1), in: output),
+                  let segmentRange = Range(match.range(at: 0), in: output) else {
+                continue
+            }
+
+            let descriptor = output[descriptorRange].trimmingCharacters(in: .whitespacesAndNewlines)
+            guard shouldStripTrailingNoiseDescriptor(descriptor), !shouldPreserveDJDescriptor(descriptor) else {
+                continue
+            }
+
+            output.removeSubrange(segmentRange)
+        }
+
+        return output
     }
 
     private static func removeTrailingBracketDescriptorIfNoisy(from value: inout String) -> Bool {
@@ -220,7 +242,7 @@ public enum LibraryFolderSyncService {
             .replacingOccurrences(of: #"[\s\)\]\}]+$"#, with: "", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
-        guard shouldStripTrailingNoiseDescriptor(descriptor) else {
+        guard shouldStripTrailingNoiseDescriptor(descriptor), !shouldPreserveDJDescriptor(descriptor) else {
             return false
         }
 
@@ -257,16 +279,39 @@ public enum LibraryFolderSyncService {
             #"^hd$"#,
             #"^4k$"#,
             #"^free\s+download$"#,
-            #"^out\s+now$"#,
-            #"^intro$"#,
-            #"^clean$"#,
-            #"^dirty$"#,
-            #"^explicit$"#
+            #"^out\s+now$"#
         ]
 
         return noisyPatterns.contains { pattern in
             normalized.range(of: pattern, options: .regularExpression) != nil
         }
+    }
+
+    private static func shouldPreserveDJDescriptor(_ descriptor: String) -> Bool {
+        let normalized = descriptor
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+
+        let preserveTokens = [
+            "quick hit",
+            "intro",
+            "extended",
+            "remix",
+            "edit",
+            "radio edit",
+            "club edit",
+            "acapella",
+            "instrumental",
+            "transition",
+            "bootleg",
+            "mashup",
+            "flip",
+            "clean",
+            "dirty",
+            "explicit"
+        ]
+
+        return preserveTokens.contains { normalized.contains($0) }
     }
 
     private static func normalizedSupportedExistingFiles(_ files: [URL], fileManager: FileManager) -> [URL] {
