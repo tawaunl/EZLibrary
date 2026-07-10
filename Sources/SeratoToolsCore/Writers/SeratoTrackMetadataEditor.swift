@@ -408,8 +408,9 @@ public enum SeratoTrackMetadataEditor {
     ) throws {
         guard oldStoredPath != newStoredPath else { return }
 
+        // Smart crates (.scrate) contain rule payloads that must not be
+        // regenerated via the plain crate writer, or their logic is lost.
         let entries = SeratoLibraryLocator.subcrateFiles(in: libraryDirectory)
-            + SeratoLibraryLocator.smartCrateFiles(in: libraryDirectory)
 
         for entry in entries {
             let crateURL = entry.url
