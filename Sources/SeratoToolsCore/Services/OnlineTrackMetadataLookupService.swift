@@ -323,7 +323,8 @@ public enum OnlineTrackMetadataLookupService {
 
         return decoded.recordings.map { recording in
             let artist = recording.artistCredit?.first?.name ?? ""
-            let album = recording.releases?.first?.title ?? ""
+            let firstRelease = recording.releases?.first
+            let album = firstRelease?.title ?? ""
             let genre = recording.tags?.first?.name ?? ""
 
             return OnlineTrackMetadataCandidate(
@@ -333,9 +334,27 @@ public enum OnlineTrackMetadataLookupService {
                 album: album,
                 genre: genre,
                 year: yearFromDateString(recording.firstReleaseDate),
-                bpm: nil
+                bpm: nil,
+                artworkURL: coverArtArchiveURL(releaseID: firstReleaseIDWithArt(recording.releases))
             )
         }
+    }
+
+    /// Prefers a release the Cover Art Archive flags as having front art, then
+    /// falls back to the first release with an MBID.
+    private static func firstReleaseIDWithArt(_ releases: [MusicBrainzRelease]?) -> String? {
+        guard let releases else { return nil }
+        if let withArt = releases.first(where: { ($0.coverArtArchive?.front ?? false) && $0.id != nil }) {
+            return withArt.id
+        }
+        return releases.first(where: { $0.id != nil })?.id
+    }
+
+    /// Builds a Cover Art Archive front-image URL for a release MBID. The
+    /// endpoint 404s when no art exists, which the caller handles gracefully.
+    private static func coverArtArchiveURL(releaseID: String?) -> URL? {
+        guard let releaseID, !releaseID.isEmpty else { return nil }
+        return URL(string: "https://coverartarchive.org/release/\(releaseID)/front-500")
     }
 
     private static func fetchDiscogs(
@@ -404,9 +423,21 @@ public enum OnlineTrackMetadataLookupService {
                 genre: result.genre?.first ?? "",
                 year: result.year,
                 bpm: nil,
-                comment: result.id.map { "Discogs release #\($0)" } ?? ""
+                comment: result.id.map { "Discogs release #\($0)" } ?? "",
+                artworkURL: discogsArtworkURL(result)
             )
         }
+    }
+
+    /// Discogs search results include a full cover image (and a thumbnail
+    /// fallback); placeholder spacer images are ignored.
+    private static func discogsArtworkURL(_ result: DiscogsSearchResult) -> URL? {
+        for candidate in [result.coverImage, result.thumb] {
+            guard let raw = candidate?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { continue }
+            if raw.contains("spacer.gif") { continue }
+            if let url = URL(string: raw) { return url }
+        }
+        return nil
     }
 
     private static func discogsToken(
@@ -478,7 +509,19 @@ private struct MusicBrainzArtistCredit: Decodable {
 }
 
 private struct MusicBrainzRelease: Decodable {
+    let id: String?
     let title: String?
+    let coverArtArchive: MusicBrainzCoverArtArchive?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case coverArtArchive = "cover-art-archive"
+    }
+}
+
+private struct MusicBrainzCoverArtArchive: Decodable {
+    let front: Bool?
 }
 
 private struct MusicBrainzTag: Decodable {
@@ -494,6 +537,17 @@ private struct DiscogsSearchResult: Decodable {
     let title: String?
     let year: Int?
     let genre: [String]?
+    let coverImage: String?
+    let thumb: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case year
+        case genre
+        case coverImage = "cover_image"
+        case thumb
+    }
 }
 
 private struct DiscogsErrorResponse: Decodable {
