@@ -14,6 +14,9 @@ struct DuplicateTracksView: View {
     @State private var pendingDeletion: PendingDeletion?
     @State private var errorMessage: String?
     @State private var successMessage: String?
+    @AppStorage(Self.confirmDeletesDefaultsKey) private var confirmDeletes = true
+
+    private static let confirmDeletesDefaultsKey = "SeratoToolsConfirmDuplicateDeletes"
 
     private struct PendingDeletion: Identifiable {
         let id = UUID()
@@ -127,8 +130,19 @@ struct DuplicateTracksView: View {
 
     private var resultsCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Duplicate Groups")
-                .font(.title3.weight(.semibold))
+            HStack(spacing: 8) {
+                Text("Duplicate Groups")
+                    .font(.title3.weight(.semibold))
+                Spacer(minLength: 0)
+                Toggle("Confirm Deletes", isOn: $confirmDeletes)
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .help("When off, delete actions run immediately without a confirmation prompt.")
+            }
+
+            if !filteredGroups.isEmpty {
+                bulkActionsBar
+            }
 
             if filteredGroups.isEmpty {
                 Text(duplicateGroups.isEmpty ? "No duplicate groups detected in the current library." : "No duplicate groups matched your search.")
@@ -145,10 +159,36 @@ struct DuplicateTracksView: View {
         .background(RoundedRectangle(cornerRadius: 12).fill(Color(nsColor: .controlBackgroundColor).opacity(0.55)))
     }
 
+    private var bulkActionsBar: some View {
+        let totalDeletable = filteredGroups.reduce(0) { $0 + deletableTracks(for: $1).count }
+        return HStack(spacing: 8) {
+            Button("Pick Best (All)") {
+                pickBestForAll()
+            }
+            .help("Select the most complete copy (oldest on ties) to keep in every group.")
+
+            Button("Delete All Others → Library") {
+                requestMassDeletion(fromComputer: false)
+            }
+            .disabled(totalDeletable == 0)
+
+            Button("Delete All Others → Computer") {
+                requestMassDeletion(fromComputer: true)
+            }
+            .disabled(totalDeletable == 0)
+
+            Text("\(totalDeletable) removable")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Spacer(minLength: 0)
+        }
+    }
+
     private func groupCard(for group: DuplicateTrackGroup) -> some View {
         let best = DuplicateTracksService.bestTrack(in: group.tracks)
-        let keptPath = keepSelectionByGroupID[group.id] ?? best?.seratoStoredPath
-        let deletable = group.tracks.filter { $0.seratoStoredPath != keptPath }
+        let kept = keptPath(for: group)
+        let deletable = deletableTracks(for: group)
 
         return VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 10) {
@@ -181,7 +221,7 @@ struct DuplicateTracksView: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(group.tracks) { track in
-                    trackRow(track: track, group: group, keptPath: keptPath, best: best)
+                    trackRow(track: track, group: group, keptPath: kept, best: best)
                 }
             }
         }
@@ -319,19 +359,58 @@ struct DuplicateTracksView: View {
         }
     }
 
+    private func keptPath(for group: DuplicateTrackGroup) -> String? {
+        keepSelectionByGroupID[group.id] ?? DuplicateTracksService.bestTrack(in: group.tracks)?.seratoStoredPath
+    }
+
+    private func deletableTracks(for group: DuplicateTrackGroup) -> [Track] {
+        let kept = keptPath(for: group)
+        return group.tracks.filter { $0.seratoStoredPath != kept }
+    }
+
+    private func pickBestForAll() {
+        for group in filteredGroups {
+            if let best = DuplicateTracksService.bestTrack(in: group.tracks) {
+                keepSelectionByGroupID[group.id] = best.seratoStoredPath
+            }
+        }
+    }
+
     private func requestDeletion(group: DuplicateTrackGroup, tracks: [Track], fromComputer: Bool) {
         guard !tracks.isEmpty else { return }
-        let best = DuplicateTracksService.bestTrack(in: group.tracks)
-        let keptPath = keepSelectionByGroupID[group.id] ?? best?.seratoStoredPath
-        let keptTrack = group.tracks.first { $0.seratoStoredPath == keptPath }
+        let keptTrack = group.tracks.first { $0.seratoStoredPath == keptPath(for: group) }
         let keepLabel = keptTrack.map { $0.fileURL.lastPathComponent } ?? group.title
 
-        pendingDeletion = PendingDeletion(
-            groupLabel: "\(group.artist) - \(group.title)",
-            keepLabel: keepLabel,
-            tracks: tracks,
-            fromComputer: fromComputer
+        confirmOrPerform(
+            PendingDeletion(
+                groupLabel: "\(group.artist) - \(group.title)",
+                keepLabel: keepLabel,
+                tracks: tracks,
+                fromComputer: fromComputer
+            )
         )
+    }
+
+    private func requestMassDeletion(fromComputer: Bool) {
+        let tracks = filteredGroups.flatMap { deletableTracks(for: $0) }
+        guard !tracks.isEmpty else { return }
+
+        confirmOrPerform(
+            PendingDeletion(
+                groupLabel: "\(filteredGroups.count) groups",
+                keepLabel: "the best copy in each group",
+                tracks: tracks,
+                fromComputer: fromComputer
+            )
+        )
+    }
+
+    private func confirmOrPerform(_ pending: PendingDeletion) {
+        if confirmDeletes {
+            pendingDeletion = pending
+        } else {
+            performDeletion(pending)
+        }
     }
 
     private func performDeletion(_ pending: PendingDeletion) {
