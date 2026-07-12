@@ -634,29 +634,46 @@ public enum PlaylistMatchService {
         value.trimmingCharacters(in: CharacterSet(charactersIn: " \n\t\r\"'<>[](){}.,;"))
     }
 
+    private static let spotifyBrowserUserAgent =
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
     private static func loadSpotifyPlaylistData(from url: URL, session: URLSession) async throws -> ResolvedPlaylist {
         let oEmbedName = try? await fetchSpotifyPlaylistNameViaOEmbed(url: url, session: session)
-        var apiEntriesCount = 0
-        var htmlEntriesCount = 0
-        var embedEntriesCount = 0
 
+        // Primary source: the embed page's __NEXT_DATA__ JSON. It needs no auth
+        // and stays available even though Spotify blocked the anonymous
+        // get_access_token endpoint the old Web API path relied on.
         if let playlistID = playlistID(fromSpotifyWebURL: url),
-           let apiEntries = try? await loadSpotifyPlaylistEntriesViaWebAPI(playlistID: playlistID, session: session),
-           !apiEntries.isEmpty {
-            apiEntriesCount = apiEntries.count
-            let diagnostics = ParserDiagnostics(
-                apiEntriesCount: apiEntriesCount,
-                htmlEntriesCount: htmlEntriesCount,
-                embedEntriesCount: embedEntriesCount,
-                chosenSource: "spotify-web-api",
-                chosenEntriesCount: apiEntries.count,
-                chosenRowsWithArtistCount: apiEntries.filter { !$0.artist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count
-            )
-            return ResolvedPlaylist(playlistName: oEmbedName, entries: apiEntries, diagnostics: diagnostics)
+           let embedURL = URL(string: "https://open.spotify.com/embed/playlist/\(playlistID)") {
+            var embedRequest = URLRequest(url: embedURL)
+            embedRequest.setValue(spotifyBrowserUserAgent, forHTTPHeaderField: "User-Agent")
+
+            if let (data, response) = try? await session.data(for: embedRequest),
+               let http = response as? HTTPURLResponse,
+               (200...299).contains(http.statusCode),
+               let html = String(data: data, encoding: .utf8) {
+                let parsed = parseSpotifyEmbedNextData(html)
+                if !parsed.entries.isEmpty {
+                    let diagnostics = ParserDiagnostics(
+                        apiEntriesCount: 0,
+                        htmlEntriesCount: 0,
+                        embedEntriesCount: parsed.entries.count,
+                        chosenSource: "spotify-embed-nextdata",
+                        chosenEntriesCount: parsed.entries.count,
+                        chosenRowsWithArtistCount: parsed.entries.filter { !$0.artist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count
+                    )
+                    return ResolvedPlaylist(
+                        playlistName: oEmbedName ?? parsed.name,
+                        entries: parsed.entries,
+                        diagnostics: diagnostics
+                    )
+                }
+            }
         }
 
+        // Fallback: scrape the main playlist page with the legacy window parser.
         var request = URLRequest(url: url)
-        request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
+        request.setValue(spotifyBrowserUserAgent, forHTTPHeaderField: "User-Agent")
 
         do {
             let (data, response) = try await session.data(for: request)
@@ -668,73 +685,23 @@ public enum PlaylistMatchService {
                 throw MatchError.spotifyParseFailed
             }
 
-                let htmlEntries = parseSpotifyHTML(html)
-                htmlEntriesCount = htmlEntries.count
-            var allCandidates: [[PlaylistEntry]] = [htmlEntries]
-                var candidateNames: [String] = ["main-html"]
-
-            if let playlistID = playlistID(fromSpotifyWebURL: url),
-               let embedURL = URL(string: "https://open.spotify.com/embed/playlist/\(playlistID)") {
-                var embedRequest = URLRequest(url: embedURL)
-                embedRequest.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
-                if let (embedData, embedResponse) = try? await session.data(for: embedRequest),
-                   let http = embedResponse as? HTTPURLResponse,
-                   (200...299).contains(http.statusCode),
-                   let embedHTML = String(data: embedData, encoding: .utf8) {
-                    let embedEntries = parseSpotifyHTML(embedHTML)
-                    if !embedEntries.isEmpty {
-                        allCandidates.append(embedEntries)
-                        candidateNames.append("embed-html")
-                        embedEntriesCount = embedEntries.count
-                    }
-                }
-
-                if var nd1Components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
-                    var queryItems = nd1Components.queryItems ?? []
-                    queryItems.removeAll { $0.name == "nd" }
-                    queryItems.append(URLQueryItem(name: "nd", value: "1"))
-                    nd1Components.queryItems = queryItems
-
-                    if let nd1URL = nd1Components.url {
-                        var nd1Request = URLRequest(url: nd1URL)
-                        nd1Request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
-                        if let (nd1Data, nd1Response) = try? await session.data(for: nd1Request),
-                           let http = nd1Response as? HTTPURLResponse,
-                           (200...299).contains(http.statusCode),
-                           let nd1HTML = String(data: nd1Data, encoding: .utf8) {
-                            let nd1Entries = parseSpotifyHTML(nd1HTML)
-                            if !nd1Entries.isEmpty {
-                                allCandidates.append(nd1Entries)
-                                candidateNames.append("main-html-nd1")
-                            }
-                        }
-                    }
-                }
+            let htmlEntries = parseSpotifyHTML(html)
+            guard !htmlEntries.isEmpty else {
+                throw MatchError.spotifyParseFailed
             }
 
-            var bestIndex = 0
-            var bestScore = Int.min
-            for (index, candidate) in allCandidates.enumerated() {
-                let score = candidateScore(candidate)
-                if score > bestScore {
-                    bestScore = score
-                    bestIndex = index
-                }
-            }
-            let bestEntries = allCandidates[bestIndex]
-            let chosenSource = candidateNames.indices.contains(bestIndex) ? candidateNames[bestIndex] : "main-html"
             let htmlName = extractSpotifyPlaylistName(fromHTML: html)
             let diagnostics = ParserDiagnostics(
-                apiEntriesCount: apiEntriesCount,
-                htmlEntriesCount: htmlEntriesCount,
-                embedEntriesCount: embedEntriesCount,
-                chosenSource: chosenSource,
-                chosenEntriesCount: bestEntries.count,
-                chosenRowsWithArtistCount: bestEntries.filter { !$0.artist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count
+                apiEntriesCount: 0,
+                htmlEntriesCount: htmlEntries.count,
+                embedEntriesCount: 0,
+                chosenSource: "main-html",
+                chosenEntriesCount: htmlEntries.count,
+                chosenRowsWithArtistCount: htmlEntries.filter { !$0.artist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count
             )
             return ResolvedPlaylist(
                 playlistName: oEmbedName ?? htmlName,
-                entries: bestEntries,
+                entries: htmlEntries,
                 diagnostics: diagnostics
             )
         } catch let error as MatchError {
@@ -767,97 +734,70 @@ public enum PlaylistMatchService {
         return decoded.title.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private static func loadSpotifyPlaylistEntriesViaWebAPI(playlistID: String, session: URLSession) async throws -> [PlaylistEntry] {
-        let token = try await fetchSpotifyWebAccessToken(session: session)
-        guard !token.isEmpty else {
-            throw MatchError.spotifyParseFailed
+    /// Parses the `__NEXT_DATA__` JSON embedded in a Spotify embed page and
+    /// returns the playlist name and its tracks. Resilient to schema shuffles
+    /// by searching for the entity object that carries a `trackList`.
+    static func parseSpotifyEmbedNextData(_ html: String) -> (name: String?, entries: [PlaylistEntry]) {
+        guard let jsonData = extractNextDataJSON(from: html),
+              let root = try? JSONSerialization.jsonObject(with: jsonData),
+              let entity = findSpotifyEntity(in: root),
+              let trackList = entity["trackList"] as? [Any] else {
+            return (nil, [])
         }
 
         var entries: [PlaylistEntry] = []
         var seen = Set<String>()
-        var nextURLString: String? = "https://api.spotify.com/v1/playlists/\(playlistID)/tracks?limit=100"
 
-        while let currentURLString = nextURLString, let endpoint = URL(string: currentURLString) {
-            var request = URLRequest(url: endpoint)
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        for item in trackList {
+            guard let dict = item as? [String: Any] else { continue }
+            let title = ((dict["title"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !title.isEmpty else { continue }
+            let artist = ((dict["subtitle"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
 
-            let (data, response) = try await session.data(for: request)
-            if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-                throw MatchError.spotifyFetchFailed("Spotify API HTTP \(http.statusCode)")
+            let key = "\(title.lowercased())|\(artist.lowercased())"
+            if seen.insert(key).inserted {
+                entries.append(
+                    PlaylistEntry(
+                        title: title,
+                        artist: artist,
+                        sourceLine: urlSafeSourceLine(title: title, artist: artist)
+                    )
+                )
             }
+        }
 
-            let decoded: SpotifyPlaylistTracksResponse
-            do {
-                decoded = try JSONDecoder().decode(SpotifyPlaylistTracksResponse.self, from: data)
-            } catch {
-                throw MatchError.spotifyParseFailed
+        let name = (entity["name"] as? String) ?? (entity["title"] as? String)
+        return (name?.trimmingCharacters(in: .whitespacesAndNewlines), entries)
+    }
+
+    /// Extracts the raw JSON payload from the `__NEXT_DATA__` script tag.
+    private static func extractNextDataJSON(from html: String) -> Data? {
+        guard let idRange = html.range(of: "id=\"__NEXT_DATA__\"") else { return nil }
+        guard let openTagEnd = html.range(of: ">", range: idRange.upperBound..<html.endIndex) else { return nil }
+        guard let closeRange = html.range(of: "</script>", range: openTagEnd.upperBound..<html.endIndex) else { return nil }
+        let json = html[openTagEnd.upperBound..<closeRange.lowerBound]
+        return String(json).data(using: .utf8)
+    }
+
+    /// Depth-first search for the first object that holds a `trackList` array.
+    private static func findSpotifyEntity(in object: Any) -> [String: Any]? {
+        if let dict = object as? [String: Any] {
+            if dict["trackList"] is [Any] {
+                return dict
             }
-
-            for item in decoded.items {
-                guard let track = item.track else { continue }
-                let title = track.name.trimmingCharacters(in: .whitespacesAndNewlines)
-                let artist = track.artists.first?.name.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                guard !title.isEmpty else { continue }
-
-                let key = "\(title.lowercased())|\(artist.lowercased())"
-                if seen.insert(key).inserted {
-                    entries.append(PlaylistEntry(title: title, artist: artist, sourceLine: urlSafeSourceLine(title: title, artist: artist)))
+            for value in dict.values {
+                if let found = findSpotifyEntity(in: value) {
+                    return found
                 }
             }
-
-            nextURLString = decoded.next
+        } else if let array = object as? [Any] {
+            for value in array {
+                if let found = findSpotifyEntity(in: value) {
+                    return found
+                }
+            }
         }
-
-        return entries
-    }
-
-    private static func fetchSpotifyWebAccessToken(session: URLSession) async throws -> String {
-        guard let url = URL(string: "https://open.spotify.com/get_access_token?reason=transport&productType=web_player") else {
-            throw MatchError.spotifyParseFailed
-        }
-
-        var request = URLRequest(url: url)
-        request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
-
-        let (data, response) = try await session.data(for: request)
-        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-            throw MatchError.spotifyFetchFailed("Spotify token HTTP \(http.statusCode)")
-        }
-
-        let decoded: SpotifyWebTokenResponse
-        do {
-            decoded = try JSONDecoder().decode(SpotifyWebTokenResponse.self, from: data)
-        } catch {
-            throw MatchError.spotifyParseFailed
-        }
-
-        return decoded.accessToken.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private struct SpotifyWebTokenResponse: Decodable {
-        let accessToken: String
-
-        private enum CodingKeys: String, CodingKey {
-            case accessToken = "accessToken"
-        }
-    }
-
-    private struct SpotifyPlaylistTracksResponse: Decodable {
-        let items: [SpotifyPlaylistTrackItem]
-        let next: String?
-    }
-
-    private struct SpotifyPlaylistTrackItem: Decodable {
-        let track: SpotifyTrack?
-    }
-
-    private struct SpotifyTrack: Decodable {
-        let name: String
-        let artists: [SpotifyArtist]
-    }
-
-    private struct SpotifyArtist: Decodable {
-        let name: String
+        return nil
     }
 
     private struct SpotifyOEmbedResponse: Decodable {

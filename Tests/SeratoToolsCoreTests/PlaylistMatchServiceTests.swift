@@ -165,3 +165,40 @@ import Testing
     #expect(loaded[0].entry.title == "Track One")
     #expect(loaded[1].entry.artist == "Artist Two")
 }
+
+@Test func spotifyEmbedNextDataParsesTrackListAndName() {
+    // Mirrors the shape of Spotify's embed __NEXT_DATA__ payload:
+    // props.pageProps.state.data.entity.{name,trackList[{title,subtitle}]}.
+    let html = """
+    <html><body>
+    <script id="__NEXT_DATA__" type="application/json">
+    {"props":{"pageProps":{"state":{"data":{"entity":{
+      "name":"My Test Playlist",
+      "trackList":[
+        {"uri":"spotify:track:1","title":"First Song","subtitle":"Artist One"},
+        {"uri":"spotify:track:2","title":"Second Song","subtitle":"Artist Two, Guest"},
+        {"uri":"spotify:track:3","title":"","subtitle":"No Title"},
+        {"uri":"spotify:track:1","title":"First Song","subtitle":"Artist One"}
+      ]
+    }}}}}}
+    </script>
+    </body></html>
+    """
+
+    let parsed = PlaylistMatchService.parseSpotifyEmbedNextData(html)
+
+    #expect(parsed.name == "My Test Playlist")
+    // Empty-title row is skipped and the duplicate is de-duped.
+    #expect(parsed.entries.count == 2)
+    #expect(parsed.entries[0].title == "First Song")
+    #expect(parsed.entries[0].artist == "Artist One")
+    #expect(parsed.entries[1].title == "Second Song")
+    #expect(parsed.entries[1].artist == "Artist Two, Guest")
+}
+
+@Test func spotifyEmbedNextDataReturnsEmptyWhenNoTrackList() {
+    let html = "<html><body><script id=\"__NEXT_DATA__\" type=\"application/json\">{\"props\":{}}</script></body></html>"
+    let parsed = PlaylistMatchService.parseSpotifyEmbedNextData(html)
+    #expect(parsed.entries.isEmpty)
+    #expect(parsed.name == nil)
+}
