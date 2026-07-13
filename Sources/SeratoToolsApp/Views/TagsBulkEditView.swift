@@ -438,6 +438,13 @@ struct TagsBulkEditView: View {
             updates.append((track, metadata))
         }
 
+        guard !updates.isEmpty else {
+            bulkLookupMessage = onlyFillEmpty
+                ? "No changes: the selected tracks already have those fields. Turn off \u{201C}Only Fill Empty\u{201D} to overwrite them."
+                : "No changes were needed for the selected tracks."
+            return
+        }
+
         do {
             if let onApplyMetadataBatch {
                 try onApplyMetadataBatch(updates)
@@ -450,6 +457,9 @@ struct TagsBulkEditView: View {
             operationErrorMessage = error.localizedDescription
             return
         }
+
+        let updatedCount = updates.count
+        bulkLookupMessage = "Applied changes to \(updatedCount) track\(updatedCount == 1 ? "" : "s")."
     }
 
     private func lookupMissingGenreAndYear() {

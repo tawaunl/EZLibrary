@@ -683,19 +683,49 @@ struct ContentView: View {
         showMetadataSaveSuccess()
     }
 
+    private struct BulkMetadataUpdateError: LocalizedError {
+        let successCount: Int
+        let failedNames: [String]
+
+        var errorDescription: String? {
+            let failed = failedNames.count
+            let sample = failedNames.prefix(3).joined(separator: ", ")
+            let suffix = failedNames.count > 3 ? "…" : ""
+            let updated = "Updated \(successCount) track\(successCount == 1 ? "" : "s")."
+            return "\(updated) \(failed) couldn't be updated: \(sample)\(suffix)"
+        }
+
+        var recoverySuggestion: String? {
+            "Check that those files still exist and aren't locked, then try again."
+        }
+    }
+
     private func saveTrackMetadataEditsBatch(_ updates: [(Track, SeratoTrackMetadataUpdate)]) throws {
         guard !updates.isEmpty else { return }
 
+        var successCount = 0
+        var failedNames: [String] = []
+
         for (track, metadata) in updates {
-            try SeratoTrackMetadataEditor.update(
-                track: track,
-                metadata: metadata,
-                databaseFileURL: libraryService.databaseFile,
-                rewriteFilenameFromMetadata: SeratoFeatureFlags.isAutoRenameFromMetadataEnabled()
-            )
+            do {
+                try SeratoTrackMetadataEditor.update(
+                    track: track,
+                    metadata: metadata,
+                    databaseFileURL: libraryService.databaseFile,
+                    rewriteFilenameFromMetadata: SeratoFeatureFlags.isAutoRenameFromMetadataEnabled()
+                )
+                successCount += 1
+            } catch {
+                failedNames.append(track.fileURL.lastPathComponent)
+            }
         }
 
         try libraryService.reloadTracksOnly()
+
+        guard failedNames.isEmpty else {
+            throw BulkMetadataUpdateError(successCount: successCount, failedNames: failedNames)
+        }
+
         showMetadataSaveSuccess()
     }
 
