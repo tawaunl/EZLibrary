@@ -712,7 +712,11 @@ struct ContentView: View {
                     track: track,
                     metadata: metadata,
                     databaseFileURL: libraryService.databaseFile,
-                    rewriteFilenameFromMetadata: SeratoFeatureFlags.isAutoRenameFromMetadataEnabled()
+                    // Bulk edits fill metadata across many tracks and must not
+                    // rename files: renaming here rewrites file paths mid-batch,
+                    // which caused "couldn't find this track in database V2"
+                    // and file-move failures. Renaming stays a single-track action.
+                    rewriteFilenameFromMetadata: false
                 )
                 successCount += 1
             } catch {

@@ -326,7 +326,11 @@ public enum SeratoTrackMetadataEditor {
         case (nil, nil):
             return true
         case let (lhs?, rhs?):
-            return Int(lhs.rounded()) == Int(rhs.rounded())
+            // BPM is persisted as a rounded integer string, so the readback can
+            // differ from the requested value by up to 0.5. Compare with a
+            // tolerance instead of rounding both sides (which disagreed for
+            // half values and produced false verification failures).
+            return abs(lhs - rhs) < 1.0
         default:
             return false
         }
