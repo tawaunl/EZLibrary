@@ -27,6 +27,7 @@ struct FinderFolderControls: View {
                     Label("Browse…", systemImage: "folder")
                 }
                 .controlSize(.small)
+                .help("Choose a folder using the system file picker.")
 
                 if allowsNewFolderCreation {
                     Button {
@@ -35,6 +36,7 @@ struct FinderFolderControls: View {
                         Label("New Folder…", systemImage: "folder.badge.plus")
                     }
                     .controlSize(.small)
+                    .help("Create a new folder inside the current location.")
                 }
 
                 Button {
@@ -44,6 +46,7 @@ struct FinderFolderControls: View {
                 }
                 .controlSize(.small)
                 .disabled(currentFolderURL == nil)
+                .help("Open this folder in Finder.")
 
                 Button {
                     revealInFinder()
@@ -52,17 +55,20 @@ struct FinderFolderControls: View {
                 }
                 .controlSize(.small)
                 .disabled(currentFolderURL == nil)
+                .help("Reveal this folder in Finder, selecting it in its parent.")
 
                 Menu {
                     Button("Copy Path") {
                         copyCurrentPath()
                     }
                     .disabled(currentFolderURL == nil)
+                    .help("Copy the folder's full path to the clipboard.")
 
                     Button("Show Info") {
                         showFolderInfo()
                     }
                     .disabled(currentFolderURL == nil)
+                    .help("Show Finder's Get Info window for this folder.")
 
                     Divider()
 
@@ -71,23 +77,27 @@ struct FinderFolderControls: View {
                             renameCurrentFolder()
                         }
                         .disabled(currentFolderURL == nil)
+                        .help("Rename this folder.")
 
                         Button("Duplicate…") {
                             duplicateCurrentFolder()
                         }
                         .disabled(currentFolderURL == nil)
+                        .help("Make a copy of this folder.")
 
                         Divider()
 
                         Button("New Folder…") {
                             createNewFolder()
                         }
+                        .help("Create a new folder inside the current location.")
                     }
                 } label: {
                     Label("More", systemImage: "ellipsis.circle")
                 }
                 .controlSize(.small)
                 .disabled(currentFolderURL == nil)
+                .help("More folder actions.")
             }
         }
         .padding(10)

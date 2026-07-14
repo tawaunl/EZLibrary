@@ -33,10 +33,12 @@ struct MissingTracksView: View {
                     Task { await missingTracksService.scanForMatches() }
                 }
                 .disabled(missingTracksService.candidates.isEmpty || missingTracksService.isScanning)
+                .help("Search your disk for files that could replace the missing track references.")
                 Button("Gather into Review Crate") {
                     gatherIntoCrate()
                 }
                 .disabled(missingTracksService.candidates.isEmpty)
+                .help("Collect the missing tracks into a crate so you can review them together.")
             }
             .padding()
 
@@ -46,10 +48,12 @@ struct MissingTracksView: View {
                 Button("Browse…") {
                     browseForPreferredLocation()
                 }
+                .help("Choose the folder to look in first when relinking missing tracks.")
                 Button("Fix All (Preferred Location)") {
                     fixAllUsingPreferredLocation()
                 }
                 .disabled(missingTracksService.candidates.isEmpty || preferredLocationDirectory == nil)
+                .help("Relink every missing track to a matching file found in the preferred location.")
                 Button("Delete All (No Match)", role: .destructive) {
                     showBulkDeleteUnmatchedConfirmation = true
                 }
@@ -58,6 +62,7 @@ struct MissingTracksView: View {
                     !missingTracksService.hasScannedForMatches ||
                     unmatchedCandidateCount == 0
                 )
+                .help("Remove all missing track references that have no matching file on disk.")
             }
             .padding(.horizontal)
             .padding(.bottom, 8)
@@ -277,6 +282,7 @@ private struct MissingTrackRow: View {
         if let preferredDirectory,
            let preferredMatch = missingTracksService.preferredMatch(for: candidate, preferredDirectory: preferredDirectory) {
             Button("Fix (Preferred)") { fix(using: preferredMatch) }
+                .help("Relink this track to the matching file in your preferred location.")
         } else {
             switch candidate.matches.count {
             case 0:
@@ -287,13 +293,16 @@ private struct MissingTrackRow: View {
                     Button("Delete from Library", role: .destructive) {
                         showDeleteConfirmation = true
                     }
+                    .help("Remove this missing track's reference from the library.")
                 }
             case 1:
                 Button("Fix") { fix(using: candidate.matches[0]) }
+                    .help("Relink this track to the matching file that was found.")
             default:
                 Menu("Fix (\(candidate.matches.count) matches)") {
                     ForEach(candidate.matches, id: \.self) { match in
                         Button(match.path) { fix(using: match) }
+                            .help("Relink this track to \(match.path).")
                     }
                 }
             }

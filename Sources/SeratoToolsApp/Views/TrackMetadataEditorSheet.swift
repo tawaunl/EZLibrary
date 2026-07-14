@@ -87,11 +87,13 @@ struct TrackMetadataEditorSheet: View {
                     searchOnline()
                 }
                 .disabled(isSearchingOnline)
+                .help("Search the selected online source for matching metadata.")
 
                 Button("Audio Fingerprint Scan") {
                     scanFingerprint()
                 }
                 .disabled(isScanningFingerprint)
+                .help("Identify this track by its audio fingerprint using AcoustID.")
 
                 if isSearchingOnline {
                     ProgressView()
@@ -141,6 +143,7 @@ struct TrackMetadataEditorSheet: View {
                         }
                         .buttonStyle(.borderless)
                         .controlSize(.small)
+                        .help("Unlock every field so online matches can overwrite them.")
                     }
 
                     FlowLayout(spacing: 6) {
@@ -168,6 +171,7 @@ struct TrackMetadataEditorSheet: View {
                                     Button("Use All") {
                                         apply(candidate: candidate)
                                     }
+                                    .help("Apply all fields from this online match to the track.")
                                 }
 
                                 FlowLayout(spacing: 6) {
@@ -238,6 +242,7 @@ struct TrackMetadataEditorSheet: View {
                                     Button("Use All") {
                                         apply(suggestion: suggestion)
                                     }
+                                    .help("Apply all fields from this suggestion to the track.")
                                 }
 
                                 FlowLayout(spacing: 6) {
@@ -284,6 +289,7 @@ struct TrackMetadataEditorSheet: View {
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }
+                    .help("Close without saving changes.")
                 Button("Save") {
                     do {
                         try onSave(
@@ -313,6 +319,7 @@ struct TrackMetadataEditorSheet: View {
                     }
                 }
                 .keyboardShortcut(.defaultAction)
+                .help("Save the edited tags to the track file and the Serato library.")
             }
         }
         .padding(16)
@@ -379,6 +386,7 @@ struct TrackMetadataEditorSheet: View {
                     artworkStatusMessage = nil
                 }
                 .controlSize(.small)
+                .help("Discard the newly downloaded artwork.")
             }
         }
     }
@@ -415,6 +423,7 @@ struct TrackMetadataEditorSheet: View {
         Button(label, action: action)
             .buttonStyle(.bordered)
             .controlSize(.small)
+            .help("Apply the \(label) value from this match.")
     }
 
     private func lockChip(field: MetadataField) -> some View {

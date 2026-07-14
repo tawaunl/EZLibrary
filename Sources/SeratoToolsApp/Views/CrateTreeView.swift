@@ -81,15 +81,18 @@ struct CrateTreeView: View {
                         isInlineCreateNameFocused = true
                     }
                 }
+                .help("Create a new empty crate.")
                 Button("Hide") {
                     hideSelectedCrate()
                 }
                 .disabled(selectedNode == nil)
+                .help("Hide the selected crate from the main list without deleting it.")
 
                 Button("Delete") {
                     requestDeleteSelectedCrate()
                 }
                 .disabled(selectedRegularNode == nil)
+                .help("Permanently delete the selected crate.")
                 Spacer()
             }
             .padding(.horizontal, 8)
@@ -107,11 +110,13 @@ struct CrateTreeView: View {
                         createCrateInline()
                     }
                     .disabled(newCrateName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .help("Create the crate with the entered name.")
 
                     Button("Cancel") {
                         newCrateName = ""
                         showingInlineCreate = false
                     }
+                    .help("Cancel creating a new crate.")
                 }
                 .padding(.horizontal, 8)
             }
@@ -125,6 +130,7 @@ struct CrateTreeView: View {
                                 Spacer()
                                 Button("Unhide") { unhide(node) }
                                     .buttonStyle(.bordered)
+                                    .help("Show this crate in the main list again.")
                             }
                         }
                     }
@@ -150,6 +156,7 @@ struct CrateTreeView: View {
                                         Spacer()
                                         Button("Unhide") { unhide(node) }
                                             .buttonStyle(.bordered)
+                                            .help("Show this crate in the main list again.")
                                     }
                                 }
                             }

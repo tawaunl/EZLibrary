@@ -147,9 +147,11 @@ struct LibraryConsolidationView: View {
                 Button("Browse…") {
                     chooseLibraryDirectory()
                 }
+                .help("Choose the main Serato library folder.")
                 Button("Apply") {
                     applyLibraryDirectory()
                 }
+                .help("Load the library from the entered folder path.")
             }
             .controlSize(.large)
 
@@ -191,10 +193,12 @@ struct LibraryConsolidationView: View {
                     schedulePreviewRefresh()
                 }
                 .disabled(isRunning)
+                .help("Recalculate which files would be moved or copied to the central folder.")
                 Button(actionButtonTitle) {
                     runConsolidation()
                 }
                 .disabled(shouldDisableConsolidationAction)
+                .help("Move or copy the selected source files into the central folder and update the library.")
             }
             .controlSize(.large)
 
@@ -270,6 +274,7 @@ struct LibraryConsolidationView: View {
                         }
                     }
                     .buttonStyle(.plain)
+                    .help("Select or deselect all source locations for consolidation.")
 
                     Text("\(selectedSourceGroupIDs.count) selected")
                         .font(.footnote)
@@ -293,6 +298,7 @@ struct LibraryConsolidationView: View {
                                     }
                                 }
                                 .buttonStyle(.plain)
+                                .help("Include or exclude this source location from consolidation.")
 
                                 Spacer(minLength: 0)
                                 VStack(alignment: .trailing, spacing: 2) {

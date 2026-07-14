@@ -153,21 +153,25 @@ struct PlaylistMatchView: View {
                     runMatch()
                 }
                 .disabled(isRunning)
+                .help("Read the pasted playlist and match its tracks against your Serato library.")
 
                 Button("Clear") {
                     clearResults()
                 }
                 .disabled(isRunning)
+                .help("Clear the input and all match results.")
 
                 Button("Save Plan") {
                     savePlanToDisk()
                 }
                 .disabled(planItems.isEmpty || isRunning)
+                .help("Save the unmatched tracks to a plan file you can reload later.")
 
                 Button("Load Plan") {
                     loadPlanFromDisk()
                 }
                 .disabled(isRunning)
+                .help("Load a previously saved plan of unmatched tracks.")
 
                 Spacer(minLength: 0)
             }
@@ -206,6 +210,7 @@ struct PlaylistMatchView: View {
                 createCrateFromMatches()
             }
             .disabled(isCreatingCrate || matchedTracks.isEmpty)
+            .help("Build a new Serato crate from the selected matched tracks.")
 
             HStack(spacing: 8) {
                 Picker("Bulk Version", selection: $bulkVersionPreference) {
@@ -220,18 +225,21 @@ struct PlaylistMatchView: View {
                     applyBulkVersionPreference()
                 }
                 .disabled(matchedEntries.isEmpty)
+                .help("Apply the selected version preference to every matched track.")
 
                 Button("Select All") {
                     includedMatchedEntryIDs = Set(matchedEntries.map { $0.entry.id })
                     matchedTracks = selectedMatchedTracks(from: matchedEntries)
                 }
                 .disabled(matchedEntries.isEmpty)
+                .help("Include every matched track in the crate.")
 
                 Button("Select None") {
                     includedMatchedEntryIDs.removeAll()
                     matchedTracks = []
                 }
                 .disabled(matchedEntries.isEmpty)
+                .help("Exclude all matched tracks from the crate.")
 
                 Toggle("Show Unchecked Only", isOn: $showOnlyUncheckedMatches)
                     .toggleStyle(.switch)
@@ -317,15 +325,18 @@ struct PlaylistMatchView: View {
                                             searchYouTubeSuggestions(for: item.entry)
                                         }
                                         .disabled(matchedSearchingEntryIDs.contains(item.entry.id))
+                                        .help("Search YouTube inside the app and list matching results below.")
 
                                         Button("Search YouTube") {
                                             openYouTubeSearch(for: item.entry)
                                         }
+                                        .help("Open a YouTube search for this track in your browser.")
 
                                         Button(matchedRippingEntryIDs.contains(item.entry.id) ? "Ripping..." : "Rip + Add") {
                                             ripMatchedEntryFromYouTube(item.entry)
                                         }
                                         .disabled(matchedRippingEntryIDs.contains(item.entry.id))
+                                        .help("Download the audio from the pasted YouTube URL and add it to your library.")
                                     }
 
                                     if let suggestions = matchedSuggestionsByEntryID[item.entry.id], !suggestions.isEmpty {
@@ -354,6 +365,7 @@ struct PlaylistMatchView: View {
                                                         }
                                                         .buttonStyle(.bordered)
                                                         .controlSize(.small)
+                                                        .help("Use this suggestion's URL in the field above.")
 
                                                         Button(matchedRippingEntryIDs.contains(item.entry.id) ? "Ripping..." : "Use + Rip") {
                                                             ripMatchedEntryFromYouTube(item.entry, preferredURL: suggestion.webpageURL)
@@ -361,6 +373,7 @@ struct PlaylistMatchView: View {
                                                         .buttonStyle(.borderedProminent)
                                                         .controlSize(.small)
                                                         .disabled(matchedRippingEntryIDs.contains(item.entry.id))
+                                                        .help("Download this suggestion's audio and add it to your library.")
                                                     }
                                                     .padding(.horizontal, 6)
                                                     .padding(.vertical, 5)
@@ -486,15 +499,18 @@ struct PlaylistMatchView: View {
                                 searchYouTubeSuggestions(for: item)
                             }
                             .disabled(searchingPlanIDs.contains(item.id))
+                            .help("Search YouTube inside the app and list matching results below.")
 
                             Button("Search YouTube") {
                                 openYouTubeSearch(for: item.entry)
                             }
+                            .help("Open a YouTube search for this track in your browser.")
 
                             Button(rippingPlanIDs.contains(item.id) ? "Ripping..." : "Rip + Add") {
                                 ripPlanItemFromYouTube(item)
                             }
                             .disabled(rippingPlanIDs.contains(item.id))
+                            .help("Download the audio from the pasted YouTube URL and add it to your library.")
                         }
 
                         if let suggestions = youtubeSuggestionsByPlanID[item.id], !suggestions.isEmpty {
@@ -523,6 +539,7 @@ struct PlaylistMatchView: View {
                                             }
                                             .buttonStyle(.bordered)
                                             .controlSize(.small)
+                                            .help("Use this suggestion's URL in the field above.")
 
                                             Button(rippingPlanIDs.contains(item.id) ? "Ripping..." : "Use + Rip") {
                                                 ripPlanItemFromYouTube(item, preferredURL: suggestion.webpageURL)
@@ -530,6 +547,7 @@ struct PlaylistMatchView: View {
                                             .buttonStyle(.borderedProminent)
                                             .controlSize(.small)
                                             .disabled(rippingPlanIDs.contains(item.id))
+                                            .help("Download this suggestion's audio and add it to your library.")
                                         }
                                         .padding(.horizontal, 6)
                                         .padding(.vertical, 5)

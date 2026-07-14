@@ -63,10 +63,12 @@ struct CrateDetailView: View {
                             Button("Manage Tracks") {
                                 isManagingTracks = true
                             }
+                            .help("Add or remove tracks in this crate.")
                             Button("Lookup ID3 Online") {
                                 metadataLookupTrack = selectedTracksForActions.first
                             }
                             .disabled(selectedTracksForActions.count != 1)
+                            .help("Search online sources for metadata for the selected track. Select exactly one track.")
 
                             Button("Delete From Crate") {
                                 pendingDeleteTracks = selectedTracksForActions
@@ -74,6 +76,7 @@ struct CrateDetailView: View {
                                 performOrConfirmQuickDelete(.fromCrate)
                             }
                             .disabled(selectedTracksForActions.isEmpty)
+                            .help("Remove the selected tracks from this crate only. They stay in the library.")
 
                             Button("Delete From Library") {
                                 pendingDeleteTracks = selectedTracksForActions
@@ -81,6 +84,7 @@ struct CrateDetailView: View {
                                 performOrConfirmQuickDelete(.fromLibrary)
                             }
                             .disabled(selectedTracksForActions.isEmpty)
+                            .help("Remove the selected tracks from the Serato library. Files stay on disk.")
 
                             Button("Delete From Computer") {
                                 pendingDeleteTracks = selectedTracksForActions
@@ -88,6 +92,7 @@ struct CrateDetailView: View {
                                 performOrConfirmQuickDelete(.fromComputer)
                             }
                             .disabled(selectedTracksForActions.isEmpty)
+                            .help("Remove the selected tracks from the library and move their files to the Trash.")
 
                             Toggle("Confirm Deletes", isOn: $confirmDeleteActions)
                                 .toggleStyle(.switch)
@@ -552,6 +557,7 @@ private struct CrateTrackManagerView: View {
                     Button(isIncluded(track.seratoStoredPath) ? "Remove" : "Add") {
                         toggle(track.seratoStoredPath)
                     }
+                    .help(isIncluded(track.seratoStoredPath) ? "Remove this track from the crate." : "Add this track to the crate.")
                 }
             }
 
@@ -561,7 +567,9 @@ private struct CrateTrackManagerView: View {
                     .foregroundStyle(.secondary)
                 Spacer()
                 Button("Cancel") { dismiss() }
+                    .help("Discard changes and close.")
                 Button("Save") { save() }
+                    .help("Save the crate's track list.")
             }
         }
         .padding()

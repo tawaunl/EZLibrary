@@ -183,6 +183,7 @@ struct AddMusicView: View {
                     syncDestinationFolderToSeratoLibrary()
                 }
                 .disabled(isRunning || isSyncingFolder)
+                .help("Scan the selected folder for audio files and add any missing tracks to the Serato database. Files are not moved, copied, or added to crates.")
 
                 Image(systemName: "questionmark.circle")
                     .foregroundStyle(.secondary)
@@ -296,11 +297,13 @@ struct AddMusicView: View {
                 Button("Add Files/Folders...") {
                     chooseFilesAndFolders()
                 }
+                .help("Choose audio files or folders to import into your library.")
                 Button("Clear") {
                     selectedInputURLs = []
                     refreshDiscoveredCount()
                 }
                 .disabled(selectedInputURLs.isEmpty)
+                .help("Remove all selected input files and folders.")
             }
 
             if selectedInputURLs.isEmpty {
@@ -335,6 +338,7 @@ struct AddMusicView: View {
                 runImport()
             }
             .disabled(isImportDisabled)
+            .help("Copy or move the selected files into your library folder and add them to the Serato database.")
 
             Text("Destination root: \(destinationFolderURL.path)")
                 .font(.footnote)

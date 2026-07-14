@@ -351,12 +351,15 @@ struct YouTubeRipView: View {
                     loadVideoInfo()
                 }
                 .disabled(isLoadingInfo || parsedVideoURL == nil)
+                .help("Fetch the title, artist, and duration for the entered video URL.")
                 Button("Import CSV/Excel") {
                     chooseLinksFile()
                 }
+                .help("Import a list of video links from a CSV or Excel file for batch downloading.")
                 Button("Check yt-dlp + ffmpeg") {
                     checkDependencies()
                 }
+                .help("Verify that the yt-dlp and ffmpeg command-line tools are installed.")
                 if isLoadingInfo {
                     ProgressView()
                         .controlSize(.small)
@@ -610,6 +613,7 @@ struct YouTubeRipView: View {
                 runDownload()
             }
             .disabled(!canDownload)
+            .help("Download the audio, save it to the destination folder, and optionally add it to a crate.")
 
             HStack(spacing: 8) {
                 Circle()
@@ -658,6 +662,7 @@ struct YouTubeRipView: View {
                     runID3Lookup()
                 }
                 .disabled(isSearchingLookup)
+                .help("Search online for ID3 tag values (artist, album, genre, and more) for this download.")
 
                 if isSearchingLookup {
                     ProgressView()
@@ -700,6 +705,7 @@ struct YouTubeRipView: View {
                                             applyLookupCandidate(candidate)
                                         }
                                         .controlSize(.small)
+                                        .help("Apply all ID3 fields from this match to the download.")
                                     }
 
                                     HStack(spacing: 6) {
@@ -792,18 +798,21 @@ struct YouTubeRipView: View {
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
+                    .help("Open the imported links file in its default app.")
 
                     Button("Reveal") {
                         NSWorkspace.shared.activateFileViewerSelecting([fileURL])
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
+                    .help("Reveal the imported links file in Finder.")
 
                     Button("Open Containing Folder") {
                         NSWorkspace.shared.open(fileURL.deletingLastPathComponent())
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
+                    .help("Open the folder that contains the imported links file.")
 
                     Spacer(minLength: 0)
                 }
@@ -827,6 +836,7 @@ struct YouTubeRipView: View {
         Button(label, action: action)
             .buttonStyle(.bordered)
             .controlSize(.small)
+            .help("Apply the \(label) value from this match.")
     }
 
     private func chooseLinksFile() {

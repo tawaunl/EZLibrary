@@ -302,14 +302,17 @@ struct TagsBulkEditView: View {
                     metadataLookupTrack = selectedTracks.first
                 }
                 .disabled(selectedTracks.count != 1)
+                .help("Search online sources for metadata for the selected track. Select exactly one track.")
                 Button("Fill Missing Genre/Year") {
                     lookupMissingGenreAndYear()
                 }
                 .disabled(selectedTracks.isEmpty || isBulkLookupRunning)
+                .help("Look up genre and year online and fill them in for the selected tracks.")
                 Button("Apply Top Hit (A/Al/G/Y)") {
                     applyTopHitMetadataToSelected()
                 }
                 .disabled(selectedTracks.isEmpty || isBulkLookupRunning)
+                .help("Apply the best online match's Artist, Album, Genre, and Year to the selected tracks.")
                 if isBulkLookupRunning {
                     ProgressView()
                         .controlSize(.small)

@@ -109,6 +109,7 @@ struct TrackAudioPlayerPanel: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.mini)
+                .help(miniModeEnabled ? "Switch to the full-size player." : "Switch to the compact mini player.")
             }
 
             Slider(
@@ -134,6 +135,7 @@ struct TrackAudioPlayerPanel: View {
                 .buttonStyle(.borderedProminent)
                 .controlSize(.mini)
                 .disabled(player.loadedTrackPath == nil)
+                .help("Start playback of the loaded track.")
 
                 Button {
                     player.stopPlayback()
@@ -147,6 +149,7 @@ struct TrackAudioPlayerPanel: View {
                 .buttonStyle(.bordered)
                 .controlSize(.mini)
                 .disabled(player.loadedTrackPath == nil)
+                .help("Stop playback.")
 
                 Spacer()
 

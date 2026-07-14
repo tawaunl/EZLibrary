@@ -403,6 +403,7 @@ private struct TrackNSTableView: NSViewRepresentable {
                     newButton.contentTintColor = NSColor.controlAccentColor
                     newButton.target = self
                     newButton.action = #selector(handlePlayButton(_:))
+                    newButton.toolTip = "Preview this track in the audio player."
 
                     newCell.addSubview(newButton)
                     NSLayoutConstraint.activate([

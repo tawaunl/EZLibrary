@@ -245,6 +245,7 @@ struct LibraryBackupView: View {
                     runBackup()
                 }
                 .disabled(isRunning || isActionDisabled)
+                .help("Create a timestamped backup copy of your Serato library at the chosen destination.")
             }
 
             if isRunning {

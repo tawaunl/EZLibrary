@@ -347,8 +347,11 @@ struct ContentView: View {
                         onPathChanged: applyLibraryDirectory
                     )
                     Button("Apply") { applyLibraryDirectory() }
+                        .help("Load the Serato library from the directory shown above.")
                     Button("Reload") { reloadLibrary() }
+                        .help("Re-read tracks and crates from the current library directory.")
                     Button("API Keys…") { showDiscogsTokenSheet = true }
+                        .help("Manage Discogs and AcoustID API keys used for online metadata lookups.")
                 }
                 .padding(.horizontal, 8)
                 .padding(.top, 8)
@@ -423,18 +426,21 @@ struct ContentView: View {
                                 metadataLookupTrack = selectedTracksForActions.first
                             }
                             .disabled(selectedTracksForActions.count != 1)
+                            .help("Search online sources for metadata for the selected track. Select exactly one track.")
 
                             Button("Delete From Library") {
                                 pendingTrackDeleteSelection = selectedTracksForActions
                                 performOrConfirmQuickTrackDelete(.fromLibrary)
                             }
                             .disabled(selectedTracksForActions.isEmpty)
+                            .help("Remove the selected tracks from the Serato library. Files stay on disk.")
 
                             Button("Delete From Computer") {
                                 pendingTrackDeleteSelection = selectedTracksForActions
                                 performOrConfirmQuickTrackDelete(.fromComputer)
                             }
                             .disabled(selectedTracksForActions.isEmpty)
+                            .help("Remove the selected tracks from the library and move their files to the Trash.")
 
                             Toggle("Confirm Deletes", isOn: $confirmDeleteActions)
                                 .toggleStyle(.switch)
@@ -813,6 +819,7 @@ private struct DiscogsTokenSettingsSheet: View {
                             validateAcoustIDKey()
                         }
                         .disabled(validatingAcoustIDKey)
+                        .help("Check that the AcoustID client key works for audio fingerprint lookups.")
 
                         if validatingAcoustIDKey {
                             ProgressView()
@@ -853,12 +860,14 @@ private struct DiscogsTokenSettingsSheet: View {
                     acoustIDKeyInput = ""
                     statusMessage = "API tokens cleared."
                 }
+                .help("Remove the saved Discogs and AcoustID API keys.")
 
                 Spacer()
 
                 Button("Close") {
                     dismiss()
                 }
+                .help("Close without saving changes.")
 
                 Button("Save") {
                     let discogsTrimmed = discogsTokenInput.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -879,6 +888,7 @@ private struct DiscogsTokenSettingsSheet: View {
                     statusMessage = "API tokens saved."
                 }
                 .keyboardShortcut(.defaultAction)
+                .help("Save the entered API keys for online metadata and fingerprint lookups.")
             }
         }
         .padding(16)

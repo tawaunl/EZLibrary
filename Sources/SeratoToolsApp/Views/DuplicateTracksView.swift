@@ -171,11 +171,13 @@ struct DuplicateTracksView: View {
                 requestMassDeletion(fromComputer: false)
             }
             .disabled(totalDeletable == 0)
+            .help("Across every group, remove all copies except the kept one from the Serato library. Files stay on disk.")
 
             Button("Delete All Others → Computer") {
                 requestMassDeletion(fromComputer: true)
             }
             .disabled(totalDeletable == 0)
+            .help("Across every group, remove all copies except the kept one and move their files to the Trash.")
 
             Text("\(totalDeletable) removable")
                 .font(.caption)
@@ -249,11 +251,13 @@ struct DuplicateTracksView: View {
                 requestDeletion(group: group, tracks: deletable, fromComputer: false)
             }
             .disabled(deletable.isEmpty)
+            .help("Remove the other copies in this group from the Serato library. Files stay on disk.")
 
             Button("Delete Others → Computer") {
                 requestDeletion(group: group, tracks: deletable, fromComputer: true)
             }
             .disabled(deletable.isEmpty)
+            .help("Remove the other copies in this group and move their files to the Trash.")
 
             Spacer(minLength: 0)
         }
@@ -301,6 +305,7 @@ struct DuplicateTracksView: View {
                         keepSelectionByGroupID[group.id] = track.seratoStoredPath
                     }
                     .controlSize(.small)
+                    .help("Keep this copy and mark the others in the group for deletion.")
                 }
             }
             Text(track.artist.isEmpty ? track.fileURL.lastPathComponent : track.artist)
