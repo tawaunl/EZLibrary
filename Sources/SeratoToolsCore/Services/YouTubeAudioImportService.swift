@@ -240,6 +240,81 @@ public enum YouTubeAudioImportService {
         return DependencyStatus(ytDLPPath: ytDLPPath, ffmpegPath: ffmpegPath)
     }
 
+    public struct DependencyInstallResult: Sendable {
+        public let succeeded: Bool
+        public let log: String
+    }
+
+    public enum DependencyInstallError: LocalizedError {
+        case bootstrapScriptMissing
+        case launchFailed(String)
+
+        public var errorDescription: String? {
+            switch self {
+            case .bootstrapScriptMissing:
+                return "The bundled dependency installer was not found in the app."
+            case let .launchFailed(message):
+                return "Could not run the dependency installer: \(message)"
+            }
+        }
+    }
+
+    /// Runs the bundled `install-dependencies.sh` bootstrap (Homebrew + yt-dlp +
+    /// ffmpeg + chromaprint) as the current user. Best-effort: the app still
+    /// works with its bundled portable tools if this fails.
+    public static func installDependencies() throws -> DependencyInstallResult {
+        guard let scriptPath = bundledScriptPath(named: "install-dependencies.sh") else {
+            throw DependencyInstallError.bootstrapScriptMissing
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/bash")
+        process.arguments = [scriptPath]
+
+        var environment = ProcessInfo.processInfo.environment
+        environment["HOMEBREW_NO_AUTO_UPDATE"] = "1"
+        environment["HOMEBREW_NO_ENV_HINTS"] = "1"
+        environment["HOMEBREW_NO_ANALYTICS"] = "1"
+        environment["NONINTERACTIVE"] = "1"
+        process.environment = environment
+
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = output
+
+        do {
+            try process.run()
+        } catch {
+            throw DependencyInstallError.launchFailed(error.localizedDescription)
+        }
+
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+
+        let log = String(data: data, encoding: .utf8) ?? ""
+        let ready = dependencyStatus().isReady
+        return DependencyInstallResult(succeeded: ready, log: log)
+    }
+
+    private static func bundledScriptPath(named name: String) -> String? {
+        let fileManager = FileManager.default
+        let bundle = Bundle.main
+        let candidates: [URL?] = [
+            bundle.resourceURL?.appendingPathComponent("scripts/\(name)", isDirectory: false),
+            bundle.bundleURL
+                .appendingPathComponent("Contents", isDirectory: true)
+                .appendingPathComponent("Resources", isDirectory: true)
+                .appendingPathComponent("scripts", isDirectory: true)
+                .appendingPathComponent(name, isDirectory: false)
+        ]
+
+        for candidate in candidates.compactMap({ $0 }) where fileManager.isReadableFile(atPath: candidate.path) {
+            return candidate.path
+        }
+
+        return nil
+    }
+
     public static func searchVideos(query: String, maxResults: Int = 5) throws -> [SearchResult] {
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedQuery.isEmpty else {

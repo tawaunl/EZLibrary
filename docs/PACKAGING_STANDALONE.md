@@ -63,7 +63,26 @@ Output:
 Installer behavior on target machines:
 
 - Removes quarantine attributes from `/Applications/SeratoTools.app` when present.
-- Does not require Homebrew or network access to run postinstall.
+- Bootstraps runtime dependencies for the logged-in user on a fresh machine:
+  installs Homebrew (if missing) plus `yt-dlp`, `ffmpeg`, and `chromaprint`
+  (`fpcalc`). This runs best-effort and detached so it never blocks or fails the
+  install — the app also ships portable copies of these tools, so it works even
+  if the bootstrap can't run.
+- The bootstrap is the bundled `Contents/Resources/scripts/install-dependencies.sh`.
+  The postinstall runs it as root; the script re-targets the work to the console
+  user (Homebrew must not run as root) and pre-stages the Homebrew prefix so the
+  first install avoids an interactive password prompt where possible.
+- Bootstrap progress is logged to `/tmp/seratotools-install-dependencies.log`
+  (installer actions to `/tmp/seratotools-postinstall.log`).
+
+Run the dependency bootstrap manually at any time:
+
+```bash
+/Applications/SeratoTools.app/Contents/Resources/scripts/install-dependencies.sh
+```
+
+The YouTube Rip screen also exposes an **Install Dependencies** button that runs
+the same bootstrap on demand when `yt-dlp`/`ffmpeg` are missing.
 
 Install locally for testing:
 

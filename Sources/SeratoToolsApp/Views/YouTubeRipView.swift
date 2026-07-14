@@ -107,6 +107,7 @@ struct YouTubeRipView: View {
     @State private var isLoadingBatchInfo = false
     @State private var dependencyStatusMessage: String?
     @State private var dependencyReady = false
+    @State private var isInstallingDependencies = false
     @State private var errorMessage: String?
     @State private var successMessage: String?
     @State private var batchProgressMessage: String?
@@ -360,12 +361,24 @@ struct YouTubeRipView: View {
                     checkDependencies()
                 }
                 .help("Verify that the yt-dlp and ffmpeg command-line tools are installed.")
+                if !dependencyReady {
+                    Button(isInstallingDependencies ? "Installing..." : "Install Dependencies") {
+                        installDependencies()
+                    }
+                    .disabled(isInstallingDependencies)
+                    .help("Install Homebrew, yt-dlp, ffmpeg, and chromaprint automatically.")
+                }
                 if isLoadingInfo {
                     ProgressView()
                         .controlSize(.small)
                 }
 
                 if isLoadingBatchInfo {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+
+                if isInstallingDependencies {
                     ProgressView()
                         .controlSize(.small)
                 }
@@ -1247,7 +1260,29 @@ struct YouTubeRipView: View {
         var missing: [String] = []
         if status.ytDLPPath == nil { missing.append("yt-dlp") }
         if status.ffmpegPath == nil { missing.append("ffmpeg") }
-        dependencyStatusMessage = "Missing dependencies: \(missing.joined(separator: ", ")). Install with Homebrew (brew install yt-dlp ffmpeg)."
+        dependencyStatusMessage = "Missing dependencies: \(missing.joined(separator: ", ")). Click Install Dependencies, or run: brew install yt-dlp ffmpeg."
+    }
+
+    private func installDependencies() {
+        guard !isInstallingDependencies else { return }
+        isInstallingDependencies = true
+        dependencyStatusMessage = "Installing Homebrew, yt-dlp, ffmpeg, and chromaprint. This can take a few minutes..."
+
+        Task {
+            let result = await Task.detached(priority: .userInitiated) {
+                try? YouTubeAudioImportService.installDependencies()
+            }.value
+
+            await MainActor.run {
+                isInstallingDependencies = false
+                checkDependencies()
+                if dependencyReady {
+                    dependencyStatusMessage = "Dependencies installed. yt-dlp and ffmpeg are ready."
+                } else if let result, !result.succeeded {
+                    dependencyStatusMessage = "Could not install all dependencies automatically. Try: brew install yt-dlp ffmpeg chromaprint. Details logged to /tmp/seratotools-install-dependencies.log."
+                }
+            }
+        }
     }
 
     private func appendRecentDownload(title: String, fileName: String, crateLabel: String) {

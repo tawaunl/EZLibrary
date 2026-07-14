@@ -392,6 +392,9 @@ cp "$ROOT_DIR/Scripts/finder-add-music.sh" "$RESOURCE_SCRIPT_DIR/finder-add-musi
 if [[ -f "$ROOT_DIR/Scripts/install-finder-quick-action-from-app.sh" ]]; then
 	cp "$ROOT_DIR/Scripts/install-finder-quick-action-from-app.sh" "$RESOURCE_SCRIPT_DIR/install-finder-quick-action.sh"
 fi
+# Bundle the dependency bootstrap so the installer and the app can install
+# Homebrew + yt-dlp + ffmpeg + chromaprint on a fresh machine.
+cp "$ROOT_DIR/Scripts/install-dependencies.sh" "$RESOURCE_SCRIPT_DIR/install-dependencies.sh"
 chmod +x "$RESOURCE_SCRIPT_DIR"/*.sh
 
 # Required for audio fingerprint lookup.
