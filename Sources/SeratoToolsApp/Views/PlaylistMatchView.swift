@@ -85,7 +85,7 @@ struct PlaylistMatchView: View {
             VStack(alignment: .leading, spacing: 14) {
                 SectionHeaderCard(
                     title: "PlaylistMatch",
-                    description: "Paste a Spotify playlist link, text list, or CSV. PlaylistMatch scans your Serato library, builds a crate from matches, and keeps unmatched tracks in a Plan.",
+                    description: "Paste a Spotify or Apple Music playlist link, text list, or CSV. PlaylistMatch scans your Serato library, builds a crate from matches, and keeps unmatched tracks in a Plan.",
                     icon: "music.quarternote.3"
                 )
 
@@ -116,7 +116,7 @@ struct PlaylistMatchView: View {
                         .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
                 )
 
-            Text("Input examples: Spotify playlist URL, CSV with Title/Artist columns, or lines like 'Artist - Title'.")
+            Text("Input examples: Spotify or Apple Music playlist URL, CSV with Title/Artist columns, or lines like 'Artist - Title'.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
 

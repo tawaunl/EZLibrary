@@ -127,18 +127,24 @@ public enum PlaylistMatchService {
         case noPlaylistRowsDetected
         case spotifyFetchFailed(String)
         case spotifyParseFailed
+        case appleMusicFetchFailed(String)
+        case appleMusicParseFailed
         case noMatchedTracks
 
         public var errorDescription: String? {
             switch self {
             case .emptyInput:
-                return "Paste a Spotify playlist link, text list, or CSV input first."
+                return "Paste a Spotify or Apple Music playlist link, text list, or CSV input first."
             case .noPlaylistRowsDetected:
                 return "Couldn't detect any tracks in the pasted input."
             case let .spotifyFetchFailed(message):
                 return "Couldn't load the Spotify playlist page: \(message)"
             case .spotifyParseFailed:
                 return "Couldn't parse tracks from the Spotify playlist page."
+            case let .appleMusicFetchFailed(message):
+                return "Couldn't load the Apple Music playlist page: \(message)"
+            case .appleMusicParseFailed:
+                return "Couldn't parse tracks from the Apple Music playlist page."
             case .noMatchedTracks:
                 return "No playlist tracks matched your Serato library."
             }
@@ -153,6 +159,10 @@ public enum PlaylistMatchService {
             case .spotifyFetchFailed:
                 return "Check the link and network access, then retry."
             case .spotifyParseFailed:
+                return "Paste the playlist as text or CSV input and try again."
+            case .appleMusicFetchFailed:
+                return "Check the link and network access, then retry."
+            case .appleMusicParseFailed:
                 return "Paste the playlist as text or CSV input and try again."
             case .noMatchedTracks:
                 return "Review the Plan section and update your library with missing tracks."
@@ -205,12 +215,20 @@ public enum PlaylistMatchService {
             throw MatchError.emptyInput
         }
 
-        if let spotifyURL = spotifyPlaylistURL(from: trimmed), shouldPreferSpotifyFetch(for: trimmed) {
+        if let spotifyURL = spotifyPlaylistURL(from: trimmed), shouldPreferWebFetch(for: trimmed) {
             let fromSpotify = try await loadSpotifyPlaylistData(from: spotifyURL, session: session)
             guard !fromSpotify.entries.isEmpty else {
                 throw MatchError.spotifyParseFailed
             }
             return fromSpotify
+        }
+
+        if let appleMusicURL = appleMusicPlaylistURL(from: trimmed), shouldPreferWebFetch(for: trimmed) {
+            let fromApple = try await loadAppleMusicPlaylistData(from: appleMusicURL, session: session)
+            guard !fromApple.entries.isEmpty else {
+                throw MatchError.appleMusicParseFailed
+            }
+            return fromApple
         }
 
         let parsed = parseEntries(from: trimmed)
@@ -540,7 +558,66 @@ public enum PlaylistMatchService {
         return spotifyPlaylistURLFromRegex(in: input)
     }
 
-    private static func shouldPreferSpotifyFetch(for input: String) -> Bool {
+    public static func appleMusicPlaylistURL(from input: String) -> URL? {
+        let detectorTypes = NSTextCheckingResult.CheckingType.link.rawValue
+        if let detector = try? NSDataDetector(types: detectorTypes) {
+            let nsRange = NSRange(input.startIndex..<input.endIndex, in: input)
+            var found: URL?
+            detector.enumerateMatches(in: input, options: [], range: nsRange) { result, _, stop in
+                guard let detected = result?.url else { return }
+                let cleaned = cleanedCandidateURLString(detected.absoluteString)
+                guard let url = URL(string: cleaned) else { return }
+                if let canonical = canonicalAppleMusicPlaylistURL(from: url) {
+                    found = canonical
+                    stop.pointee = true
+                }
+            }
+            if let found {
+                return found
+            }
+        }
+
+        return appleMusicPlaylistURLFromRegex(in: input)
+    }
+
+    private static func appleMusicPlaylistURLFromRegex(in input: String) -> URL? {
+        let pattern = #"https?://music\.apple\.com/[^\s\"']*playlist/[^\s\"']*pl\.[A-Za-z0-9\-]+"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+            return nil
+        }
+
+        let nsRange = NSRange(input.startIndex..<input.endIndex, in: input)
+        guard let match = regex.firstMatch(in: input, options: [], range: nsRange),
+              let range = Range(match.range, in: input) else {
+            return nil
+        }
+
+        let cleaned = cleanedCandidateURLString(String(input[range]))
+        guard let url = URL(string: cleaned) else { return nil }
+        return canonicalAppleMusicPlaylistURL(from: url)
+    }
+
+    private static func canonicalAppleMusicPlaylistURL(from url: URL) -> URL? {
+        guard let host = url.host?.lowercased(), host.contains("music.apple.com") else {
+            return nil
+        }
+
+        let components = url.path.split(separator: "/").map(String.init)
+        guard let playlistIndex = components.firstIndex(of: "playlist"),
+              playlistIndex + 1 < components.count else {
+            return nil
+        }
+
+        // Accept /playlist/{slug}/pl.{id} or /playlist/pl.{id}
+        let playlistID = components[(playlistIndex + 1)...].first(where: { $0.lowercased().hasPrefix("pl.") })
+        guard let playlistID, !playlistID.isEmpty else {
+            return nil
+        }
+
+        return url.absoluteString.isEmpty ? nil : url
+    }
+
+    private static func shouldPreferWebFetch(for input: String) -> Bool {
         let parsed = parseEntries(from: input)
         if parsed.isEmpty {
             return true
@@ -802,6 +879,152 @@ public enum PlaylistMatchService {
 
     private struct SpotifyOEmbedResponse: Decodable {
         let title: String
+    }
+
+    private static func loadAppleMusicPlaylistData(from url: URL, session: URLSession) async throws -> ResolvedPlaylist {
+        var request = URLRequest(url: url)
+        request.setValue(spotifyBrowserUserAgent, forHTTPHeaderField: "User-Agent")
+
+        do {
+            let (data, response) = try await session.data(for: request)
+            if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+                throw MatchError.appleMusicFetchFailed("HTTP \(http.statusCode)")
+            }
+
+            guard let html = String(data: data, encoding: .utf8) else {
+                throw MatchError.appleMusicParseFailed
+            }
+
+            let parsed = parseAppleMusicPlaylist(html)
+            guard !parsed.entries.isEmpty else {
+                throw MatchError.appleMusicParseFailed
+            }
+
+            let diagnostics = ParserDiagnostics(
+                apiEntriesCount: 0,
+                htmlEntriesCount: parsed.entries.count,
+                embedEntriesCount: 0,
+                chosenSource: "apple-music-serialized",
+                chosenEntriesCount: parsed.entries.count,
+                chosenRowsWithArtistCount: parsed.entries.filter { !$0.artist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count
+            )
+            return ResolvedPlaylist(
+                playlistName: parsed.name,
+                entries: parsed.entries,
+                diagnostics: diagnostics
+            )
+        } catch let error as MatchError {
+            throw error
+        } catch {
+            throw MatchError.appleMusicFetchFailed(error.localizedDescription)
+        }
+    }
+
+    /// Parses an Apple Music playlist page. The web player embeds an ordered
+    /// track list (title + song adam ID) in `track-lockup` items and the
+    /// per-track `artistName` alongside each song's `storeAdamID`. Both catalog
+    /// and user (`pl.u-…`) playlists expose this data without authentication.
+    static func parseAppleMusicPlaylist(_ html: String) -> (name: String?, entries: [PlaylistEntry]) {
+        let artistByID = appleMusicArtistNamesByStoreID(in: html)
+
+        let lockupPattern = #""id":"track-lockup - [^"]*? - ([0-9]+)","title":"((?:[^"\\]|\\.)*)""#
+        guard let regex = try? NSRegularExpression(pattern: lockupPattern, options: []) else {
+            return (appleMusicPlaylistName(fromHTML: html), [])
+        }
+
+        let nsRange = NSRange(html.startIndex..<html.endIndex, in: html)
+        let matches = regex.matches(in: html, options: [], range: nsRange)
+
+        var seen = Set<String>()
+        var entries: [PlaylistEntry] = []
+        entries.reserveCapacity(matches.count)
+
+        for match in matches {
+            guard match.numberOfRanges >= 3,
+                  let idRange = Range(match.range(at: 1), in: html),
+                  let titleRange = Range(match.range(at: 2), in: html) else {
+                continue
+            }
+
+            let songID = String(html[idRange])
+            guard seen.insert(songID).inserted else { continue }
+
+            let title = unescapeJSONLikeString(String(html[titleRange]))
+            guard !title.isEmpty else { continue }
+
+            let artist = artistByID[songID].map(unescapeJSONLikeString) ?? ""
+            entries.append(
+                PlaylistEntry(
+                    title: title,
+                    artist: artist,
+                    sourceLine: urlSafeSourceLine(title: title, artist: artist)
+                )
+            )
+        }
+
+        return (appleMusicPlaylistName(fromHTML: html), entries)
+    }
+
+    /// Builds a song adam ID → artist name map by pairing each `artistName`
+    /// with the nearest preceding numeric `storeAdamID` (the track's song ID).
+    private static func appleMusicArtistNamesByStoreID(in html: String) -> [String: String] {
+        let nsRange = NSRange(html.startIndex..<html.endIndex, in: html)
+
+        var storeIDs: [(location: Int, id: String)] = []
+        if let storeRegex = try? NSRegularExpression(pattern: #""storeAdamID":"([0-9]+)""#, options: []) {
+            for match in storeRegex.matches(in: html, options: [], range: nsRange) {
+                guard let idRange = Range(match.range(at: 1), in: html) else { continue }
+                storeIDs.append((match.range.location, String(html[idRange])))
+            }
+        }
+
+        guard !storeIDs.isEmpty,
+              let artistRegex = try? NSRegularExpression(pattern: #""artistName":"((?:[^"\\]|\\.)*)""#, options: []) else {
+            return [:]
+        }
+
+        var map: [String: String] = [:]
+        var searchStart = 0
+        for match in artistRegex.matches(in: html, options: [], range: nsRange) {
+            guard let nameRange = Range(match.range(at: 1), in: html) else { continue }
+            let artist = String(html[nameRange])
+
+            // Advance a pointer through the sorted storeIDs to find the last one
+            // located before this artistName occurrence.
+            var lastID: String?
+            while searchStart < storeIDs.count && storeIDs[searchStart].location < match.range.location {
+                lastID = storeIDs[searchStart].id
+                searchStart += 1
+            }
+            if let lastID, map[lastID] == nil {
+                map[lastID] = artist
+            }
+        }
+
+        return map
+    }
+
+    private static func appleMusicPlaylistName(fromHTML html: String) -> String? {
+        if let ogTitle = firstCapture(in: html, pattern: #"<meta[^>]*property="og:title"[^>]*content="([^"]+)""#) {
+            let cleaned = unescapeJSONLikeString(ogTitle)
+                .replacingOccurrences(of: #"\s+on Apple Music$"#, with: "", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !cleaned.isEmpty {
+                return cleaned
+            }
+        }
+
+        if let rawTitle = firstCapture(in: html, pattern: #"<title>([^<]+)</title>"#) {
+            let cleaned = unescapeJSONLikeString(rawTitle)
+                .replacingOccurrences(of: #"\s+-\s+Playlist\s+-\s+Apple Music$"#, with: "", options: .regularExpression)
+                .replacingOccurrences(of: #"\s+-\s+Apple Music$"#, with: "", options: .regularExpression)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\u{200e}\u{200f} \n\t"))
+            if !cleaned.isEmpty {
+                return cleaned
+            }
+        }
+
+        return nil
     }
 
     private static func parseSpotifyHTML(_ html: String) -> [PlaylistEntry] {

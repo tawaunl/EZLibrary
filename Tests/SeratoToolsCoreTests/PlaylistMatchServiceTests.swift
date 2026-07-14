@@ -202,3 +202,70 @@ import Testing
     #expect(parsed.entries.isEmpty)
     #expect(parsed.name == nil)
 }
+
+@Test func appleMusicPlaylistParsesOrderedTitlesAndArtists() {
+    let html = """
+    <html><head>
+    <meta property="og:title" content="Mafioso Drake by fana on Apple Music" />
+    <title>\u{200e}Mafioso Drake by fana - Apple Music</title>
+    </head><body>
+    <script id="serialized-server-data" type="application/json">
+    [
+      {"items":[{"id":"track-lockup - pl.u-X - 1418213263","title":"Survival","trackNumber":null},
+                {"id":"track-lockup - pl.u-X - 1418213264","title":"Mob Ties","trackNumber":null},
+                {"id":"track-lockup - pl.u-X - 1889992115","title":"Tony Montana (feat. Drake)","trackNumber":null}]},
+      {"contentDescriptor":{"identifiers":{"storeAdamID":"1418213263"}},"artistName":"Drake"},
+      {"contentDescriptor":{"identifiers":{"storeAdamID":"1418213264"}},"artistName":"Drake"},
+      {"contentDescriptor":{"identifiers":{"storeAdamID":"1889992115"}},"artistName":"Future"}
+    ]
+    </script>
+    </body></html>
+    """
+
+    let parsed = PlaylistMatchService.parseAppleMusicPlaylist(html)
+
+    #expect(parsed.name == "Mafioso Drake by fana")
+    #expect(parsed.entries.count == 3)
+    #expect(parsed.entries[0].title == "Survival")
+    #expect(parsed.entries[0].artist == "Drake")
+    #expect(parsed.entries[1].title == "Mob Ties")
+    #expect(parsed.entries[1].artist == "Drake")
+    #expect(parsed.entries[2].title == "Tony Montana (feat. Drake)")
+    #expect(parsed.entries[2].artist == "Future")
+}
+
+@Test func appleMusicPlaylistDeDupesRepeatedSongIDs() {
+    let html = """
+    <html><body>
+    <script id="serialized-server-data" type="application/json">
+    [
+      {"items":[{"id":"track-lockup - pl.X - 100","title":"One"},
+                {"id":"track-lockup - pl.X - 100","title":"One"},
+                {"id":"track-lockup - pl.X - 200","title":"Two"}]},
+      {"identifiers":{"storeAdamID":"100"},"artistName":"A"},
+      {"identifiers":{"storeAdamID":"200"},"artistName":"B"}
+    ]
+    </script>
+    </body></html>
+    """
+
+    let parsed = PlaylistMatchService.parseAppleMusicPlaylist(html)
+
+    #expect(parsed.entries.count == 2)
+    #expect(parsed.entries[0].title == "One")
+    #expect(parsed.entries[0].artist == "A")
+    #expect(parsed.entries[1].title == "Two")
+    #expect(parsed.entries[1].artist == "B")
+}
+
+@Test func appleMusicPlaylistURLDetection() {
+    let fromSlug = PlaylistMatchService.appleMusicPlaylistURL(
+        from: "check this https://music.apple.com/us/playlist/mafioso-drake/pl.u-DdANyZ6CyvAYvm out"
+    )
+    #expect(fromSlug?.absoluteString == "https://music.apple.com/us/playlist/mafioso-drake/pl.u-DdANyZ6CyvAYvm")
+
+    let spotify = PlaylistMatchService.appleMusicPlaylistURL(
+        from: "https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M"
+    )
+    #expect(spotify == nil)
+}
