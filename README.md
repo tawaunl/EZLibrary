@@ -1,5 +1,9 @@
 # SeratoTools
 
+<p align="center">
+  <img src="docs/files/seratotools_icon_glow_gold.png" alt="SeratoTools app icon" width="160" height="160">
+</p>
+
 SeratoTools is a native macOS toolkit for DJs who want a cleaner, safer, and more reliable Serato library.
 
 From broken file paths to crate organization to bulk metadata cleanup, SeratoTools helps you spend less time fixing your library and more time playing music.
