@@ -29,7 +29,13 @@ public enum SeratoDatabaseParser {
     }
 
     private static func track(from payload: Data, rootDirectory: URL) -> Track? {
-        let fields = SeratoChunkCodec.readChunks(from: payload)
+        // One pass into a dictionary (first occurrence wins, matching the
+        // previous `first(where:)` behavior) instead of a linear scan of
+        // `fields` per looked-up tag — this runs once per track on load.
+        var fields: [String: Data] = [:]
+        for chunk in SeratoChunkCodec.readChunks(from: payload) where fields[chunk.tag] == nil {
+            fields[chunk.tag] = chunk.payload
+        }
         guard let seratoStoredPath = string(in: fields, tag: "pfil"), !seratoStoredPath.isEmpty else {
             // Serato uses the file path as the track's identity; a record
             // without one can't be referenced by crates and is unusable.
@@ -60,34 +66,36 @@ public enum SeratoDatabaseParser {
         )
     }
 
-    private static func string(in fields: [SeratoChunk], tag: String) -> String? {
-        fields.first(where: { $0.tag == tag }).map { SeratoChunkCodec.decodeUTF16BEString($0.payload) }
+    private static func string(in fields: [String: Data], tag: String) -> String? {
+        fields[tag].map(SeratoChunkCodec.decodeUTF16BEString)
     }
 
-    private static func bool(in fields: [SeratoChunk], tag: String) -> Bool {
-        guard let field = fields.first(where: { $0.tag == tag }), let byte = field.payload.first else {
+    private static func bool(in fields: [String: Data], tag: String) -> Bool {
+        guard let byte = fields[tag]?.first else {
             return false
         }
         return byte != 0
     }
 
-    private static func uint32(in fields: [SeratoChunk], tag: String) -> UInt32? {
-        guard let field = fields.first(where: { $0.tag == tag }), field.payload.count == 4 else {
+    private static func uint32(in fields: [String: Data], tag: String) -> UInt32? {
+        guard let payload = fields[tag], payload.count == 4 else {
             return nil
         }
-        let bytes = [UInt8](field.payload)
-        return (UInt32(bytes[0]) << 24) | (UInt32(bytes[1]) << 16) | (UInt32(bytes[2]) << 8) | UInt32(bytes[3])
+        return payload.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+            (UInt32(raw[0]) << 24) | (UInt32(raw[1]) << 16) | (UInt32(raw[2]) << 8) | UInt32(raw[3])
+        }
     }
 
-    private static func uint16(in fields: [SeratoChunk], tag: String) -> UInt16? {
-        guard let field = fields.first(where: { $0.tag == tag }), field.payload.count == 2 else {
+    private static func uint16(in fields: [String: Data], tag: String) -> UInt16? {
+        guard let payload = fields[tag], payload.count == 2 else {
             return nil
         }
-        let bytes = [UInt8](field.payload)
-        return (UInt16(bytes[0]) << 8) | UInt16(bytes[1])
+        return payload.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+            (UInt16(raw[0]) << 8) | UInt16(raw[1])
+        }
     }
 
-    private static func colorValue(in fields: [SeratoChunk], tag: String) -> UInt32? {
+    private static func colorValue(in fields: [String: Data], tag: String) -> UInt32? {
         guard let value = uint32(in: fields, tag: tag) else {
             return nil
         }

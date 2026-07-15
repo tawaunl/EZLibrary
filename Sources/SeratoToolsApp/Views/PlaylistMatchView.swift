@@ -685,7 +685,12 @@ struct PlaylistMatchView: View {
         Task {
             do {
                 let resolved = try await PlaylistMatchService.resolvePlaylist(from: input)
-                let result = PlaylistMatchService.match(entries: resolved.entries, libraryTracks: libraryTracks)
+                // Matching normalizes/compares against the whole library —
+                // run it off the main actor so the UI doesn't freeze.
+                let entries = resolved.entries
+                let result = await Task.detached(priority: .userInitiated) {
+                    PlaylistMatchService.match(entries: entries, libraryTracks: libraryTracks)
+                }.value
                 resolvedEntries = resolved.entries
                 resolvedEntryCount = resolved.entries.count
                 detectedPlaylistName = resolved.playlistName
@@ -1070,7 +1075,7 @@ struct PlaylistMatchView: View {
                 }.value
 
                 onLibraryChanged()
-                refreshMatchAfterRip(removing: item)
+                await refreshMatchAfterRip(removing: item)
                 try? alignTargetCrateToCurrentSelectionOrder()
                 planStatusByID[item.id] = "Downloaded \(outputFileURL.lastPathComponent) and added to crate."
                 successMessage = "Downloaded \(outputFileURL.lastPathComponent) and added it to \(targetCrateName). Matched: \(matchedEntries.count), Plan: \(planItems.count)."
@@ -1152,7 +1157,7 @@ struct PlaylistMatchView: View {
                 }.value
 
                 onLibraryChanged()
-                refreshMatchAfterMatchedRip(entryID: entry.id, downloadedFileURL: outputFileURL)
+                await refreshMatchAfterMatchedRip(entryID: entry.id, downloadedFileURL: outputFileURL)
                 try? alignTargetCrateToCurrentSelectionOrder()
                 matchedStatusByEntryID[entry.id] = "Downloaded \(outputFileURL.lastPathComponent) and added to crate."
                 successMessage = "Downloaded \(outputFileURL.lastPathComponent) and added it to \(targetCrateName)."
@@ -1225,7 +1230,7 @@ struct PlaylistMatchView: View {
         throw PlaylistMatchRipError.targetCrateMissing
     }
 
-    private func refreshMatchAfterRip(removing item: PlaylistMatchService.PlanItem) {
+    private func refreshMatchAfterRip(removing item: PlaylistMatchService.PlanItem) async {
         guard !resolvedEntries.isEmpty else {
             // Loaded plans can exist without source playlist context.
             planItems.removeAll { $0.id == item.id }
@@ -1235,11 +1240,18 @@ struct PlaylistMatchView: View {
         }
 
         do {
-            let latestLibraryTracks = try SeratoDatabaseParser.parseTracks(
-                at: libraryService.databaseFile,
-                rootDirectory: libraryService.rootDirectory
-            )
-            let result = PlaylistMatchService.match(entries: resolvedEntries, libraryTracks: latestLibraryTracks)
+            // Re-parsing the whole database and re-matching every entry is
+            // heavy — keep it off the main actor.
+            let databaseFile = libraryService.databaseFile
+            let rootDirectory = libraryService.rootDirectory
+            let entries = resolvedEntries
+            let result = try await Task.detached(priority: .userInitiated) {
+                let latestLibraryTracks = try SeratoDatabaseParser.parseTracks(
+                    at: databaseFile,
+                    rootDirectory: rootDirectory
+                )
+                return PlaylistMatchService.match(entries: entries, libraryTracks: latestLibraryTracks)
+            }.value
 
             let previousSelection = selectedVersionByEntryID
             let previousMatchedIDs = Set(matchedEntries.map { $0.entry.id })
@@ -1276,15 +1288,22 @@ struct PlaylistMatchView: View {
         }
     }
 
-    private func refreshMatchAfterMatchedRip(entryID: UUID, downloadedFileURL: URL) {
+    private func refreshMatchAfterMatchedRip(entryID: UUID, downloadedFileURL: URL) async {
         guard !resolvedEntries.isEmpty else { return }
 
         do {
-            let latestLibraryTracks = try SeratoDatabaseParser.parseTracks(
-                at: libraryService.databaseFile,
-                rootDirectory: libraryService.rootDirectory
-            )
-            let result = PlaylistMatchService.match(entries: resolvedEntries, libraryTracks: latestLibraryTracks)
+            // Same as `refreshMatchAfterRip`: full re-parse + re-match stays
+            // off the main actor.
+            let databaseFile = libraryService.databaseFile
+            let rootDirectory = libraryService.rootDirectory
+            let entries = resolvedEntries
+            let result = try await Task.detached(priority: .userInitiated) {
+                let latestLibraryTracks = try SeratoDatabaseParser.parseTracks(
+                    at: databaseFile,
+                    rootDirectory: rootDirectory
+                )
+                return PlaylistMatchService.match(entries: entries, libraryTracks: latestLibraryTracks)
+            }.value
 
             let previousSelection = selectedVersionByEntryID
             let previousMatchedIDs = Set(matchedEntries.map { $0.entry.id })

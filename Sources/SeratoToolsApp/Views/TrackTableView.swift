@@ -36,6 +36,11 @@ struct TrackTableView: View {
     @State private var searchText = ""
     @State private var selectedTrackKeys: Set<String> = []
     @State private var displayedTracks: [Track] = []
+    /// Selection key per row of `displayedTracks`, computed once alongside
+    /// it (off the main thread) — deriving the key per track per selection
+    /// change did three string transforms across the whole table on every
+    /// click.
+    @State private var displayedKeys: [String] = []
     @State private var recomputeTask: Task<Void, Never>?
     @State private var sortColumn: SortColumn = .number
     @State private var sortAscending = true
@@ -70,6 +75,7 @@ struct TrackTableView: View {
 
             TrackNSTableView(
                 tracks: displayedTracks,
+                trackKeys: displayedKeys,
                 selectedTrackKeys: $selectedTrackKeys,
                 sortColumn: Binding(
                     get: { sortColumn.rawValue },
@@ -116,7 +122,7 @@ struct TrackTableView: View {
         }
         .onDeleteCommand {
             guard let onDeleteRequested else { return }
-            let selected = displayedTracks.filter { selectedTrackKeys.contains(selectionKey(for: $0)) }
+            let selected = selectedDisplayedTracks()
             guard !selected.isEmpty else { return }
             onDeleteRequested(selected)
         }
@@ -130,8 +136,13 @@ struct TrackTableView: View {
 
     private func notifySelectionChanged() {
         guard let onSelectionChanged else { return }
-        let selected = displayedTracks.filter { selectedTrackKeys.contains(selectionKey(for: $0)) }
-        onSelectionChanged(selected)
+        onSelectionChanged(selectedDisplayedTracks())
+    }
+
+    private func selectedDisplayedTracks() -> [Track] {
+        zip(displayedTracks, displayedKeys).compactMap { track, key in
+            selectedTrackKeys.contains(key) ? track : nil
+        }
     }
 
     private func scheduleRecompute(debounce: Bool = false) {
@@ -159,9 +170,9 @@ struct TrackTableView: View {
 
             guard !Task.isCancelled else { return }
             await MainActor.run {
-                displayedTracks = result
-                let validKeys = Set(result.map(selectionKey(for:)))
-                selectedTrackKeys = selectedTrackKeys.intersection(validKeys)
+                displayedTracks = result.tracks
+                displayedKeys = result.keys
+                selectedTrackKeys = selectedTrackKeys.intersection(Set(result.keys))
             }
         }
     }
@@ -172,7 +183,7 @@ struct TrackTableView: View {
         searchText: String,
         sortColumn: SortColumn,
         sortAscending: Bool
-    ) async -> [Track] {
+    ) async -> (tracks: [Track], keys: [String]) {
         await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 let result = Self.computeDisplayedTracks(
@@ -193,7 +204,7 @@ struct TrackTableView: View {
         searchText: String,
         sortColumn: SortColumn,
         sortAscending: Bool
-    ) -> [Track] {
+    ) -> (tracks: [Track], keys: [String]) {
         let sourceTracks: [Track]
         switch numberingMode {
         case .metadata:
@@ -215,33 +226,42 @@ struct TrackTableView: View {
                 || track.album.lowercased().contains(queryLower)
         }
 
-        return filtered.sorted { (lhs: Track, rhs: Track) in
-            let ordered: Bool
-            switch sortColumn {
-            case .number:
-                ordered = lhs.numberSortValue < rhs.numberSortValue
-            case .title:
-                ordered = lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
-            case .artist:
-                ordered = lhs.artist.localizedCaseInsensitiveCompare(rhs.artist) == .orderedAscending
-            case .album:
-                ordered = lhs.album.localizedCaseInsensitiveCompare(rhs.album) == .orderedAscending
-            case .genre:
-                ordered = lhs.genre.localizedCaseInsensitiveCompare(rhs.genre) == .orderedAscending
-            case .year:
-                ordered = lhs.yearSortValue < rhs.yearSortValue
-            case .comment:
-                ordered = lhs.comment.localizedCaseInsensitiveCompare(rhs.comment) == .orderedAscending
-            case .color:
-                ordered = lhs.colorSortValue < rhs.colorSortValue
-            case .key:
-                ordered = lhs.keySortValue.localizedCaseInsensitiveCompare(rhs.keySortValue) == .orderedAscending
-            case .bpm:
-                ordered = lhs.bpmSortValue < rhs.bpmSortValue
-            case .duration:
-                ordered = lhs.durationSortValue < rhs.durationSortValue
-            }
-            return sortAscending ? ordered : !ordered
+        // Descending swaps the operands rather than negating the ascending
+        // result: `!ordered` returned `true` for equal elements on both
+        // orderings, which violates strict weak ordering and gives
+        // `sorted(by:)` undefined behavior.
+        let sorted = filtered.sorted { lhs, rhs in
+            sortAscending
+                ? areInIncreasingOrder(lhs, rhs, by: sortColumn)
+                : areInIncreasingOrder(rhs, lhs, by: sortColumn)
+        }
+        return (sorted, sorted.map(selectionKey(for:)))
+    }
+
+    nonisolated private static func areInIncreasingOrder(_ lhs: Track, _ rhs: Track, by sortColumn: SortColumn) -> Bool {
+        switch sortColumn {
+        case .number:
+            return lhs.numberSortValue < rhs.numberSortValue
+        case .title:
+            return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+        case .artist:
+            return lhs.artist.localizedCaseInsensitiveCompare(rhs.artist) == .orderedAscending
+        case .album:
+            return lhs.album.localizedCaseInsensitiveCompare(rhs.album) == .orderedAscending
+        case .genre:
+            return lhs.genre.localizedCaseInsensitiveCompare(rhs.genre) == .orderedAscending
+        case .year:
+            return lhs.yearSortValue < rhs.yearSortValue
+        case .comment:
+            return lhs.comment.localizedCaseInsensitiveCompare(rhs.comment) == .orderedAscending
+        case .color:
+            return lhs.colorSortValue < rhs.colorSortValue
+        case .key:
+            return lhs.keySortValue.localizedCaseInsensitiveCompare(rhs.keySortValue) == .orderedAscending
+        case .bpm:
+            return lhs.bpmSortValue < rhs.bpmSortValue
+        case .duration:
+            return lhs.durationSortValue < rhs.durationSortValue
         }
     }
 
@@ -251,10 +271,10 @@ struct TrackTableView: View {
         }
 
         let rowTrack = displayedTracks[rowIndex]
-        if selectedKeys.contains(selectionKey(for: rowTrack)) {
-            let selectedPaths = displayedTracks
-                .filter { selectedKeys.contains(selectionKey(for: $0)) }
-                .map(\.seratoStoredPath)
+        if rowIndex < displayedKeys.count, selectedKeys.contains(displayedKeys[rowIndex]) {
+            let selectedPaths = zip(displayedTracks, displayedKeys)
+                .filter { selectedKeys.contains($0.1) }
+                .map(\.0.seratoStoredPath)
             if !selectedPaths.isEmpty {
                 return TrackDragPayload.encodeMany(paths: selectedPaths)
             }
@@ -275,7 +295,7 @@ struct TrackTableView: View {
         return String(format: "%d:%02d", minutes, seconds)
     }
 
-    fileprivate func selectionKey(for track: Track) -> String {
+    nonisolated fileprivate static func selectionKey(for track: Track) -> String {
         track.seratoStoredPath
             .replacingOccurrences(of: "\\\\", with: "/")
             .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
@@ -285,6 +305,9 @@ struct TrackTableView: View {
 
 private struct TrackNSTableView: NSViewRepresentable {
     let tracks: [Track]
+    /// Selection key per row of `tracks`, precomputed by the parent so the
+    /// coordinator never re-derives keys during selection syncs.
+    let trackKeys: [String]
     @Binding var selectedTrackKeys: Set<String>
     @Binding var sortColumn: String
     @Binding var sortAscending: Bool
@@ -464,8 +487,8 @@ private struct TrackNSTableView: NSViewRepresentable {
         func tableViewSelectionDidChange(_ notification: Notification) {
             guard let table = tableView else { return }
             let keys = Set<String>(table.selectedRowIndexes.compactMap { row in
-                guard row >= 0, row < parent.tracks.count else { return nil }
-                return selectionKey(for: parent.tracks[row])
+                guard row >= 0, row < parent.trackKeys.count else { return nil }
+                return parent.trackKeys[row]
             })
             parent.selectedTrackKeys = keys
         }
@@ -584,8 +607,8 @@ private struct TrackNSTableView: NSViewRepresentable {
 
         func restoreSelectionIfNeeded() {
             guard let table = tableView else { return }
-            let targetIndexes = IndexSet(parent.tracks.enumerated().compactMap { index, track in
-                parent.selectedTrackKeys.contains(selectionKey(for: track)) ? index : nil
+            let targetIndexes = IndexSet(parent.trackKeys.enumerated().compactMap { index, key in
+                parent.selectedTrackKeys.contains(key) ? index : nil
             })
 
             guard table.selectedRowIndexes != targetIndexes else { return }
@@ -596,13 +619,6 @@ private struct TrackNSTableView: NSViewRepresentable {
             }
 
             table.selectRowIndexes(targetIndexes, byExtendingSelection: false)
-        }
-
-        private func selectionKey(for track: Track) -> String {
-            track.seratoStoredPath
-                .replacingOccurrences(of: "\\\\", with: "/")
-                .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-                .lowercased()
         }
 
         func applySortDescriptor(columnID: String, ascending: Bool) {

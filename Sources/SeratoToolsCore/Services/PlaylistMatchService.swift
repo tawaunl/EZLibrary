@@ -238,16 +238,48 @@ public enum PlaylistMatchService {
         return ResolvedPlaylist(playlistName: nil, entries: parsed, diagnostics: nil)
     }
 
-    public static func match(entries: [PlaylistEntry], libraryTracks: [Track]) -> MatchResult {
-        var exactLookup: [String: [Track]] = [:]
-        var titleLookup: [String: [Track]] = [:]
+    /// A library track with its normalized title/artist computed once.
+    /// Normalization runs several regex passes, so doing it per track per
+    /// playlist entry (instead of once per track) made matching O(entries ×
+    /// library × regex) and froze the app on real libraries.
+    ///
+    /// The `*Bytes` fields carry the same values as UTF-8 byte arrays:
+    /// normalization strips everything but ASCII `[a-z0-9 ]`, so byte-level
+    /// containment is exact — and byte search avoids Foundation's
+    /// ICU-backed `String.contains`, which cost ~10µs per call in the
+    /// per-entry library scans.
+    private struct NormalizedTrack {
+        let track: Track
+        let title: String
+        let artist: String
+        let titleBytes: [UInt8]
+        let artistBytes: [UInt8]
 
-        for track in libraryTracks {
-            let title = normalizedTitle(track.title)
-            let artist = normalizedArtist(track.artist)
-            guard !title.isEmpty else { continue }
-            exactLookup["\(title)|\(artist)", default: []].append(track)
-            titleLookup[title, default: []].append(track)
+        init(track: Track, title: String, artist: String) {
+            self.track = track
+            self.title = title
+            self.artist = artist
+            self.titleBytes = Array(title.utf8)
+            self.artistBytes = Array(artist.utf8)
+        }
+    }
+
+    public static func match(entries: [PlaylistEntry], libraryTracks: [Track]) -> MatchResult {
+        let normalizedTracks = libraryTracks.map { track in
+            NormalizedTrack(
+                track: track,
+                title: normalizedTitle(track.title),
+                artist: normalizedArtist(track.artist)
+            )
+        }
+
+        var exactLookup: [String: [Track]] = [:]
+        var titleLookup: [String: [NormalizedTrack]] = [:]
+
+        for candidate in normalizedTracks {
+            guard !candidate.title.isEmpty else { continue }
+            exactLookup["\(candidate.title)|\(candidate.artist)", default: []].append(candidate.track)
+            titleLookup[candidate.title, default: []].append(candidate)
         }
 
         var matched: [Track] = []
@@ -265,7 +297,7 @@ public enum PlaylistMatchService {
 
             let exactKey = "\(entryTitle)|\(entryArtist)"
             if let exact = exactLookup[exactKey]?.first {
-                let versions = libraryVersions(for: entry, selectedTrack: exact, libraryTracks: libraryTracks)
+                let versions = libraryVersions(for: entry, selectedTrack: exact, in: normalizedTracks)
                 matchedEntries.append(
                     MatchedEntry(
                         entry: entry,
@@ -283,13 +315,12 @@ public enum PlaylistMatchService {
 
             if let titleCandidates = titleLookup[entryTitle] {
                 if let artistAligned = titleCandidates.first(where: { candidate in
-                    let candidateArtist = normalizedArtist(candidate.artist)
-                    if entryArtist.isEmpty || candidateArtist.isEmpty {
+                    if entryArtist.isEmpty || candidate.artist.isEmpty {
                         return true
                     }
-                    return candidateArtist.contains(entryArtist) || entryArtist.contains(candidateArtist)
-                }) {
-                    let versions = libraryVersions(for: entry, selectedTrack: artistAligned, libraryTracks: libraryTracks)
+                    return candidate.artist.contains(entryArtist) || entryArtist.contains(candidate.artist)
+                })?.track {
+                    let versions = libraryVersions(for: entry, selectedTrack: artistAligned, in: normalizedTracks)
                     matchedEntries.append(
                         MatchedEntry(
                             entry: entry,
@@ -305,8 +336,8 @@ public enum PlaylistMatchService {
                     continue
                 }
 
-                if let first = titleCandidates.first {
-                    let versions = libraryVersions(for: entry, selectedTrack: first, libraryTracks: libraryTracks)
+                if let first = titleCandidates.first?.track {
+                    let versions = libraryVersions(for: entry, selectedTrack: first, in: normalizedTracks)
                     matchedEntries.append(
                         MatchedEntry(
                             entry: entry,
@@ -323,8 +354,8 @@ public enum PlaylistMatchService {
                 }
             }
 
-            if let fuzzy = fuzzyFind(entry: entry, in: libraryTracks) {
-                let versions = libraryVersions(for: entry, selectedTrack: fuzzy, libraryTracks: libraryTracks)
+            if let fuzzy = fuzzyFind(entry: entry, in: normalizedTracks) {
+                let versions = libraryVersions(for: entry, selectedTrack: fuzzy, in: normalizedTracks)
                 matchedEntries.append(
                     MatchedEntry(
                         entry: entry,
@@ -378,7 +409,7 @@ public enum PlaylistMatchService {
         }
     }
 
-    private static func libraryVersions(for entry: PlaylistEntry, selectedTrack: Track, libraryTracks: [Track]) -> [Track] {
+    private static func libraryVersions(for entry: PlaylistEntry, selectedTrack: Track, in normalizedTracks: [NormalizedTrack]) -> [Track] {
         let entryTitle = normalizedTitle(entry.title)
         let selectedTitle = normalizedTitle(selectedTrack.title)
         let targetTitle = entryTitle.isEmpty ? selectedTitle : entryTitle
@@ -387,45 +418,81 @@ public enum PlaylistMatchService {
         let selectedArtist = normalizedArtist(selectedTrack.artist)
         let targetArtist = entryArtist.isEmpty ? selectedArtist : entryArtist
 
-        let candidates = libraryTracks.filter { candidate in
-            let candidateTitle = normalizedTitle(candidate.title)
-            guard !candidateTitle.isEmpty else { return false }
+        // `targetTitle` often equals `selectedTitle` — skip the duplicate
+        // containment checks in that (common) case since this filter runs
+        // over the whole library per matched entry.
+        let titlesDiffer = targetTitle != selectedTitle
+        let targetTitleBytes = Array(targetTitle.utf8)
+        let selectedTitleBytes = Array(selectedTitle.utf8)
+        let targetArtistBytes = Array(targetArtist.utf8)
+
+        let candidates = normalizedTracks.filter { candidate in
+            guard !candidate.titleBytes.isEmpty else { return false }
 
             let titleMatches =
-                candidateTitle == targetTitle ||
-                candidateTitle == selectedTitle ||
-                candidateTitle.contains(targetTitle) ||
-                targetTitle.contains(candidateTitle) ||
-                candidateTitle.contains(selectedTitle) ||
-                selectedTitle.contains(candidateTitle)
+                eitherContains(candidate.titleBytes, targetTitleBytes) ||
+                (titlesDiffer && eitherContains(candidate.titleBytes, selectedTitleBytes))
             guard titleMatches else { return false }
 
-            let candidateArtist = normalizedArtist(candidate.artist)
-            if targetArtist.isEmpty || candidateArtist.isEmpty {
+            if targetArtistBytes.isEmpty || candidate.artistBytes.isEmpty {
                 return true
             }
 
-            return candidateArtist.contains(targetArtist) || targetArtist.contains(candidateArtist)
+            return eitherContains(candidate.artistBytes, targetArtistBytes)
         }
 
-        let deduped = uniqueTracksPreservingOrder(candidates)
+        let deduped = uniqueCandidatesPreservingOrder(candidates)
         return deduped.sorted {
-            let lhs = normalizedTitle($0.title)
-            let rhs = normalizedTitle($1.title)
-            if lhs == rhs {
-                return $0.title.localizedStandardCompare($1.title) == .orderedAscending
+            if $0.title == $1.title {
+                return $0.track.title.localizedStandardCompare($1.track.title) == .orderedAscending
             }
-            return lhs.localizedStandardCompare(rhs) == .orderedAscending
+            return $0.title.localizedStandardCompare($1.title) == .orderedAscending
         }
+        .map(\.track)
     }
 
-    private static func uniqueTracksPreservingOrder(_ tracks: [Track]) -> [Track] {
+    /// `a.contains(b) || b.contains(a)` over normalized-ASCII bytes, doing
+    /// only the single substring search that can succeed given the lengths
+    /// (equal lengths reduce to `==`).
+    private static func eitherContains(_ a: [UInt8], _ b: [UInt8]) -> Bool {
+        if a.count == b.count {
+            return a == b
+        }
+        return a.count > b.count ? bytesContain(a, b) : bytesContain(b, a)
+    }
+
+    /// Plain byte substring search. Exact for the normalized strings used
+    /// during matching, which are ASCII-only. Empty needles return `false`,
+    /// matching Foundation's `contains`/`range(of:)` behavior the string
+    /// version had.
+    private static func bytesContain(_ haystack: [UInt8], _ needle: [UInt8]) -> Bool {
+        guard !needle.isEmpty, needle.count <= haystack.count else {
+            return false
+        }
+        let first = needle[0]
+        let limit = haystack.count - needle.count
+        var i = 0
+        while i <= limit {
+            if haystack[i] == first {
+                var j = 1
+                while j < needle.count, haystack[i + j] == needle[j] {
+                    j += 1
+                }
+                if j == needle.count {
+                    return true
+                }
+            }
+            i += 1
+        }
+        return false
+    }
+
+    private static func uniqueCandidatesPreservingOrder(_ candidates: [NormalizedTrack]) -> [NormalizedTrack] {
         var seen = Set<String>()
-        var output: [Track] = []
-        for track in tracks {
-            let key = track.seratoStoredPath
-            if seen.insert(key).inserted {
-                output.append(track)
+        var output: [NormalizedTrack] = []
+        for candidate in candidates {
+            if seen.insert(candidate.track.seratoStoredPath).inserted {
+                output.append(candidate)
             }
         }
         return output
@@ -1412,62 +1479,80 @@ public enum PlaylistMatchService {
         return columns[index].trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// Compiled once — `replacingOccurrences(options: .regularExpression)`
+    /// recompiles its pattern on every call, and these run per track/entry
+    /// during matching.
+    private static let featParenRegex = try! NSRegularExpression(pattern: #"\((feat|featuring|ft)\.?[^)]*\)"#)
+    private static let featBracketRegex = try! NSRegularExpression(pattern: #"\[(feat|featuring|ft)\.?[^\]]*\]"#)
+    private static let featTrailingRegex = try! NSRegularExpression(pattern: #"\b(feat|featuring|ft)\.?\s+[a-z0-9\s&,'\-]+$"#)
+    private static let versionWordsRegex = try! NSRegularExpression(
+        pattern: #"\b(original mix|extended mix|extended|radio edit|clean|dirty|intro|outro|official|club mix|vip mix|vip|bootleg|rework|remix|mixshow|short edit|long edit|intro edit|main mix|original|version)\b"#
+    )
+    private static let featWordRegex = try! NSRegularExpression(pattern: #"\b(feat|featuring|ft)\.?\b"#)
+    private static let artistJoinerRegex = try! NSRegularExpression(pattern: #"\b(with|w|x|presents)\b"#)
+    private static let nonAlphanumericRegex = try! NSRegularExpression(pattern: #"[^a-z0-9\s]"#)
+    private static let whitespaceRunRegex = try! NSRegularExpression(pattern: #"\s+"#)
+
+    private static func replacingMatches(of regex: NSRegularExpression, in value: String, with replacement: String) -> String {
+        regex.stringByReplacingMatches(
+            in: value,
+            options: [],
+            range: NSRange(value.startIndex..., in: value),
+            withTemplate: replacement
+        )
+    }
+
     private static func normalizedTitle(_ value: String) -> String {
-        normalized(value)
-            // Remove common "featuring" clauses embedded in titles.
-            .replacingOccurrences(of: #"\((feat|featuring|ft)\.?[^)]*\)"#, with: " ", options: .regularExpression)
-            .replacingOccurrences(of: #"\[(feat|featuring|ft)\.?[^\]]*\]"#, with: " ", options: .regularExpression)
-            .replacingOccurrences(of: #"\b(feat|featuring|ft)\.?\s+[a-z0-9\s&,'\-]+$"#, with: " ", options: .regularExpression)
-            .replacingOccurrences(
-                of: #"\b(original mix|extended mix|extended|radio edit|clean|dirty|intro|outro|official|club mix|vip mix|vip|bootleg|rework|remix|mixshow|short edit|long edit|intro edit|main mix|original|version)\b"#,
-                with: " ",
-                options: .regularExpression
-            )
-            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        var result = normalized(value)
+        // Remove common "featuring" clauses embedded in titles.
+        result = replacingMatches(of: featParenRegex, in: result, with: " ")
+        result = replacingMatches(of: featBracketRegex, in: result, with: " ")
+        result = replacingMatches(of: featTrailingRegex, in: result, with: " ")
+        result = replacingMatches(of: versionWordsRegex, in: result, with: " ")
+        result = replacingMatches(of: whitespaceRunRegex, in: result, with: " ")
+        return result.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private static func normalizedArtist(_ value: String) -> String {
-        normalized(value)
-            .replacingOccurrences(of: #"\b(feat|featuring|ft)\.?\b"#, with: " ", options: .regularExpression)
-            .replacingOccurrences(of: #"\b(with|w|x|presents)\b"#, with: " ", options: .regularExpression)
-            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        var result = normalized(value)
+        result = replacingMatches(of: featWordRegex, in: result, with: " ")
+        result = replacingMatches(of: artistJoinerRegex, in: result, with: " ")
+        result = replacingMatches(of: whitespaceRunRegex, in: result, with: " ")
+        return result.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private static func normalized(_ value: String) -> String {
         let folded = value
             .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
             .lowercased()
-        let replaced = folded.replacingOccurrences(of: #"[^a-z0-9\s]"#, with: " ", options: .regularExpression)
-        return replaced.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        var result = replacingMatches(of: nonAlphanumericRegex, in: folded, with: " ")
+        result = replacingMatches(of: whitespaceRunRegex, in: result, with: " ")
+        return result.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private static func fuzzyFind(entry: PlaylistEntry, in libraryTracks: [Track]) -> Track? {
+    private static func fuzzyFind(entry: PlaylistEntry, in normalizedTracks: [NormalizedTrack]) -> Track? {
         let entryTitle = normalizedTitle(entry.title)
         let entryArtist = normalizedArtist(entry.artist)
         guard !entryTitle.isEmpty else { return nil }
 
-        return libraryTracks.first(where: { track in
-            let title = normalizedTitle(track.title)
-            let artist = normalizedArtist(track.artist)
+        let entryTitleBytes = Array(entryTitle.utf8)
+        let entryArtistBytes = Array(entryArtist.utf8)
 
-            if title.isEmpty {
+        return normalizedTracks.first(where: { candidate in
+            if candidate.titleBytes.isEmpty {
                 return false
             }
 
-            let titleClose = title.contains(entryTitle) || entryTitle.contains(title)
-            if !titleClose {
+            guard eitherContains(candidate.titleBytes, entryTitleBytes) else {
                 return false
             }
 
-            if entryArtist.isEmpty || artist.isEmpty {
+            if entryArtistBytes.isEmpty || candidate.artistBytes.isEmpty {
                 return true
             }
 
-            return artist.contains(entryArtist) || entryArtist.contains(artist)
-        })
+            return eitherContains(candidate.artistBytes, entryArtistBytes)
+        })?.track
     }
 
     private static func sanitizedCrateName(_ name: String) -> String {

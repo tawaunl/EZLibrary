@@ -8,7 +8,9 @@ import Foundation
 /// from that, rather than growing `LibraryService` unboundedly.
 @MainActor
 public final class CrateHierarchyViewModel: ObservableObject {
-    @Published public var searchText: String = ""
+    @Published public var searchText: String = "" {
+        didSet { invalidateDerivedCaches() }
+    }
     @Published private var allCrates: [Crate] = []
 
     /// Smart Crates are hide-only in Phase 1 (no delete-to-Trash), since
@@ -18,6 +20,15 @@ public final class CrateHierarchyViewModel: ObservableObject {
 
     private let hiddenStore: HiddenCrateStore
 
+    /// Derived tree state is cached and invalidated on input changes
+    /// (`rebuild`, `searchText`, hide/unhide): `visibleTree` and friends are
+    /// read many times per SwiftUI render pass (including once per visible
+    /// row for badges), and rebuilding the whole tree on every access made
+    /// the crate list lag with large libraries.
+    private var cachedVisibleTree: [CrateNode]?
+    private var cachedVisibleNodesByID: [String: CrateNode]?
+    private var cachedHiddenNodes: [CrateNode]?
+
     public init(hiddenStore: HiddenCrateStore, allowsDelete: Bool = true) {
         self.hiddenStore = hiddenStore
         self.allowsDelete = allowsDelete
@@ -25,10 +36,34 @@ public final class CrateHierarchyViewModel: ObservableObject {
 
     public func rebuild(from crates: [Crate]) {
         allCrates = crates
+        invalidateDerivedCaches()
     }
 
     public var visibleTree: [CrateNode] {
-        filtered(CrateHierarchy.build(from: allCrates))
+        if let cachedVisibleTree {
+            return cachedVisibleTree
+        }
+        let tree = filtered(CrateHierarchy.build(from: allCrates))
+        cachedVisibleTree = tree
+        return tree
+    }
+
+    /// Every node in `visibleTree` (including synthesized folders), keyed by
+    /// `CrateNode.id`, for O(1) lookups from row-level view code.
+    public var visibleNodesByID: [String: CrateNode] {
+        if let cachedVisibleNodesByID {
+            return cachedVisibleNodesByID
+        }
+        var map: [String: CrateNode] = [:]
+        func walk(_ nodes: [CrateNode]) {
+            for node in nodes {
+                map[node.id] = node
+                walk(node.children)
+            }
+        }
+        walk(visibleTree)
+        cachedVisibleNodesByID = map
+        return map
     }
 
     public func isHidden(_ node: CrateNode) -> Bool {
@@ -37,32 +72,46 @@ public final class CrateHierarchyViewModel: ObservableObject {
 
     public func hide(_ node: CrateNode) {
         hiddenStore.hide(node)
+        invalidateDerivedCaches()
         objectWillChange.send()
     }
 
     public func unhide(_ node: CrateNode) {
         hiddenStore.unhide(node)
+        invalidateDerivedCaches()
         objectWillChange.send()
     }
 
     /// Every currently-hidden node anywhere in the full (unfiltered) tree,
     /// for the "Hidden (n)" one-click-unhide disclosure.
     public var hiddenNodes: [CrateNode] {
+        if let cachedHiddenNodes {
+            return cachedHiddenNodes
+        }
         var result: [CrateNode] = hiddenStore.hiddenIDs
             .map { CrateNode(pathComponents: $0.split(separator: "/").map(String.init)) }
+        var seenIDs = Set(result.map(\.id))
 
         // Also include currently-loaded hidden descendants for context when
         // a broad parent is hidden.
         func walk(_ nodes: [CrateNode]) {
             for node in nodes {
-                if hiddenStore.isHidden(node), !result.contains(where: { $0.id == node.id }) {
+                if hiddenStore.isHidden(node), seenIDs.insert(node.id).inserted {
                     result.append(node)
                 }
                 walk(node.children)
             }
         }
         walk(CrateHierarchy.build(from: allCrates))
-        return result.sorted { $0.id < $1.id }
+        let sorted = result.sorted { $0.id < $1.id }
+        cachedHiddenNodes = sorted
+        return sorted
+    }
+
+    private func invalidateDerivedCaches() {
+        cachedVisibleTree = nil
+        cachedVisibleNodesByID = nil
+        cachedHiddenNodes = nil
     }
 
     /// Real crate files whose crate paths start with `pathComponents`.

@@ -20,20 +20,32 @@ public enum SeratoChunkCodec {
     /// Parses a flat sequence of chunks from `data`. Trailing bytes that
     /// don't form a complete chunk are ignored rather than throwing, since
     /// callers need to tolerate unknown/future record shapes.
+    ///
+    /// Reads through the raw buffer instead of materializing a `[UInt8]`
+    /// copy of the whole file (and a second slice copy per chunk) — this
+    /// runs once per `otrk` record on library load, so the copies dominated
+    /// parse time for large `database V2` files.
     public static func readChunks(from data: Data) -> [SeratoChunk] {
-        let bytes = [UInt8](data)
-        var result: [SeratoChunk] = []
-        var offset = 0
-        while offset + 8 <= bytes.count {
-            let tag = String(decoding: bytes[offset..<(offset + 4)], as: UTF8.self)
-            let size = readUInt32BE(bytes, at: offset + 4)
-            let payloadStart = offset + 8
-            let payloadEnd = payloadStart + size
-            guard payloadEnd <= bytes.count else { break }
-            result.append(SeratoChunk(tag: tag, payload: Data(bytes[payloadStart..<payloadEnd])))
-            offset = payloadEnd
+        data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) -> [SeratoChunk] in
+            guard let base = raw.baseAddress else { return [] }
+            let count = raw.count
+            var result: [SeratoChunk] = []
+            var offset = 0
+            while offset + 8 <= count {
+                let tagBytes = UnsafeRawBufferPointer(start: base + offset, count: 4)
+                let tag = String(decoding: tagBytes, as: UTF8.self)
+                let size = Int(raw[offset + 4]) << 24
+                    | Int(raw[offset + 5]) << 16
+                    | Int(raw[offset + 6]) << 8
+                    | Int(raw[offset + 7])
+                let payloadStart = offset + 8
+                let payloadEnd = payloadStart + size
+                guard payloadEnd <= count else { break }
+                result.append(SeratoChunk(tag: tag, payload: Data(bytes: base + payloadStart, count: size)))
+                offset = payloadEnd
+            }
+            return result
         }
-        return result
     }
 
     public static func writeChunk(tag: String, payload: Data) -> Data {
@@ -57,18 +69,15 @@ public enum SeratoChunkCodec {
     }
 
     public static func decodeUTF16BEString(_ data: Data) -> String {
-        var bytes = [UInt8](data)
-        if bytes.count % 2 != 0 {
-            bytes.removeLast()
+        data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) -> String in
+            let unitCount = raw.count / 2
+            guard unitCount > 0 else { return "" }
+            var units = [UInt16](repeating: 0, count: unitCount)
+            for i in 0..<unitCount {
+                units[i] = (UInt16(raw[i * 2]) << 8) | UInt16(raw[i * 2 + 1])
+            }
+            return String(decoding: units, as: UTF16.self)
         }
-        var units: [UInt16] = []
-        units.reserveCapacity(bytes.count / 2)
-        var i = 0
-        while i < bytes.count {
-            units.append((UInt16(bytes[i]) << 8) | UInt16(bytes[i + 1]))
-            i += 2
-        }
-        return String(decoding: units, as: UTF16.self)
     }
 
     public static func encodeUTF16BEString(_ string: String) -> Data {
@@ -78,13 +87,6 @@ public enum SeratoChunkCodec {
             data.append(UInt8(unit & 0xFF))
         }
         return data
-    }
-
-    private static func readUInt32BE(_ bytes: [UInt8], at offset: Int) -> Int {
-        Int(bytes[offset]) << 24
-            | Int(bytes[offset + 1]) << 16
-            | Int(bytes[offset + 2]) << 8
-            | Int(bytes[offset + 3])
     }
 
     private static func bigEndianBytes(_ value: UInt32) -> [UInt8] {

@@ -38,15 +38,11 @@ struct CrateTreeView: View {
     }
 
     private var regularNodesByID: [String: CrateNode] {
-        var map: [String: CrateNode] = [:]
-        flatten(crateHierarchy.visibleTree, into: &map)
-        return map
+        crateHierarchy.visibleNodesByID
     }
 
     private var smartNodesByID: [String: CrateNode] {
-        var map: [String: CrateNode] = [:]
-        flatten(smartCrateHierarchy.visibleTree, into: &map)
-        return map
+        smartCrateHierarchy.visibleNodesByID
     }
 
     private var hiddenNodes: [CrateNode] {
@@ -358,13 +354,6 @@ struct CrateTreeView: View {
         return order.compactMap { merged[$0] }
     }
 
-    private func flatten(_ nodes: [CrateNode], into map: inout [String: CrateNode]) {
-        for node in nodes {
-            map[node.id] = node
-            flatten(node.children, into: &map)
-        }
-    }
-
     private func dedupedByID(_ nodes: [CrateNode]) -> [CrateNode] {
         var seen = Set<String>()
         var result: [CrateNode] = []
@@ -671,10 +660,10 @@ private final class DroppedPathAccumulator: @unchecked Sendable {
         if smartNodesByID[node.id] != nil {
             return .direct
         }
-        let prefix = node.pathComponents
-        if smartNodesByID.values.contains(where: { $0.pathComponents.starts(with: prefix) }) {
-            return .containsSmartDescendant
-        }
+        // Any strict path-prefix of a visible smart node exists in the smart
+        // tree itself (CrateHierarchy synthesizes intermediate folders), so a
+        // node absent from `smartNodesByID` can't have smart descendants —
+        // no O(n) scan over every smart node per rendered row needed.
         return nil
     }
 }

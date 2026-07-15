@@ -11,6 +11,12 @@ struct DuplicateTracksView: View {
     @State private var duplicateGroups: [DuplicateTrackGroup] = []
     @State private var summary = DuplicateTracksSummary(totalTracks: 0, duplicateGroupCount: 0, redundantTrackCount: 0, versionSeparatedGroupCount: 0)
     @State private var keepSelectionByGroupID: [String: String] = [:]
+    /// Recommended keep per group, computed once per scan — `bestTrack(in:)`
+    /// re-ranks the group every call, and it was being invoked per group per
+    /// render (and across all groups for the bulk-action counts).
+    @State private var bestPathByGroupID: [String: String] = [:]
+    @State private var isScanning = false
+    @State private var rebuildTask: Task<Void, Never>?
     @State private var pendingDeletion: PendingDeletion?
     @State private var errorMessage: String?
     @State private var successMessage: String?
@@ -145,10 +151,21 @@ struct DuplicateTracksView: View {
             }
 
             if filteredGroups.isEmpty {
-                Text(duplicateGroups.isEmpty ? "No duplicate groups detected in the current library." : "No duplicate groups matched your search.")
-                    .foregroundStyle(.secondary)
+                if isScanning {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Scanning for duplicates…")
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    Text(duplicateGroups.isEmpty ? "No duplicate groups detected in the current library." : "No duplicate groups matched your search.")
+                        .foregroundStyle(.secondary)
+                }
             } else {
-                VStack(alignment: .leading, spacing: 10) {
+                // Lazy so a library with thousands of duplicate groups only
+                // builds the cards that scroll into view.
+                LazyVStack(alignment: .leading, spacing: 10) {
                     ForEach(filteredGroups) { group in
                         groupCard(for: group)
                     }
@@ -188,7 +205,7 @@ struct DuplicateTracksView: View {
     }
 
     private func groupCard(for group: DuplicateTrackGroup) -> some View {
-        let best = DuplicateTracksService.bestTrack(in: group.tracks)
+        let bestPath = bestPathByGroupID[group.id]
         let kept = keptPath(for: group)
         let deletable = deletableTracks(for: group)
 
@@ -219,11 +236,11 @@ struct DuplicateTracksView: View {
                 statTag(title: "Redundant", value: "\(group.redundantTrackCount)")
             }
 
-            groupActionBar(group: group, best: best, deletable: deletable)
+            groupActionBar(group: group, bestPath: bestPath, deletable: deletable)
 
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(group.tracks) { track in
-                    trackRow(track: track, group: group, keptPath: kept, best: best)
+                    trackRow(track: track, group: group, keptPath: kept, bestPath: bestPath)
                 }
             }
         }
@@ -238,11 +255,11 @@ struct DuplicateTracksView: View {
         )
     }
 
-    private func groupActionBar(group: DuplicateTrackGroup, best: Track?, deletable: [Track]) -> some View {
+    private func groupActionBar(group: DuplicateTrackGroup, bestPath: String?, deletable: [Track]) -> some View {
         HStack(spacing: 8) {
             Button("Pick Best") {
-                if let best {
-                    keepSelectionByGroupID[group.id] = best.seratoStoredPath
+                if let bestPath {
+                    keepSelectionByGroupID[group.id] = bestPath
                 }
             }
             .help("Keep the copy with the most complete tags; ties keep the oldest by date added.")
@@ -263,9 +280,9 @@ struct DuplicateTracksView: View {
         }
     }
 
-    private func trackRow(track: Track, group: DuplicateTrackGroup, keptPath: String?, best: Track?) -> some View {
+    private func trackRow(track: Track, group: DuplicateTrackGroup, keptPath: String?, bestPath: String?) -> some View {
         let isKept = track.seratoStoredPath == keptPath
-        let isBest = track.id == best?.id
+        let isBest = track.seratoStoredPath == bestPath
         let tagCount = DuplicateTracksService.completenessScore(for: track)
 
         return VStack(alignment: .leading, spacing: 2) {
@@ -357,15 +374,37 @@ struct DuplicateTracksView: View {
     }
 
     private func rebuildDuplicateGroups() {
-        duplicateGroups = DuplicateTracksService.duplicateGroups(in: libraryService.tracks)
-        summary = DuplicateTracksService.summary(for: libraryService.tracks)
-        keepSelectionByGroupID = keepSelectionByGroupID.filter { key, _ in
-            duplicateGroups.contains { $0.id == key }
+        let tracks = libraryService.tracks
+        rebuildTask?.cancel()
+        isScanning = true
+        // The duplicate scan normalizes every track's title/artist — run it
+        // off the main actor so opening this tab doesn't freeze the app.
+        rebuildTask = Task {
+            let (groups, groupSummary, bestPaths) = await Task.detached(priority: .userInitiated) {
+                () -> ([DuplicateTrackGroup], DuplicateTracksSummary, [String: String]) in
+                let groups = DuplicateTracksService.duplicateGroups(in: tracks)
+                let summary = DuplicateTracksService.summary(forGroups: groups, totalTracks: tracks.count)
+                var bestPaths: [String: String] = [:]
+                for group in groups {
+                    bestPaths[group.id] = DuplicateTracksService.bestTrack(in: group.tracks)?.seratoStoredPath
+                }
+                return (groups, summary, bestPaths)
+            }.value
+
+            guard !Task.isCancelled else { return }
+            duplicateGroups = groups
+            summary = groupSummary
+            bestPathByGroupID = bestPaths
+            let groupIDs = Set(groups.map(\.id))
+            keepSelectionByGroupID = keepSelectionByGroupID.filter { key, _ in
+                groupIDs.contains(key)
+            }
+            isScanning = false
         }
     }
 
     private func keptPath(for group: DuplicateTrackGroup) -> String? {
-        keepSelectionByGroupID[group.id] ?? DuplicateTracksService.bestTrack(in: group.tracks)?.seratoStoredPath
+        keepSelectionByGroupID[group.id] ?? bestPathByGroupID[group.id]
     }
 
     private func deletableTracks(for group: DuplicateTrackGroup) -> [Track] {
@@ -375,8 +414,8 @@ struct DuplicateTracksView: View {
 
     private func pickBestForAll() {
         for group in filteredGroups {
-            if let best = DuplicateTracksService.bestTrack(in: group.tracks) {
-                keepSelectionByGroupID[group.id] = best.seratoStoredPath
+            if let bestPath = bestPathByGroupID[group.id] {
+                keepSelectionByGroupID[group.id] = bestPath
             }
         }
     }

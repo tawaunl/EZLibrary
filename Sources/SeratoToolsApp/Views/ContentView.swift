@@ -66,7 +66,7 @@ struct ContentView: View {
     }
 
     private var totalTracksInCratesCount: Int {
-        Set(libraryService.crates.flatMap(\.trackPaths)).count
+        libraryService.tracksInCratesCount
     }
 
     private var smartCratesCount: Int {

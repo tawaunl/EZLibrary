@@ -195,6 +195,13 @@ public enum SeratoLibraryLocator {
             rootDirectory: rootDirectory
         )
 
+        // With a single candidate the disk check can't change the result, so
+        // skip it — this runs once per track on library load, and a stat()
+        // per track froze the UI for the whole parse on big libraries.
+        if candidates.count == 1 {
+            return candidates[0]
+        }
+
         if let existing = candidates.first(where: { fileManager.fileExists(atPath: $0.path) }) {
             return existing
         }
@@ -204,6 +211,12 @@ public enum SeratoLibraryLocator {
 
     private static func resolvedPathCandidates(seratoStoredPath: String, rootDirectory: URL) -> [URL] {
         let primary = rootDirectory.appendingPathComponent(seratoStoredPath)
+        // Boot-volume libraries resolve against "/" — the absolute fallback
+        // is identical, so don't build and standardize a second URL per track.
+        guard rootDirectory.path != "/" else {
+            return [primary]
+        }
+
         let absoluteRoot = URL(fileURLWithPath: "/", isDirectory: true)
         let absoluteFallback = absoluteRoot.appendingPathComponent(seratoStoredPath)
 

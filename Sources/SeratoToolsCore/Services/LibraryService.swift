@@ -15,6 +15,11 @@ public final class LibraryService: ObservableObject {
     @Published public private(set) var trackGenres: [String] = []
     @Published public private(set) var totalArtistCount: Int = 0
 
+    /// Count of distinct track paths across all crates. Recomputed once per
+    /// `reload()` — views were re-deriving this with a `Set(flatMap:)` over
+    /// every crate on every body evaluation.
+    @Published public private(set) var tracksInCratesCount: Int = 0
+
     @Published public private(set) var libraryDirectory: URL
 
     public init(libraryDirectory: URL = SeratoLibraryLocator.defaultLibraryDirectory) {
@@ -34,7 +39,10 @@ public final class LibraryService: ObservableObject {
     }
 
     public func reload() throws {
-        defer { refreshDerivedTrackStats() }
+        defer {
+            refreshDerivedTrackStats()
+            tracksInCratesCount = Set(crates.lazy.flatMap(\.trackPaths)).count
+        }
 
         let rootDirectory = SeratoLibraryLocator.rootDirectory(for: libraryDirectory)
         do {

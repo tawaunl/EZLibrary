@@ -41,18 +41,29 @@ struct CrateDetailView: View {
     @AppStorage(Self.confirmDeleteActionsDefaultsKey) private var confirmDeleteActions = true
     @State private var selectedGenreFilter: String?
 
+    /// Everything derived from `node` + the library that's expensive to
+    /// compute: resolving every crate path against a freshly-built library
+    /// index. Cached in `@State` and rebuilt only when the node, filter
+    /// mode, or library data changes — computing it inline in `body` redid
+    /// the full O(library + crate) work on every render pass (including
+    /// every table selection click).
+    private struct ResolvedCrateContent {
+        var crate: Crate?
+        var matchedTracks: [Track] = []
+        var unmatchedPaths: [String] = []
+        var genreTags: [String] = []
+        var artistCount: Int = 0
+    }
+
+    @State private var content = ResolvedCrateContent()
+
     var body: some View {
         Group {
-            let trackPaths = effectiveTrackPaths(for: node)
-            if let crate = node.crate ?? synthesizedCrateForAggregate(node: node, trackPaths: trackPaths), !trackPaths.isEmpty {
-                let resolver = TrackPathResolver(tracks: libraryService.tracks)
-                let resolved = trackPaths.map { path in
-                    (path: path, track: resolver.resolve(path: path))
-                }
-                let matchedTracks = resolved.compactMap(\.track)
-                let unmatchedPaths = resolved.compactMap { $0.track == nil ? $0.path : nil }
+            if let crate = content.crate, !(content.matchedTracks.isEmpty && content.unmatchedPaths.isEmpty) {
+                let matchedTracks = content.matchedTracks
+                let unmatchedPaths = content.unmatchedPaths
                 let isEditableCrate = crate.fileURL?.pathExtension.lowercased() == "crate"
-                let genreTags = Array(Set(matchedTracks.map(\.genre).filter { !$0.isEmpty })).sorted()
+                let genreTags = content.genreTags
                 let filteredMatchedTracks = selectedGenreFilter.map { genre in
                     matchedTracks.filter { $0.genre == genre }
                 } ?? matchedTracks
@@ -110,7 +121,7 @@ struct CrateDetailView: View {
                                 statTag(title: "Tracks", value: matchedTracks.count, isActive: selectedGenreFilter == nil) {
                                     selectedGenreFilter = nil
                                 }
-                                statTag(title: "Artists", value: Set(matchedTracks.map(\.artist).filter { !$0.isEmpty }).count)
+                                statTag(title: "Artists", value: content.artistCount)
                                 statTag(title: "Genres", value: genreTags.count)
                                 Spacer(minLength: 0)
                             }
@@ -186,8 +197,23 @@ struct CrateDetailView: View {
                 try saveTrackMetadataEdit(track: track, metadata: metadata)
             }
         }
+        .task(id: node.id) {
+            rebuildContent()
+        }
         .onChange(of: node.id) {
             selectedGenreFilter = nil
+        }
+        .onChange(of: filterMode) {
+            rebuildContent()
+        }
+        .onChange(of: libraryService.tracks) {
+            rebuildContent()
+        }
+        .onChange(of: libraryService.crates) {
+            rebuildContent()
+        }
+        .onChange(of: libraryService.smartCrates) {
+            rebuildContent()
         }
         .onDisappear {
             selectedGenreFilter = nil
@@ -444,6 +470,33 @@ struct CrateDetailView: View {
         .buttonStyle(.plain)
     }
 
+    private func rebuildContent() {
+        let trackPaths = effectiveTrackPaths(for: node)
+        guard let crate = node.crate ?? synthesizedCrateForAggregate(node: node, trackPaths: trackPaths) else {
+            content = ResolvedCrateContent()
+            return
+        }
+
+        let resolver = TrackPathResolver(tracks: libraryService.tracks)
+        var matchedTracks: [Track] = []
+        var unmatchedPaths: [String] = []
+        for path in trackPaths {
+            if let track = resolver.resolve(path: path) {
+                matchedTracks.append(track)
+            } else {
+                unmatchedPaths.append(path)
+            }
+        }
+
+        content = ResolvedCrateContent(
+            crate: crate,
+            matchedTracks: matchedTracks,
+            unmatchedPaths: unmatchedPaths,
+            genreTags: Array(Set(matchedTracks.lazy.map(\.genre).filter { !$0.isEmpty })).sorted(),
+            artistCount: Set(matchedTracks.lazy.map(\.artist).filter { !$0.isEmpty }).count
+        )
+    }
+
     private func effectiveTrackPaths(for node: CrateNode) -> [String] {
         if let crate = node.crate {
             return crate.trackPaths
@@ -525,6 +578,10 @@ private struct CrateTrackManagerView: View {
 
     @State private var searchText = ""
     @State private var workingPaths: [String]
+    /// Mirrors `workingPaths` for O(1) membership checks — `isIncluded` runs
+    /// once per visible row per render, and a linear scan over a large
+    /// crate made the manager list stutter.
+    @State private var workingPathSet: Set<String>
     @State private var saveErrorMessage: String?
 
     init(crate: Crate, libraryTracks: [Track], onSaved: @escaping () -> Void) {
@@ -532,6 +589,7 @@ private struct CrateTrackManagerView: View {
         self.libraryTracks = libraryTracks
         self.onSaved = onSaved
         _workingPaths = State(initialValue: crate.trackPaths)
+        _workingPathSet = State(initialValue: Set(crate.trackPaths))
     }
 
     var body: some View {
@@ -597,14 +655,16 @@ private struct CrateTrackManagerView: View {
     }
 
     private func isIncluded(_ path: String) -> Bool {
-        workingPaths.contains(path)
+        workingPathSet.contains(path)
     }
 
     private func toggle(_ path: String) {
-        if let index = workingPaths.firstIndex(of: path) {
-            workingPaths.remove(at: index)
+        if workingPathSet.contains(path) {
+            workingPaths.removeAll { $0 == path }
+            workingPathSet.remove(path)
         } else {
             workingPaths.append(path)
+            workingPathSet.insert(path)
         }
     }
 

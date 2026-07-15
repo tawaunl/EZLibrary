@@ -58,9 +58,14 @@ public struct DuplicateTracksSummary: Sendable {
 
 public enum DuplicateTracksService {
     public static func summary(for tracks: [Track]) -> DuplicateTracksSummary {
-        let groups = duplicateGroups(in: tracks)
-        return DuplicateTracksSummary(
-            totalTracks: tracks.count,
+        summary(forGroups: duplicateGroups(in: tracks), totalTracks: tracks.count)
+    }
+
+    /// Derives the summary from already-computed groups, so callers that
+    /// need both don't pay for the full duplicate scan twice.
+    public static func summary(forGroups groups: [DuplicateTrackGroup], totalTracks: Int) -> DuplicateTracksSummary {
+        DuplicateTracksSummary(
+            totalTracks: totalTracks,
             duplicateGroupCount: groups.count,
             redundantTrackCount: groups.reduce(0) { $0 + $1.redundantTrackCount },
             versionSeparatedGroupCount: groups.filter { $0.versionLabel != VersionCategory.original.displayName }.count
@@ -297,33 +302,40 @@ public enum DuplicateTracksService {
         return track.fileURL.deletingPathExtension().lastPathComponent
     }
 
+    /// Compiled once — `String.range(of:options:.regularExpression)` and
+    /// `replacingOccurrences(options:.regularExpression)` recompile their
+    /// pattern on every call, which dominated the duplicate scan (dozens of
+    /// compilations per track across a whole library).
+    private static let versionCategoryMatchers: [(VersionCategory, [NSRegularExpression])] = [
+        (.quickHit, [#"\bquick\s*hit\b"#, #"\bquickhit\b"#]),
+        (.intro, [#"\bintro\b"#]),
+        (.extended, [#"\bextended\b"#, #"\bext\b"#]),
+        (.clean, [#"\bclean\b"#]),
+        (.dirty, [#"\bdirty\b"#, #"\bexplicit\b"#]),
+        (.radio, [#"\bradio\b"#]),
+        (.instrumental, [#"\binstrumental\b"#]),
+        (.acapella, [#"\bacapella\b"#, #"\ba\s*cappella\b"#]),
+        (.vip, [#"\bvip\b"#]),
+        (.remix, [#"\bremix\b"#]),
+        (.edit, [#"\bedit\b"#]),
+        (.mix, [#"\bmix\b"#]),
+        (.club, [#"\bclub\b"#]),
+        (.bootleg, [#"\bbootleg\b"#]),
+        (.rework, [#"\brework\b"#]),
+        (.outro, [#"\boutro\b"#]),
+        (.live, [#"\blive\b"#]),
+        (.demo, [#"\bdemo\b"#]),
+        (.original, [#"\boriginal\s+mix\b"#, #"\boriginal\b"#, #"\bmain\s+mix\b"#, #"\bmain\b"#])
+    ].map { category, patterns in
+        (category, patterns.map { try! NSRegularExpression(pattern: $0) })
+    }
+
     private static func versionCategory(for title: String) -> VersionCategory {
         let normalizedTitle = normalized(title)
+        let fullRange = NSRange(normalizedTitle.startIndex..., in: normalizedTitle)
 
-        let orderedPatterns: [(VersionCategory, [String])] = [
-            (.quickHit, [#"\bquick\s*hit\b"#, #"\bquickhit\b"#]),
-            (.intro, [#"\bintro\b"#]),
-            (.extended, [#"\bextended\b"#, #"\bext\b"#]),
-            (.clean, [#"\bclean\b"#]),
-            (.dirty, [#"\bdirty\b"#, #"\bexplicit\b"#]),
-            (.radio, [#"\bradio\b"#]),
-            (.instrumental, [#"\binstrumental\b"#]),
-            (.acapella, [#"\bacapella\b"#, #"\ba\s*cappella\b"#]),
-            (.vip, [#"\bvip\b"#]),
-            (.remix, [#"\bremix\b"#]),
-            (.edit, [#"\bedit\b"#]),
-            (.mix, [#"\bmix\b"#]),
-            (.club, [#"\bclub\b"#]),
-            (.bootleg, [#"\bbootleg\b"#]),
-            (.rework, [#"\brework\b"#]),
-            (.outro, [#"\boutro\b"#]),
-            (.live, [#"\blive\b"#]),
-            (.demo, [#"\bdemo\b"#]),
-            (.original, [#"\boriginal\s+mix\b"#, #"\boriginal\b"#, #"\bmain\s+mix\b"#, #"\bmain\b"#])
-        ]
-
-        for (category, patterns) in orderedPatterns {
-            if patterns.contains(where: { normalizedTitle.range(of: $0, options: .regularExpression) != nil }) {
+        for (category, matchers) in versionCategoryMatchers {
+            if matchers.contains(where: { $0.firstMatch(in: normalizedTitle, options: [], range: fullRange) != nil }) {
                 return category
             }
         }
@@ -338,35 +350,50 @@ public enum DuplicateTracksService {
             || normalizedTitle.hasSuffix(" version")
     }
 
+    private static let featParenRegex = try! NSRegularExpression(pattern: #"\((feat|featuring|ft)\.?[^)]*\)"#)
+    private static let featBracketRegex = try! NSRegularExpression(pattern: #"\[(feat|featuring|ft)\.?[^\]]*\]"#)
+    private static let featTrailingRegex = try! NSRegularExpression(pattern: #"\b(feat|featuring|ft)\.?\s+[a-z0-9\s&,'\-]+$"#)
+    private static let versionWordsRegex = try! NSRegularExpression(
+        pattern: #"\b(quick\s*hit|quickhit|a\s*cappella|acapella|instrumental|extended|ext|bootleg|rework|remix|mixshow|original|version|official|intro|outro|radio|clean|dirty|explicit|main|vip|live|demo|edit|mix|club)\b"#
+    )
+    private static let featWordRegex = try! NSRegularExpression(pattern: #"\b(feat|featuring|ft)\.?\b"#)
+    private static let artistJoinerRegex = try! NSRegularExpression(pattern: #"\b(with|w|x|presents)\b"#)
+    private static let nonAlphanumericRegex = try! NSRegularExpression(pattern: #"[^a-z0-9\s]"#)
+    private static let whitespaceRunRegex = try! NSRegularExpression(pattern: #"\s+"#)
+
+    private static func replacingMatches(of regex: NSRegularExpression, in value: String, with replacement: String) -> String {
+        regex.stringByReplacingMatches(
+            in: value,
+            options: [],
+            range: NSRange(value.startIndex..., in: value),
+            withTemplate: replacement
+        )
+    }
+
     private static func normalizedTitle(_ value: String) -> String {
-        normalized(value)
-            .replacingOccurrences(of: #"\((feat|featuring|ft)\.?[^)]*\)"#, with: " ", options: .regularExpression)
-            .replacingOccurrences(of: #"\[(feat|featuring|ft)\.?[^\]]*\]"#, with: " ", options: .regularExpression)
-            .replacingOccurrences(of: #"\b(feat|featuring|ft)\.?\s+[a-z0-9\s&,'\-]+$"#, with: " ", options: .regularExpression)
-            .replacingOccurrences(
-                of: #"\b(quick\s*hit|quickhit|a\s*cappella|acapella|instrumental|extended|ext|bootleg|rework|remix|mixshow|original|version|official|intro|outro|radio|clean|dirty|explicit|main|vip|live|demo|edit|mix|club)\b"#,
-                with: " ",
-                options: .regularExpression
-            )
-            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        var result = normalized(value)
+        result = replacingMatches(of: featParenRegex, in: result, with: " ")
+        result = replacingMatches(of: featBracketRegex, in: result, with: " ")
+        result = replacingMatches(of: featTrailingRegex, in: result, with: " ")
+        result = replacingMatches(of: versionWordsRegex, in: result, with: " ")
+        result = replacingMatches(of: whitespaceRunRegex, in: result, with: " ")
+        return result.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private static func normalizedArtist(_ value: String) -> String {
-        normalized(value)
-            .replacingOccurrences(of: #"\b(feat|featuring|ft)\.?\b"#, with: " ", options: .regularExpression)
-            .replacingOccurrences(of: #"\b(with|w|x|presents)\b"#, with: " ", options: .regularExpression)
-            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        var result = normalized(value)
+        result = replacingMatches(of: featWordRegex, in: result, with: " ")
+        result = replacingMatches(of: artistJoinerRegex, in: result, with: " ")
+        result = replacingMatches(of: whitespaceRunRegex, in: result, with: " ")
+        return result.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private static func normalized(_ value: String) -> String {
         let folded = value
             .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
             .lowercased()
-        let replaced = folded.replacingOccurrences(of: #"[^a-z0-9\s]"#, with: " ", options: .regularExpression)
-        return replaced
-            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        var result = replacingMatches(of: nonAlphanumericRegex, in: folded, with: " ")
+        result = replacingMatches(of: whitespaceRunRegex, in: result, with: " ")
+        return result.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
