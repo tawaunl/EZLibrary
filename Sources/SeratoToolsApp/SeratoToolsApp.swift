@@ -37,6 +37,7 @@ struct SeratoToolsApp: App {
     @StateObject private var crateHierarchy: CrateHierarchyViewModel
     @StateObject private var smartCrateHierarchy: CrateHierarchyViewModel
     @StateObject private var missingTracksService: MissingTracksService
+    @StateObject private var updateChecker = UpdateCheckViewModel()
 
     init() {
         let libraryDirectory = SeratoLibraryLocator.discoverLibraryDirectory()
@@ -66,6 +67,19 @@ struct SeratoToolsApp: App {
                 .environmentObject(libraryService)
                 .environmentObject(hiddenCrateStore)
                 .environmentObject(missingTracksService)
+                .sheet(isPresented: $updateChecker.isPresented) {
+                    UpdateCheckView(viewModel: updateChecker)
+                }
+                .task {
+                    await updateChecker.runAutomaticCheckIfDue()
+                }
+        }
+        .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") {
+                    updateChecker.startCheck()
+                }
+            }
         }
     }
 }
