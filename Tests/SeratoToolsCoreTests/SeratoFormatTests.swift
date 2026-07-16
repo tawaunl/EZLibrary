@@ -98,6 +98,9 @@ private func makeMetadataRenameEnvironment() throws -> (tempRoot: URL, libraryDi
     let env = try makeMetadataRenameEnvironment()
     defer { try? FileManager.default.removeItem(at: env.tempRoot) }
 
+    SeratoProcessGuard.isRunningOverride = false
+    defer { SeratoProcessGuard.isRunningOverride = nil }
+
     let rootDirectory = SeratoLibraryLocator.rootDirectory(for: env.libraryDirectory)
     let crateURL = env.libraryDirectory.appendingPathComponent("Subcrates/Mike's Party.crate")
     let crate = try SeratoCrateParser.parseCrate(at: crateURL)

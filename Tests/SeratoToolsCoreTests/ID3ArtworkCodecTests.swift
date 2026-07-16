@@ -74,3 +74,56 @@ private func apicFrameBytes() -> [UInt8] {
     let tag = id3v24Tag(id3Frame("TIT2", [0x03] + Array("Title".utf8)))
     #expect(ID3ArtworkCodec.extractArtwork(fromID3TagBytes: tag) == nil)
 }
+
+// MARK: - Serato cue-point (GEOB) preservation
+
+private func geobBody(name: String, payload: [UInt8]) -> [UInt8] {
+    [0x00] // ISO-8859-1 encoding
+        + Array("application/octet-stream".utf8) + [0x00] // MIME
+        + [0x00] // empty filename
+        + Array(name.utf8) + [0x00] // content description (e.g. "Serato Markers2")
+        + payload
+}
+
+@Test func preservesSeratoGeobCueFrame() {
+    let body = geobBody(name: "Serato Markers2", payload: [0xDE, 0xAD, 0xBE, 0xEF])
+    let tag = id3v24Tag(id3Frame("TIT2", [0x03] + Array("Old".utf8)) + id3Frame("GEOB", body))
+
+    let preserved = ID3ArtworkCodec.preservedFrames(fromID3TagBytes: tag, excludingFrameIDs: ["TIT2"])
+    let text = String(decoding: preserved, as: UTF8.self)
+    #expect(text.contains("GEOB"))
+    #expect(text.contains("Serato Markers2"))
+}
+
+@Test func preservesGeobThroughTagLevelUnsynchronisation() {
+    // Logical payload ends with two 0xFF bytes; unsynchronisation inserts a
+    // 0x00 after each 0xFF, and the frame size counts those inserted bytes.
+    let prefix = geobBody(name: "Serato Markers2", payload: [])
+    let unsynced = prefix + [0xFF, 0x00, 0xFF, 0x00, 0x01]
+    let frame = Array("GEOB".utf8) + syncsafe(unsynced.count) + [0x00, 0x00] + unsynced
+    // Header flags 0x80 = whole-tag unsynchronisation.
+    let tag = Data(Array("ID3".utf8) + [0x04, 0x00, 0x80] + syncsafe(frame.count) + frame)
+
+    let preserved = ID3ArtworkCodec.preservedFrames(fromID3TagBytes: tag, excludingFrameIDs: [])
+    let text = String(decoding: preserved, as: UTF8.self)
+    #expect(text.contains("Serato Markers2"))
+
+    // The inserted 0x00s must be gone, restoring the original 0xFF 0xFF pair.
+    let bytes = Array(preserved)
+    let restoredDoubleFF = (0..<max(0, bytes.count - 1)).contains { bytes[$0] == 0xFF && bytes[$0 + 1] == 0xFF }
+    #expect(restoredDoubleFF)
+}
+
+@Test func preservesGeobWithDataLengthIndicator() {
+    let payload = geobBody(name: "Serato Markers2", payload: [0x01, 0x02, 0x03])
+    let frameData = syncsafe(payload.count) + payload // 4-byte data-length indicator, then data
+    // Format flags 0x01 = data-length indicator present.
+    let frame = Array("GEOB".utf8) + syncsafe(frameData.count) + [0x00, 0x01] + frameData
+    let tag = Data(Array("ID3".utf8) + [0x04, 0x00, 0x00] + syncsafe(frame.count) + frame)
+
+    let preserved = ID3ArtworkCodec.preservedFrames(fromID3TagBytes: tag, excludingFrameIDs: [])
+    let text = String(decoding: preserved, as: UTF8.self)
+    #expect(text.contains("GEOB"))
+    #expect(text.contains("Serato Markers2"))
+}
+

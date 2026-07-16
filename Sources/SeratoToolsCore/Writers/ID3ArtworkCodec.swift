@@ -29,7 +29,7 @@ public enum ID3ArtworkCodec {
         guard let parsed = parseFrames(tagData) else { return nil }
 
         var fallback: ID3Artwork?
-        for frame in parsed.frames where frame.formatFlags == 0 {
+        for frame in parsed.frames where frame.canReemit {
             let artwork: ID3Artwork?
             if parsed.version == 2, frame.id == "PIC" {
                 artwork = parsePIC(frame.body)
@@ -59,7 +59,7 @@ public enum ID3ArtworkCodec {
 
         var out = Data()
         for frame in parsed.frames {
-            guard frame.statusFlags == 0, frame.formatFlags == 0 else { continue }
+            guard frame.canReemit else { continue }
             if frame.id == "APIC" || frame.id == "PIC" { continue }
             if excluded.contains(frame.id) { continue }
             guard frame.id.count == 4, frame.id.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) }) else { continue }
@@ -96,9 +96,13 @@ public enum ID3ArtworkCodec {
 
     private struct RawFrame {
         let id: String
+        /// Frame data normalised for re-emit: any data-length indicator
+        /// stripped and unsynchronisation reversed, so callers get the real
+        /// payload bytes regardless of how the source tag encoded them.
         let body: [UInt8]
-        let statusFlags: UInt8
-        let formatFlags: UInt8
+        /// False when the frame is compressed/encrypted/grouped and can't be
+        /// safely round-tripped; such frames are dropped rather than corrupted.
+        let canReemit: Bool
     }
 
     private struct ParsedTag {
@@ -113,8 +117,10 @@ public enum ID3ArtworkCodec {
 
         let major = Int(bytes[3])
         let headerFlags = bytes[5]
-        // Whole-tag unsynchronisation is not supported for safe re-emit.
-        if headerFlags & 0x80 != 0 { return nil }
+        // Whole-tag unsynchronisation (ID3v2.3) is reversed per-frame below
+        // rather than rejected, so Serato's GEOB cue/beatgrid frames survive
+        // edits to tags that use it (previously this dropped every frame).
+        let tagUnsync = headerFlags & 0x80 != 0
 
         let size = decodeSyncSafe(Array(bytes[6..<10]))
         let end = min(bytes.count, 10 + size)
@@ -139,7 +145,9 @@ public enum ID3ArtworkCodec {
                 let bodyStart = pos + 6
                 let bodyEnd = bodyStart + sz
                 guard sz > 0, bodyEnd <= end else { break }
-                frames.append(RawFrame(id: id, body: Array(bytes[bodyStart..<bodyEnd]), statusFlags: 0, formatFlags: 0))
+                let raw = Array(bytes[bodyStart..<bodyEnd])
+                let body = tagUnsync ? reverseUnsynchronisation(raw) : raw
+                frames.append(RawFrame(id: id, body: body, canReemit: true))
                 pos = bodyEnd
             }
         } else if major == 3 || major == 4 {
@@ -148,12 +156,18 @@ public enum ID3ArtworkCodec {
                 let id = asciiString(Array(bytes[pos..<pos + 4]))
                 let sizeSlice = Array(bytes[pos + 4..<pos + 8])
                 let sz = major == 4 ? decodeSyncSafe(sizeSlice) : decodeUInt32BE(sizeSlice)
-                let statusFlags = bytes[pos + 8]
                 let formatFlags = bytes[pos + 9]
                 let bodyStart = pos + 10
                 let bodyEnd = bodyStart + sz
                 guard sz > 0, bodyEnd <= end else { break }
-                frames.append(RawFrame(id: id, body: Array(bytes[bodyStart..<bodyEnd]), statusFlags: statusFlags, formatFlags: formatFlags))
+                let raw = Array(bytes[bodyStart..<bodyEnd])
+                let normalized = normalizeFrameBody(
+                    version: major,
+                    formatFlags: formatFlags,
+                    tagUnsync: tagUnsync,
+                    rawBody: raw
+                )
+                frames.append(RawFrame(id: id, body: normalized.body, canReemit: normalized.canReemit))
                 pos = bodyEnd
             }
         } else {
@@ -238,6 +252,67 @@ public enum ID3ArtworkCodec {
         frame.append(contentsOf: [0x00, 0x00]) // flags
         frame.append(contentsOf: body)
         return frame
+    }
+
+    // MARK: - Unsynchronisation & frame normalisation
+
+    /// Reverses ID3 unsynchronisation: every `0xFF 0x00` pair inserted to
+    /// avoid false MPEG sync signals is collapsed back to a single `0xFF`.
+    private static func reverseUnsynchronisation(_ bytes: [UInt8]) -> [UInt8] {
+        guard bytes.contains(0xFF) else { return bytes }
+        var out: [UInt8] = []
+        out.reserveCapacity(bytes.count)
+        var i = 0
+        while i < bytes.count {
+            let byte = bytes[i]
+            out.append(byte)
+            if byte == 0xFF, i + 1 < bytes.count, bytes[i + 1] == 0x00 {
+                i += 2
+            } else {
+                i += 1
+            }
+        }
+        return out
+    }
+
+    /// Strips a v2.3/v2.4 frame's optional data-length indicator and reverses
+    /// any unsynchronisation so the returned bytes are the real payload.
+    /// Compressed, encrypted, or grouped frames can't be safely rebuilt and
+    /// are reported as non-re-emittable so callers drop rather than corrupt them.
+    private static func normalizeFrameBody(
+        version: Int,
+        formatFlags: UInt8,
+        tagUnsync: Bool,
+        rawBody: [UInt8]
+    ) -> (body: [UInt8], canReemit: Bool) {
+        if version == 4 {
+            let grouping = formatFlags & 0x40 != 0
+            let compressed = formatFlags & 0x08 != 0
+            let encrypted = formatFlags & 0x04 != 0
+            let frameUnsync = formatFlags & 0x02 != 0
+            let hasDataLength = formatFlags & 0x01 != 0
+            if grouping || compressed || encrypted {
+                return (rawBody, false)
+            }
+            var body = rawBody
+            if hasDataLength {
+                guard body.count >= 4 else { return (rawBody, false) }
+                body.removeFirst(4)
+            }
+            if frameUnsync || tagUnsync {
+                body = reverseUnsynchronisation(body)
+            }
+            return (body, true)
+        }
+
+        // ID3v2.3 format flags: 0x80 compression, 0x40 encryption, 0x20 grouping.
+        let compressed = formatFlags & 0x80 != 0
+        let encrypted = formatFlags & 0x40 != 0
+        let grouping = formatFlags & 0x20 != 0
+        if compressed || encrypted || grouping {
+            return (rawBody, false)
+        }
+        return (tagUnsync ? reverseUnsynchronisation(rawBody) : rawBody, true)
     }
 
     // MARK: - Integer codecs

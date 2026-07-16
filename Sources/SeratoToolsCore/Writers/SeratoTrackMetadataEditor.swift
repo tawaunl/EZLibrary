@@ -4,6 +4,7 @@ import Foundation
 /// ID3 tags (for MP3 files).
 public enum SeratoTrackMetadataEditor {
     public enum EditError: Error, LocalizedError {
+        case seratoIsRunning
         case trackNotFoundInDatabase(String)
         case metadataVerificationFailed(String)
         case fileTypeNotSupportedForID3(URL)
@@ -11,6 +12,8 @@ public enum SeratoTrackMetadataEditor {
 
         public var errorDescription: String? {
             switch self {
+            case .seratoIsRunning:
+                return "Serato is currently running. Quit Serato before editing tags so it doesn't overwrite the changes."
             case let .trackNotFoundInDatabase(path):
                 return "Could not find this track in database V2 for path: \(path)"
             case let .metadataVerificationFailed(path):
@@ -24,6 +27,8 @@ public enum SeratoTrackMetadataEditor {
 
         public var recoverySuggestion: String? {
             switch self {
+            case .seratoIsRunning:
+                return "Quit Serato DJ, then retry. Serato rewrites its library from memory on quit, which would revert these edits."
             case .trackNotFoundInDatabase:
                 return "Reload the library and retry. If it still fails, the track path in database V2 may have changed."
             case .metadataVerificationFailed:
@@ -42,6 +47,13 @@ public enum SeratoTrackMetadataEditor {
         databaseFileURL: URL,
         rewriteFilenameFromMetadata: Bool = true
     ) throws {
+        // Refuse to write while Serato is open: Serato rewrites database V2
+        // from its in-memory library on quit, which would revert our edit —
+        // and if we renamed the file, leave it orphaned/missing in Serato.
+        guard !SeratoProcessGuard.isSeratoRunning else {
+            throw EditError.seratoIsRunning
+        }
+
         // Update on-disk ID3 first so we never commit DB-only edits when a
         // file-tag write fails.
         try writeID3Tags(fileURL: track.fileURL, metadata: metadata)
@@ -155,6 +167,12 @@ public enum SeratoTrackMetadataEditor {
     ) throws -> BatchUpdateResult {
         guard !updates.isEmpty else {
             return BatchUpdateResult(updatedTracks: [], failures: [])
+        }
+
+        // Refuse to write while Serato is open: Serato rewrites database V2
+        // from its in-memory library on quit, which would revert these edits.
+        guard !SeratoProcessGuard.isSeratoRunning else {
+            throw EditError.seratoIsRunning
         }
 
         var failures: [BatchUpdateFailure] = []
