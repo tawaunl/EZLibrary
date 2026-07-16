@@ -8,14 +8,25 @@ final class SeratoToolsAppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
 
+        // Apply the saved light/dark/system appearance preference.
+        ThemeController.shared.applyStored()
+
         // Ensure the first window becomes key/main after launch.
         DispatchQueue.main.async { [self] in
             if let window = NSApp.windows.first {
                 self.configureStandardWindowChrome(for: window)
+                self.installThemeAccessory(on: window)
                 window.makeKeyAndOrderFront(nil)
                 window.makeMain()
             }
         }
+    }
+
+    private func installThemeAccessory(on window: NSWindow) {
+        let alreadyInstalled = window.titlebarAccessoryViewControllers
+            .contains { $0 is ThemeTitlebarAccessoryController }
+        guard !alreadyInstalled else { return }
+        window.addTitlebarAccessoryViewController(ThemeTitlebarAccessoryController())
     }
 
     private func configureStandardWindowChrome(for window: NSWindow) {
@@ -38,6 +49,7 @@ struct SeratoToolsApp: App {
     @StateObject private var smartCrateHierarchy: CrateHierarchyViewModel
     @StateObject private var missingTracksService: MissingTracksService
     @StateObject private var updateChecker = UpdateCheckViewModel()
+    @ObservedObject private var themeController = ThemeController.shared
 
     init() {
         let libraryDirectory = SeratoLibraryLocator.discoverLibraryDirectory()
@@ -79,6 +91,17 @@ struct SeratoToolsApp: App {
                 Button("Check for Updates…") {
                     updateChecker.startCheck()
                 }
+            }
+            CommandGroup(before: .toolbar) {
+                Picker("Appearance", selection: Binding(
+                    get: { themeController.current },
+                    set: { themeController.set($0) }
+                )) {
+                    ForEach(AppTheme.allCases) { theme in
+                        Text(theme.title).tag(theme)
+                    }
+                }
+                Divider()
             }
         }
     }
