@@ -50,6 +50,16 @@ final class TrackAudioPlayerViewModel: NSObject, ObservableObject {
         currentTime = player.currentTime
     }
 
+    /// Pauses playback while preserving the current position so it can be
+    /// resumed from the same spot.
+    func pausePlayback() {
+        guard let player else { return }
+        player.pause()
+        isPlaying = false
+        currentTime = player.currentTime
+    }
+
+    /// Stops playback and rewinds to the beginning of the track.
     func stopPlayback() {
         guard let player else { return }
         player.pause()
@@ -58,12 +68,16 @@ final class TrackAudioPlayerViewModel: NSObject, ObservableObject {
         currentTime = 0
     }
 
-    func handleSpacebarToggle() {
+    func togglePlayPause() {
         if isPlaying {
-            stopPlayback()
+            pausePlayback()
         } else {
             startPlayback()
         }
+    }
+
+    func handleSpacebarToggle() {
+        togglePlayPause()
     }
 
     func seek(to time: Double) {
@@ -71,6 +85,12 @@ final class TrackAudioPlayerViewModel: NSObject, ObservableObject {
         let clamped = max(0, min(time, duration))
         player.currentTime = clamped
         currentTime = clamped
+    }
+
+    /// Seeks relative to the current position, e.g. `+15` or `-15` seconds.
+    func skip(by seconds: Double) {
+        guard let player else { return }
+        seek(to: player.currentTime + seconds)
     }
 
     func refreshProgress() {
@@ -83,14 +103,23 @@ final class TrackAudioPlayerViewModel: NSObject, ObservableObject {
 struct TrackAudioPlayerPanel: View {
     let track: Track
     let activationToken: Int
+    let onPrevious: (() -> Void)?
+    let onNext: (() -> Void)?
 
     @StateObject private var player = TrackAudioPlayerViewModel()
     @State private var keyMonitor: Any?
     @AppStorage("TrackAudioPlayerMiniModeEnabled") private var miniModeEnabled = false
 
-    init(track: Track, activationToken: Int = 0) {
+    init(
+        track: Track,
+        activationToken: Int = 0,
+        onPrevious: (() -> Void)? = nil,
+        onNext: (() -> Void)? = nil
+    ) {
         self.track = track
         self.activationToken = activationToken
+        self.onPrevious = onPrevious
+        self.onNext = onNext
     }
 
     var body: some View {
@@ -122,39 +151,73 @@ struct TrackAudioPlayerPanel: View {
             .controlSize(.small)
             .disabled(player.loadedTrackPath == nil)
 
-            HStack(spacing: 6) {
+            HStack(spacing: miniModeEnabled ? 4 : 8) {
                 Button {
-                    player.startPlayback()
+                    onPrevious?()
                 } label: {
-                    if miniModeEnabled {
-                        Image(systemName: "play.fill")
-                    } else {
-                        Text("Start")
-                    }
+                    Image(systemName: "backward.end.fill")
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.bordered)
                 .controlSize(.mini)
-                .disabled(player.loadedTrackPath == nil)
-                .help("Start playback of the loaded track.")
+                .disabled(onPrevious == nil)
+                .help("Play the previous track.")
 
                 Button {
-                    player.stopPlayback()
+                    player.skip(by: -15)
                 } label: {
-                    if miniModeEnabled {
-                        Image(systemName: "stop.fill")
-                    } else {
-                        Text("Stop")
-                    }
+                    Image(systemName: "gobackward.15")
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.mini)
                 .disabled(player.loadedTrackPath == nil)
-                .help("Stop playback.")
+                .help("Skip back 15 seconds.")
+
+                Button {
+                    player.togglePlayPause()
+                } label: {
+                    Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.mini)
+                .disabled(player.loadedTrackPath == nil)
+                .help(player.isPlaying ? "Pause playback." : "Play the loaded track.")
+
+                Button {
+                    player.skip(by: 15)
+                } label: {
+                    Image(systemName: "goforward.15")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.mini)
+                .disabled(player.loadedTrackPath == nil)
+                .help("Skip forward 15 seconds.")
+
+                Button {
+                    onNext?()
+                } label: {
+                    Image(systemName: "forward.end.fill")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.mini)
+                .disabled(onNext == nil)
+                .help("Play the next track.")
+
+                if !miniModeEnabled {
+                    Button {
+                        player.stopPlayback()
+                    } label: {
+                        Text("Stop")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+                    .disabled(player.loadedTrackPath == nil)
+                    .help("Stop playback and return to the start.")
+                }
 
                 Spacer()
 
                 if !miniModeEnabled {
-                    Text("Space: Start/Stop")
+                    Text("Space: Play/Pause")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }

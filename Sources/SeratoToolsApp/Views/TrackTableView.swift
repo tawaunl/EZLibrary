@@ -31,7 +31,7 @@ struct TrackTableView: View {
     let onMetadataEditRequested: ((Track, SeratoTrackMetadataUpdate) -> Void)?
     let onSelectionChanged: (([Track]) -> Void)?
     let onTrackSingleClick: ((Track) -> Void)?
-    let onTrackActivated: ((Track) -> Void)?
+    let onTrackActivated: ((Track, [Track]) -> Void)?
 
     @State private var searchText = ""
     @State private var selectedTrackKeys: Set<String> = []
@@ -52,7 +52,7 @@ struct TrackTableView: View {
         onMetadataEditRequested: ((Track, SeratoTrackMetadataUpdate) -> Void)? = nil,
         onSelectionChanged: (([Track]) -> Void)? = nil,
         onTrackSingleClick: ((Track) -> Void)? = nil,
-        onTrackActivated: ((Track) -> Void)? = nil
+        onTrackActivated: ((Track, [Track]) -> Void)? = nil
     ) {
         self.tracks = tracks
         self.numberingMode = numberingMode
@@ -314,7 +314,7 @@ private struct TrackNSTableView: NSViewRepresentable {
     let dragPayloadForRow: (_ rowIndex: Int, _ selectedKeys: Set<String>) -> String
     let onMetadataEditRequested: ((Track, SeratoTrackMetadataUpdate) -> Void)?
     let onTrackSingleClick: ((Track) -> Void)?
-    let onTrackActivated: ((Track) -> Void)?
+    let onTrackActivated: ((Track, [Track]) -> Void)?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -524,7 +524,7 @@ private struct TrackNSTableView: NSViewRepresentable {
 
             let row = sender.tag
             table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
-            parent.onTrackActivated?(parent.tracks[row])
+            parent.onTrackActivated?(parent.tracks[row], parent.tracks)
         }
 
         private func beginInlineEdit(row: Int, column: Int) {

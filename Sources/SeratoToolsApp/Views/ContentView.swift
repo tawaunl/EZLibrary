@@ -57,6 +57,7 @@ struct ContentView: View {
     @State private var metadataSaveMessage: String?
     @State private var metadataSaveMessageTask: Task<Void, Never>?
     @State private var activeAudioTrack: Track?
+    @State private var activeAudioTrackList: [Track] = []
     @State private var audioActivationToken = 0
     @State private var filteredLibraryTracks: [Track] = []
     @AppStorage(Self.confirmDeleteActionsDefaultsKey) private var confirmDeleteActions = true
@@ -101,7 +102,12 @@ struct ContentView: View {
                 if let activeAudioTrack {
                     Divider()
                     HStack {
-                        TrackAudioPlayerPanel(track: activeAudioTrack, activationToken: audioActivationToken)
+                        TrackAudioPlayerPanel(
+                            track: activeAudioTrack,
+                            activationToken: audioActivationToken,
+                            onPrevious: canPlayPreviousAudioTrack ? { playAdjacentAudioTrack(offset: -1) } : nil,
+                            onNext: canPlayNextAudioTrack ? { playAdjacentAudioTrack(offset: 1) } : nil
+                        )
                         Spacer(minLength: 0)
                     }
                     .padding(.horizontal, 8)
@@ -466,9 +472,8 @@ struct ContentView: View {
                         onSelectionChanged: { selected in
                             selectedTracksForActions = selected
                         },
-                        onTrackActivated: { track in
-                            activeAudioTrack = track
-                            audioActivationToken += 1
+                        onTrackActivated: { track, list in
+                            activateAudioTrack(track, in: list)
                         }
                     )
                 }
@@ -522,9 +527,8 @@ struct ContentView: View {
                                 node: node,
                                 filterMode: crateListFilterMode,
                                 onCratesChanged: reloadLibrary,
-                                onTrackActivated: { track in
-                                    activeAudioTrack = track
-                                    audioActivationToken += 1
+                                onTrackActivated: { track, list in
+                                    activateAudioTrack(track, in: list)
                                 }
                             )
                         } else {
@@ -541,6 +545,35 @@ struct ContentView: View {
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+
+    private func activateAudioTrack(_ track: Track, in list: [Track]) {
+        activeAudioTrack = track
+        activeAudioTrackList = list
+        audioActivationToken += 1
+    }
+
+    private var activeAudioTrackIndex: Int? {
+        guard let activeAudioTrack else { return nil }
+        return activeAudioTrackList.firstIndex { $0.seratoStoredPath == activeAudioTrack.seratoStoredPath }
+    }
+
+    private var canPlayPreviousAudioTrack: Bool {
+        guard let index = activeAudioTrackIndex else { return false }
+        return index > 0
+    }
+
+    private var canPlayNextAudioTrack: Bool {
+        guard let index = activeAudioTrackIndex else { return false }
+        return index < activeAudioTrackList.count - 1
+    }
+
+    private func playAdjacentAudioTrack(offset: Int) {
+        guard let index = activeAudioTrackIndex else { return }
+        let newIndex = index + offset
+        guard activeAudioTrackList.indices.contains(newIndex) else { return }
+        activeAudioTrack = activeAudioTrackList[newIndex]
+        audioActivationToken += 1
     }
 
     private func reloadLibrary() {

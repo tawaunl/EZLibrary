@@ -57,7 +57,28 @@ SHASUM="$(shasum -a 256 "$PKG_PATH" | awk '{print $1}')"
 NOTES_FILE="$(mktemp)"
 trap 'rm -f "$NOTES_FILE"' EXIT
 
-cat > "$NOTES_FILE" <<EOF
+# Pull the highlights for this version from docs/CHANGELOG.md (the block between
+# "## <version>" and the next "## " heading), if present.
+CHANGELOG_FILE="$ROOT_DIR/docs/CHANGELOG.md"
+HIGHLIGHTS=""
+if [[ -f "$CHANGELOG_FILE" ]]; then
+  HIGHLIGHTS="$(awk -v ver="$PKG_VERSION" '
+    index($0, "## " ver) == 1 { capture = 1; next }
+    /^## / { capture = 0 }
+    capture { blanks = blanks $0 "\n"; if ($0 ~ /[^[:space:]]/) { printf "%s", blanks; blanks = "" } }
+  ' "$CHANGELOG_FILE" | sed -e '/./,$!d')"
+fi
+
+if [[ -n "$HIGHLIGHTS" ]]; then
+  cat > "$NOTES_FILE" <<EOF
+## What's New in $PKG_VERSION
+
+$HIGHLIGHTS
+
+EOF
+fi
+
+cat >> "$NOTES_FILE" <<EOF
 ## Install
 
 This build is **not signed** with an Apple Developer ID, so macOS Gatekeeper
