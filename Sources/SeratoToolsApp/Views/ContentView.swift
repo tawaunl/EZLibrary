@@ -798,7 +798,7 @@ private struct DiscogsTokenSettingsSheet: View {
     @State private var statusMessage: String?
     @State private var validatingAcoustIDKey = false
     @State private var showHelp = false
-    @AppStorage(SeratoFeatureFlags.autoRenameFromMetadataDefaultsKey) private var autoRenameFromMetadata = true
+    @AppStorage(SeratoFeatureFlags.autoRenameFromMetadataDefaultsKey) private var autoRenameFromMetadata = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -882,7 +882,7 @@ private struct DiscogsTokenSettingsSheet: View {
                         .toggleStyle(.switch)
                         .controlSize(.small)
 
-                    Text("When saving ID3/track metadata, rename files as title-artist-album-year and update Serato database/crate paths.")
+                    Text("When saving ID3/track metadata, rename files as title-artist-album-year and update Serato database/crate paths. Leave off unless you know you need it: renaming files Serato has already analyzed can orphan the original entry and re-import the file as a new track.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -939,7 +939,7 @@ private struct DiscogsTokenSettingsSheet: View {
     private func initializeFeatureDefaultsIfNeeded() {
         let defaults = UserDefaults.standard
         if defaults.object(forKey: SeratoFeatureFlags.autoRenameFromMetadataDefaultsKey) == nil {
-            defaults.set(true, forKey: SeratoFeatureFlags.autoRenameFromMetadataDefaultsKey)
+            defaults.set(false, forKey: SeratoFeatureFlags.autoRenameFromMetadataDefaultsKey)
         }
     }
 

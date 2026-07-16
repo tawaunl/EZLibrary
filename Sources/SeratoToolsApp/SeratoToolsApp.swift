@@ -52,6 +52,8 @@ struct SeratoToolsApp: App {
     @ObservedObject private var themeController = ThemeController.shared
 
     init() {
+        SeratoFeatureFlags.applyDisableAutoRenameMigrationIfNeeded()
+
         let libraryDirectory = SeratoLibraryLocator.discoverLibraryDirectory()
         print("SeratoTools library directory: \(libraryDirectory.path)")
 
