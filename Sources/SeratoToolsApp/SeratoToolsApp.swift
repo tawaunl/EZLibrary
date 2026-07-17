@@ -87,6 +87,16 @@ struct SeratoToolsApp: App {
                 .task {
                     await updateChecker.runAutomaticCheckIfDue()
                 }
+                .task {
+                    // Keep a user-writable yt-dlp current in the background so
+                    // downloads don't depend on the frozen bundled snapshot,
+                    // and refresh the Homebrew-managed tools (ffmpeg, yt-dlp,
+                    // chromaprint) so none of them go stale.
+                    Task.detached(priority: .background) {
+                        _ = YouTubeAudioImportService.refreshManagedYTDLPIfDue()
+                        _ = HomebrewMaintenanceService.refreshIfDue()
+                    }
+                }
         }
         .commands {
             CommandGroup(after: .appInfo) {

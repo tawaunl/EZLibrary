@@ -556,9 +556,19 @@ public enum AudioFingerprintService {
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/bash")
+        // Use a non-login shell with an explicit PATH so we never source the
+        // user's shell profile. Some machines' profiles invoke `java`/`jenv`
+        // (or run `java -version`), which triggers macOS's "No Java runtime
+        // present" dialog mid-install even though nothing here needs Java.
         process.arguments = [
-            "-lc",
-            "NONINTERACTIVE=1 /bin/bash -c \"$(/usr/bin/curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
+            "-c",
+            "/bin/bash -c \"$(/usr/bin/curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
+        ]
+        process.environment = [
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+            "NONINTERACTIVE": "1",
+            "HOMEBREW_NO_ANALYTICS": "1",
+            "HOME": FileManager.default.homeDirectoryForCurrentUser.path
         ]
 
         let stderr = Pipe()

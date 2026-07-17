@@ -217,27 +217,59 @@ public enum YouTubeAudioImportService {
 
         let ytDLPPath = findExecutablePath(
             named: "yt-dlp",
-            preferredPaths: [
-                bundledYTDLP,
-                "/opt/homebrew/bin/yt-dlp",
-                "/usr/local/bin/yt-dlp",
-                "/usr/bin/yt-dlp"
-            ].compactMap { $0 },
+            preferredPaths: preferredYTDLPPaths(bundled: bundledYTDLP),
             environment: environment
         )
 
         let ffmpegPath = findExecutablePath(
             named: "ffmpeg",
-            preferredPaths: [
-                bundledFFmpeg,
-                "/opt/homebrew/bin/ffmpeg",
-                "/usr/local/bin/ffmpeg",
-                "/usr/bin/ffmpeg"
-            ].compactMap { $0 },
+            preferredPaths: preferredFFmpegPaths(bundled: bundledFFmpeg),
             environment: environment
         )
 
         return DependencyStatus(ytDLPPath: ytDLPPath, ffmpegPath: ffmpegPath)
+    }
+
+    /// yt-dlp must track YouTube's frequent site changes, so a system copy
+    /// (kept current by Homebrew / the user) is preferred over the snapshot
+    /// bundled at build time, which goes stale and then fails to fetch info or
+    /// download. A user-writable self-updating copy comes next, and the bundled
+    /// binary stays as an offline fallback.
+    private static func preferredYTDLPPaths(bundled: String?) -> [String] {
+        let managed = managedYTDLPURL().path
+        return [
+            "/opt/homebrew/bin/yt-dlp",
+            "/usr/local/bin/yt-dlp",
+            "/usr/bin/yt-dlp",
+            FileManager.default.isExecutableFile(atPath: managed) ? managed : nil,
+            bundled
+        ].compactMap { $0 }
+    }
+
+    /// A working ffmpeg is preferred from the system first, falling back to the
+    /// bundled copy. yt-dlp needs to be told where it is (see `downloadAudio`),
+    /// because a GUI app launched from Finder has a minimal PATH that includes
+    /// neither Homebrew nor the app's bundled binaries.
+    private static func preferredFFmpegPaths(bundled: String?) -> [String] {
+        [
+            "/opt/homebrew/bin/ffmpeg",
+            "/usr/local/bin/ffmpeg",
+            "/usr/bin/ffmpeg",
+            bundled
+        ].compactMap { $0 }
+    }
+
+    /// The directory containing ffmpeg (and ffprobe) to hand to yt-dlp via
+    /// `--ffmpeg-location`, or nil when none can be found.
+    private static func resolveFFmpegDirectory() -> String? {
+        guard let ffmpegPath = findExecutablePath(
+            named: "ffmpeg",
+            preferredPaths: preferredFFmpegPaths(bundled: bundledExecutablePath(named: "ffmpeg")),
+            environment: ProcessInfo.processInfo.environment
+        ) else {
+            return nil
+        }
+        return URL(fileURLWithPath: ffmpegPath).deletingLastPathComponent().path
     }
 
     public struct DependencyInstallResult: Sendable {
@@ -429,6 +461,13 @@ public enum YouTubeAudioImportService {
         }
         args.insert(contentsOf: ["--postprocessor-args", "ffmpeg:\(ffmpegPostProcessorArgs)"], at: 0)
 
+        // A GUI app launched from Finder has a minimal PATH, so yt-dlp can't
+        // find ffmpeg/ffprobe on its own. Point it at the resolved location
+        // explicitly, otherwise audio extraction fails for every download.
+        if let ffmpegDirectory = resolveFFmpegDirectory() {
+            args.insert(contentsOf: ["--ffmpeg-location", ffmpegDirectory], at: 0)
+        }
+
         let result = try runYTCommand(arguments: args)
         guard let outputPath = result.stdout
             .split(separator: "\n")
@@ -515,18 +554,117 @@ public enum YouTubeAudioImportService {
 
         if let path = findExecutablePath(
             named: "yt-dlp",
-            preferredPaths: [
-                bundledYTDLP,
-                "/opt/homebrew/bin/yt-dlp",
-                "/usr/local/bin/yt-dlp",
-                "/usr/bin/yt-dlp"
-            ].compactMap { $0 },
+            preferredPaths: preferredYTDLPPaths(bundled: bundledYTDLP),
             environment: ProcessInfo.processInfo.environment
         ) {
             return (URL(fileURLWithPath: path), [])
         }
 
         return (URL(fileURLWithPath: "/usr/bin/env"), ["yt-dlp"])
+    }
+
+    // MARK: - Self-updating yt-dlp
+
+    private static let lastYTDLPUpdateCheckDefaultsKey = "SeratoToolsLastYTDLPUpdateCheck"
+    private static let ytDLPMacOSDownloadURL = URL(string: "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos")!
+
+    /// User-writable location for a yt-dlp copy the app keeps current. Unlike
+    /// the binary bundled inside the read-only app bundle, this one can update
+    /// itself, so downloads keep working as YouTube changes over time.
+    public static func managedYTDLPURL() -> URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support", isDirectory: true)
+        return base
+            .appendingPathComponent("SeratoTools", isDirectory: true)
+            .appendingPathComponent("bin", isDirectory: true)
+            .appendingPathComponent("yt-dlp", isDirectory: false)
+    }
+
+    /// Ensures a user-writable yt-dlp exists and refreshes it to the latest
+    /// release at most once per day. Best-effort and safe to call from a
+    /// background task: it never throws and does nothing useful when offline.
+    @discardableResult
+    public static func refreshManagedYTDLPIfDue(
+        force: Bool = false,
+        userDefaults: UserDefaults = .standard
+    ) -> Bool {
+        if !force,
+           let last = userDefaults.object(forKey: lastYTDLPUpdateCheckDefaultsKey) as? Date,
+           Date().timeIntervalSince(last) < 24 * 60 * 60 {
+            return false
+        }
+
+        do {
+            try ensureManagedYTDLPInstalled()
+            selfUpdateManagedYTDLP()
+            userDefaults.set(Date(), forKey: lastYTDLPUpdateCheckDefaultsKey)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private static func ensureManagedYTDLPInstalled() throws {
+        let fileManager = FileManager.default
+        let managedURL = managedYTDLPURL()
+        if fileManager.isExecutableFile(atPath: managedURL.path) { return }
+
+        try fileManager.createDirectory(at: managedURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+
+        if let bundled = bundledExecutablePath(named: "yt-dlp") {
+            // Seed from the bundled snapshot; the self-update below freshens it.
+            if fileManager.fileExists(atPath: managedURL.path) {
+                try fileManager.removeItem(at: managedURL)
+            }
+            try fileManager.copyItem(at: URL(fileURLWithPath: bundled), to: managedURL)
+        } else {
+            try downloadLatestYTDLP(to: managedURL)
+        }
+
+        try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: managedURL.path)
+        clearQuarantine(at: managedURL)
+    }
+
+    private static func downloadLatestYTDLP(to destination: URL) throws {
+        let data = try Data(contentsOf: ytDLPMacOSDownloadURL)
+        // The real binary is several MB; a tiny payload means an error page.
+        guard data.count > 1_000_000 else {
+            throw ImportError.commandFailed("Downloaded yt-dlp was unexpectedly small.")
+        }
+        let fileManager = FileManager.default
+        if fileManager.fileExists(atPath: destination.path) {
+            try fileManager.removeItem(at: destination)
+        }
+        try data.write(to: destination, options: .atomic)
+    }
+
+    /// Runs `yt-dlp -U`, which checks the latest release and replaces the
+    /// binary in place only when outdated. No-op when already current/offline.
+    private static func selfUpdateManagedYTDLP() {
+        let managedURL = managedYTDLPURL()
+        guard FileManager.default.isExecutableFile(atPath: managedURL.path) else { return }
+
+        let process = Process()
+        process.executableURL = managedURL
+        process.arguments = ["-U", "--no-progress"]
+        process.standardOutput = Pipe()
+        process.standardError = Pipe()
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            // Best effort: keep the seeded copy if self-update can't run.
+        }
+    }
+
+    private static func clearQuarantine(at url: URL) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/xattr")
+        process.arguments = ["-d", "com.apple.quarantine", url.path]
+        process.standardOutput = Pipe()
+        process.standardError = Pipe()
+        try? process.run()
+        process.waitUntilExit()
     }
 
     private static func findExecutablePath(
