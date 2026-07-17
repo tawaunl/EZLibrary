@@ -22,6 +22,10 @@ public final class LibraryService: ObservableObject {
 
     @Published public private(set) var libraryDirectory: URL
 
+    /// Background scan that fills each track's `playCount` from its ID3 tag.
+    /// Cancelled and restarted whenever `tracks` is reloaded.
+    private var playCountLoadTask: Task<Void, Never>?
+
     public init(libraryDirectory: URL = SeratoLibraryLocator.defaultLibraryDirectory) {
         self.libraryDirectory = libraryDirectory
     }
@@ -50,6 +54,7 @@ public final class LibraryService: ObservableObject {
             crates = Self.loadCrates(from: SeratoLibraryLocator.subcrateFiles(in: libraryDirectory))
             smartCrates = Self.loadCrates(from: SeratoLibraryLocator.smartCrateFiles(in: libraryDirectory))
             reloadErrorMessage = nil
+            loadPlayCounts(for: tracks)
         } catch {
             tracks = []
             crates = []
@@ -66,6 +71,7 @@ public final class LibraryService: ObservableObject {
         do {
             tracks = try SeratoDatabaseParser.parseTracks(at: databaseFile, rootDirectory: rootDirectory)
             reloadErrorMessage = nil
+            loadPlayCounts(for: tracks)
         } catch {
             tracks = []
             reloadErrorMessage = error.localizedDescription
@@ -76,6 +82,45 @@ public final class LibraryService: ObservableObject {
     private func refreshDerivedTrackStats() {
         trackGenres = Array(Set(tracks.map(\.genre).filter { !$0.isEmpty })).sorted()
         totalArtistCount = Set(tracks.map(\.artist).filter { !$0.isEmpty }).count
+    }
+
+    /// Reads each track's play count off the main actor and merges the results
+    /// back into `tracks`. Runs in the background because it touches every
+    /// audio file's ID3 tag, which is too slow to block a library load.
+    private func loadPlayCounts(for snapshot: [Track]) {
+        playCountLoadTask?.cancel()
+
+        guard !snapshot.isEmpty else { return }
+        let snapshotIDs = snapshot.map(\.id)
+
+        playCountLoadTask = Task.detached(priority: .utility) { [weak self] in
+            var counts: [UUID: Int] = [:]
+            for track in snapshot {
+                if Task.isCancelled { return }
+                if let count = SeratoPlayCountReader.playCount(forFileAt: track.fileURL) {
+                    counts[track.id] = count
+                }
+            }
+
+            if Task.isCancelled || counts.isEmpty { return }
+            let resolved = counts
+            await MainActor.run {
+                self?.applyPlayCounts(resolved, forSnapshotIDs: snapshotIDs)
+            }
+        }
+    }
+
+    private func applyPlayCounts(_ counts: [UUID: Int], forSnapshotIDs snapshotIDs: [UUID]) {
+        // Only apply when `tracks` hasn't been replaced since the scan started,
+        // so a stale background result can't overwrite a newer library load.
+        guard tracks.map(\.id) == snapshotIDs else { return }
+
+        tracks = tracks.map { track in
+            guard let count = counts[track.id] else { return track }
+            var updated = track
+            updated.playCount = count
+            return updated
+        }
     }
 
     public func setLibraryDirectory(_ newDirectory: URL) {

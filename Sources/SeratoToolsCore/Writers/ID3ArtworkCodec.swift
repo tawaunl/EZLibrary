@@ -80,6 +80,23 @@ public enum ID3ArtworkCodec {
         return makeV24Frame(id: "APIC", body: body)
     }
 
+    /// Returns the value of a user-defined text frame (`TXXX`, or `TXX` in
+    /// ID3v2.2) whose description matches `description` (case-insensitively).
+    /// Used to read Serato's play count, which it stores as a `SERATO_PLAYCOUNT`
+    /// `TXXX` frame rather than in the `database V2` file.
+    public static func userTextValue(fromID3TagBytes tagData: Data, description: String) -> String? {
+        guard let parsed = parseFrames(tagData) else { return nil }
+        for frame in parsed.frames where frame.canReemit {
+            let isUserText = (parsed.version == 2 && frame.id == "TXX")
+                || (parsed.version >= 3 && frame.id == "TXXX")
+            guard isUserText, let parsedText = parseUserText(frame.body) else { continue }
+            if parsedText.description.compare(description, options: .caseInsensitive) == .orderedSame {
+                return parsedText.value
+            }
+        }
+        return nil
+    }
+
     /// Best-effort MIME sniffing from image magic bytes; defaults to JPEG.
     public static func mimeType(forImageData data: Data) -> String {
         let bytes = [UInt8](data.prefix(8))
@@ -224,6 +241,52 @@ public enum ID3ArtworkCodec {
             mime = mimeType(forImageData: Data(image))
         }
         return ID3Artwork(mimeType: mime, pictureType: pictureType, imageData: Data(image))
+    }
+
+    /// Splits a user-defined text frame (`TXXX`) body into its description and
+    /// value, decoding both using the frame's text-encoding byte.
+    private static func parseUserText(_ body: [UInt8]) -> (description: String, value: String)? {
+        guard let encoding = body.first else { return nil }
+        let content = Array(body.dropFirst())
+        let split = splitFirstString(content, encoding: encoding)
+        let description = decodeText(split.string, encoding: encoding)
+        let value = decodeText(split.rest, encoding: encoding)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\0"))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return (description, value)
+    }
+
+    /// Returns the first null-terminated string (per the encoding's terminator
+    /// width) and the bytes following the terminator.
+    private static func splitFirstString(_ bytes: [UInt8], encoding: UInt8) -> (string: [UInt8], rest: [UInt8]) {
+        if encoding == 0x01 || encoding == 0x02 {
+            var i = 0
+            while i + 1 < bytes.count {
+                if bytes[i] == 0x00, bytes[i + 1] == 0x00 {
+                    return (Array(bytes[0..<i]), Array(bytes[(i + 2)...]))
+                }
+                i += 2
+            }
+            return (bytes, [])
+        }
+        if let terminator = bytes.firstIndex(of: 0x00) {
+            return (Array(bytes[0..<terminator]), Array(bytes[(terminator + 1)...]))
+        }
+        return (bytes, [])
+    }
+
+    private static func decodeText(_ bytes: [UInt8], encoding: UInt8) -> String {
+        let data = Data(bytes)
+        switch encoding {
+        case 0x00:
+            return String(data: data, encoding: .isoLatin1) ?? ""
+        case 0x01:
+            return String(data: data, encoding: .utf16) ?? ""
+        case 0x02:
+            return String(data: data, encoding: .utf16BigEndian) ?? ""
+        default:
+            return String(data: data, encoding: .utf8) ?? ""
+        }
     }
 
     private static func skipDescription(_ body: [UInt8], from start: Int, encoding: UInt8) -> Int {

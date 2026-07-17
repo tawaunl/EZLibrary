@@ -34,6 +34,11 @@ public struct Track: Identifiable, Hashable, Sendable {
     public var isMissing: Bool
     public var dateAdded: Date?
 
+    /// Number of times the track has been played, read from the file's
+    /// `SERATO_PLAYCOUNT` ID3 frame. `nil` until it has been loaded (or when
+    /// the file has no play-count tag), which is distinct from a real `0`.
+    public var playCount: Int?
+
     public init(
         id: UUID = UUID(),
         seratoStoredPath: String,
@@ -55,7 +60,8 @@ public struct Track: Identifiable, Hashable, Sendable {
         colorCode: UInt32? = nil,
         isBeatgridLocked: Bool = false,
         isMissing: Bool = false,
-        dateAdded: Date? = nil
+        dateAdded: Date? = nil,
+        playCount: Int? = nil
     ) {
         self.id = id
         self.seratoStoredPath = seratoStoredPath
@@ -78,6 +84,7 @@ public struct Track: Identifiable, Hashable, Sendable {
         self.isBeatgridLocked = isBeatgridLocked
         self.isMissing = isMissing
         self.dateAdded = dateAdded
+        self.playCount = playCount
     }
 
     public static func == (lhs: Track, rhs: Track) -> Bool {

@@ -23,6 +23,7 @@ struct TrackTableView: View {
         case key
         case bpm
         case duration
+        case playCount
     }
 
     let tracks: [Track]
@@ -116,6 +117,9 @@ struct TrackTableView: View {
         .onChange(of: tracks.last?.id) {
             scheduleRecompute()
         }
+        .onChange(of: playCountSignature) {
+            scheduleRecompute()
+        }
         .onDisappear {
             recomputeTask?.cancel()
             recomputeTask = nil
@@ -137,6 +141,18 @@ struct TrackTableView: View {
     private func notifySelectionChanged() {
         guard let onSelectionChanged else { return }
         onSelectionChanged(selectedDisplayedTracks())
+    }
+
+    /// A cheap value that changes whenever any track's play count changes, used
+    /// to trigger a recompute when background play-count loading fills them in
+    /// (the track identities and count stay the same, so the other `onChange`
+    /// hooks wouldn't notice).
+    private var playCountSignature: Int {
+        var sum = 0
+        for track in tracks {
+            sum = sum &+ (track.playCount ?? 0)
+        }
+        return sum
     }
 
     private func selectedDisplayedTracks() -> [Track] {
@@ -262,6 +278,8 @@ struct TrackTableView: View {
             return lhs.bpmSortValue < rhs.bpmSortValue
         case .duration:
             return lhs.durationSortValue < rhs.durationSortValue
+        case .playCount:
+            return lhs.playCountSortValue < rhs.playCountSortValue
         }
     }
 
@@ -295,6 +313,11 @@ struct TrackTableView: View {
         return String(format: "%d:%02d", minutes, seconds)
     }
 
+    fileprivate static func formattedPlayCount(_ playCount: Int?) -> String {
+        guard let playCount else { return "—" }
+        return String(playCount)
+    }
+
     nonisolated fileprivate static func selectionKey(for track: Track) -> String {
         track.seratoStoredPath
             .replacingOccurrences(of: "\\\\", with: "/")
@@ -325,6 +348,8 @@ private struct TrackNSTableView: NSViewRepresentable {
         table.allowsMultipleSelection = true
         table.usesAlternatingRowBackgroundColors = true
         table.columnAutoresizingStyle = .noColumnAutoresizing
+        table.allowsColumnReordering = true
+        table.allowsColumnResizing = true
         table.intercellSpacing = NSSize(width: 6, height: 4)
         table.delegate = context.coordinator
         table.dataSource = context.coordinator
@@ -348,6 +373,11 @@ private struct TrackNSTableView: NSViewRepresentable {
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = true
         scrollView.documentView = table
+
+        // Persist the user's column order and widths across launches. Set after
+        // the columns are added so autosave reconciles saved state with them.
+        table.autosaveName = "SeratoTracksTable"
+        table.autosaveTableColumns = true
 
         context.coordinator.tableView = table
         context.coordinator.applySortDescriptor(columnID: sortColumn, ascending: sortAscending)
@@ -381,7 +411,8 @@ private struct TrackNSTableView: NSViewRepresentable {
             ColumnDescriptor(id: "color", title: "Color", width: 90, isSortable: true),
             ColumnDescriptor(id: "key", title: "Key", width: 70, isSortable: true),
             ColumnDescriptor(id: "bpm", title: "BPM", width: 70, isSortable: true),
-            ColumnDescriptor(id: "duration", title: "Duration", width: 85, isSortable: true)
+            ColumnDescriptor(id: "duration", title: "Duration", width: 85, isSortable: true),
+            ColumnDescriptor(id: "playCount", title: "Plays", width: 70, isSortable: true)
         ]
     }
 
@@ -594,7 +625,7 @@ private struct TrackNSTableView: NSViewRepresentable {
         func syncTracksAndSelectionIfNeeded() {
             guard let table = tableView else { return }
 
-            if lastAppliedTracks != parent.tracks {
+            if tracksDiffer(from: parent.tracks) {
                 lastAppliedTracks = parent.tracks
                 table.reloadData()
                 restoreSelectionIfNeeded()
@@ -603,6 +634,18 @@ private struct TrackNSTableView: NSViewRepresentable {
                 lastAppliedSelectionKeys = parent.selectedTrackKeys
                 restoreSelectionIfNeeded()
             }
+        }
+
+        /// Detects when the rows need re-rendering. `Track`'s `==` only compares
+        /// identity, so background play-count updates (same ids, new counts)
+        /// wouldn't otherwise be picked up here.
+        private func tracksDiffer(from new: [Track]) -> Bool {
+            if lastAppliedTracks.count != new.count { return true }
+            for index in new.indices {
+                if lastAppliedTracks[index].id != new[index].id { return true }
+                if lastAppliedTracks[index].playCount != new[index].playCount { return true }
+            }
+            return false
         }
 
         func restoreSelectionIfNeeded() {
@@ -654,6 +697,8 @@ private struct TrackNSTableView: NSViewRepresentable {
                 return TrackTableView.formattedBPM(track.bpm)
             case "duration":
                 return TrackTableView.formattedDuration(track.duration)
+            case "playCount":
+                return TrackTableView.formattedPlayCount(track.playCount)
             default:
                 return ""
             }
@@ -685,6 +730,10 @@ private extension Track {
 
     var durationSortValue: TimeInterval {
         duration ?? -1
+    }
+
+    var playCountSortValue: Int {
+        playCount ?? -1
     }
 
     var colorSortValue: UInt32 {
