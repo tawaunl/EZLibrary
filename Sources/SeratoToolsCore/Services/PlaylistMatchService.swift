@@ -1,6 +1,10 @@
 import Foundation
 
 public enum PlaylistMatchService {
+    /// Maximum number of playlist tracks processed per match. Longer sources
+    /// are trimmed to the first `maxPlaylistEntries` entries in source order.
+    public static let maxPlaylistEntries = 200
+
     public struct ParserDiagnostics: Sendable {
         public let apiEntriesCount: Int
         public let htmlEntriesCount: Int
@@ -30,11 +34,20 @@ public enum PlaylistMatchService {
         public let playlistName: String?
         public let entries: [PlaylistEntry]
         public let diagnostics: ParserDiagnostics?
+        /// Total tracks found in the source before the `maxPlaylistEntries`
+        /// cap was applied. Equals `entries.count` when nothing was trimmed.
+        public let totalEntriesFound: Int
 
-        public init(playlistName: String?, entries: [PlaylistEntry], diagnostics: ParserDiagnostics? = nil) {
+        public init(
+            playlistName: String?,
+            entries: [PlaylistEntry],
+            diagnostics: ParserDiagnostics? = nil,
+            totalEntriesFound: Int? = nil
+        ) {
             self.playlistName = playlistName
             self.entries = entries
             self.diagnostics = diagnostics
+            self.totalEntriesFound = totalEntriesFound ?? entries.count
         }
     }
 
@@ -220,7 +233,7 @@ public enum PlaylistMatchService {
             guard !fromSpotify.entries.isEmpty else {
                 throw MatchError.spotifyParseFailed
             }
-            return fromSpotify
+            return applyingEntryLimit(fromSpotify)
         }
 
         if let appleMusicURL = appleMusicPlaylistURL(from: trimmed), shouldPreferWebFetch(for: trimmed) {
@@ -228,14 +241,28 @@ public enum PlaylistMatchService {
             guard !fromApple.entries.isEmpty else {
                 throw MatchError.appleMusicParseFailed
             }
-            return fromApple
+            return applyingEntryLimit(fromApple)
         }
 
         let parsed = parseEntries(from: trimmed)
         guard !parsed.isEmpty else {
             throw MatchError.noPlaylistRowsDetected
         }
-        return ResolvedPlaylist(playlistName: nil, entries: parsed, diagnostics: nil)
+        return applyingEntryLimit(
+            ResolvedPlaylist(playlistName: nil, entries: parsed, diagnostics: nil)
+        )
+    }
+
+    /// Caps a resolved playlist to `maxPlaylistEntries`, keeping the first
+    /// entries in source order and recording how many were originally found.
+    private static func applyingEntryLimit(_ resolved: ResolvedPlaylist) -> ResolvedPlaylist {
+        guard resolved.entries.count > maxPlaylistEntries else { return resolved }
+        return ResolvedPlaylist(
+            playlistName: resolved.playlistName,
+            entries: Array(resolved.entries.prefix(maxPlaylistEntries)),
+            diagnostics: resolved.diagnostics,
+            totalEntriesFound: resolved.entries.count
+        )
     }
 
     /// A library track with its normalized title/artist computed once.

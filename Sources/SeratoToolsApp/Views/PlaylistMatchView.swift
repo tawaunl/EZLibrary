@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 import SeratoToolsCore
 
 struct PlaylistMatchView: View {
@@ -116,7 +117,7 @@ struct PlaylistMatchView: View {
                         .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
                 )
 
-            Text("Input examples: Spotify or Apple Music playlist URL, CSV with Title/Artist columns, or lines like 'Artist - Title'.")
+            Text("Input examples: Spotify or Apple Music playlist URL, CSV with Title/Artist columns, or lines like 'Artist - Title'. Up to \(PlaylistMatchService.maxPlaylistEntries) tracks are matched per run.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
 
@@ -154,6 +155,12 @@ struct PlaylistMatchView: View {
                 }
                 .disabled(isRunning)
                 .help("Read the pasted playlist and match its tracks against your Serato library.")
+
+                Button("Upload CSV") {
+                    importCSVFile()
+                }
+                .disabled(isRunning)
+                .help("Choose a .csv file with Title/Artist columns and match it against your library.")
 
                 Button("Clear") {
                     clearResults()
@@ -714,7 +721,11 @@ struct PlaylistMatchView: View {
                    (crateName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || crateName == "PlaylistMatch") {
                     crateName = playlistName
                 }
-                successMessage = "Matched \(result.matchedEntries.count) songs. Added \(result.planItems.count) to Plan."
+                var message = "Matched \(result.matchedEntries.count) songs. Added \(result.planItems.count) to Plan."
+                if resolved.totalEntriesFound > resolved.entries.count {
+                    message += " Source had \(resolved.totalEntriesFound) tracks; limited to the first \(PlaylistMatchService.maxPlaylistEntries)."
+                }
+                successMessage = message
             } catch {
                 errorMessage = error.localizedDescription
             }
@@ -869,6 +880,43 @@ struct PlaylistMatchView: View {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    private func importCSVFile() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Upload CSV"
+        panel.allowedContentTypes = [.commaSeparatedText, .plainText]
+
+        guard panel.runModal() == .OK, let selectedURL = panel.url else {
+            return
+        }
+
+        do {
+            let contents = try readTextFile(at: selectedURL)
+            let trimmed = contents.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else {
+                errorMessage = "\(selectedURL.lastPathComponent) is empty."
+                return
+            }
+            rawInput = contents
+            errorMessage = nil
+            successMessage = "Loaded \(selectedURL.lastPathComponent). Scanning…"
+            runMatch()
+        } catch {
+            errorMessage = "Couldn't read \(selectedURL.lastPathComponent): \(error.localizedDescription)"
+        }
+    }
+
+    /// Reads a CSV/text file, tolerating non-UTF-8 encodings some exporters
+    /// (e.g. Excel) produce by falling back to Latin-1.
+    private func readTextFile(at url: URL) throws -> String {
+        if let utf8 = try? String(contentsOf: url, encoding: .utf8) {
+            return utf8
+        }
+        return try String(contentsOf: url, encoding: .isoLatin1)
     }
 
     private func preferredDJOrderVersion(in versions: [Track]) -> Track? {
