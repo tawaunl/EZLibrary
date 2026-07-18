@@ -374,6 +374,8 @@ struct PlaylistMatchView: View {
                                 )
                                 .onAppear { findPurchaseLinks(forEntry: item.entry) }
 
+                                recordPoolSection(for: item.entry)
+
                                 HStack(spacing: 8) {
                                     Button {
                                         importPurchasedFileForMatched(item.entry)
@@ -570,6 +572,8 @@ struct PlaylistMatchView: View {
                         )
                         .onAppear { findPurchaseLinks(forEntry: item.entry) }
 
+                        recordPoolSection(for: item.entry)
+
                         HStack(spacing: 8) {
                             Button {
                                 importPurchasedFileForPlan(item)
@@ -667,6 +671,8 @@ struct PlaylistMatchView: View {
                     isLoading: loadingPurchaseLinkEntryIDs.contains(item.entry.id)
                 )
                 .onAppear { findPurchaseLinks(forEntry: item.entry) }
+
+                recordPoolSection(for: item.entry)
 
                 HStack(spacing: 8) {
                     Button {
@@ -799,6 +805,79 @@ struct PlaylistMatchView: View {
             return "\(link.versionLabel) — \(price)"
         }
         return link.versionLabel
+    }
+
+    /// "Your pools" row: confirmed hits from the DJ record pools the user has
+    /// signed into. Only shown when at least one pool is configured; auto-runs
+    /// the credentialed search when the row appears.
+    @ViewBuilder
+    private func recordPoolSection(for entry: PlaylistMatchService.PlaylistEntry) -> some View {
+        if !configuredRecordPools.isEmpty {
+            let results = recordPoolResultsByEntryID[entry.id]
+            let isLoading = loadingRecordPoolEntryIDs.contains(entry.id)
+
+            VStack(alignment: .leading, spacing: 6) {
+                if isLoading, results == nil {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("Searching your record pools…")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if let results, !results.isEmpty {
+                    let grouped = Dictionary(grouping: results, by: { $0.pool })
+                    HStack(spacing: 8) {
+                        Text("Your pools:")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        ForEach(RecordPool.allCases.filter { grouped[$0]?.isEmpty == false }) { pool in
+                            recordPoolControl(pool: pool, results: grouped[pool] ?? [])
+                        }
+                        Spacer(minLength: 0)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .onAppear { findRecordPoolMatches(for: entry) }
+        }
+    }
+
+    @ViewBuilder
+    private func recordPoolControl(pool: RecordPool, results: [RecordPoolResult]) -> some View {
+        if results.count <= 1, let result = results.first {
+            Button {
+                NSWorkspace.shared.open(result.url)
+            } label: {
+                Label("Open in \(pool.displayName)", systemImage: "music.note.list")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .help("Open “\(result.title)” in \(pool.displayName) (you're signed in there).")
+        } else {
+            Menu {
+                ForEach(results) { result in
+                    Button(recordPoolMenuLabel(for: result)) {
+                        NSWorkspace.shared.open(result.url)
+                    }
+                }
+            } label: {
+                Label("\(pool.displayName) (\(results.count))", systemImage: "music.note.list")
+            }
+            .menuStyle(.button)
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .fixedSize()
+            .help("Pick a version to open in \(pool.displayName).")
+        }
+    }
+
+    private func recordPoolMenuLabel(for result: RecordPoolResult) -> String {
+        if let version = result.versionLabel, !version.isEmpty {
+            return "\(result.title) — \(version)"
+        }
+        return result.title
     }
 
     @ViewBuilder
@@ -1508,6 +1587,32 @@ struct PlaylistMatchView: View {
             let links = await PurchaseLinkService.purchaseLinks(title: entry.title, artist: entry.artist)
             purchaseLinksByEntryID[entry.id] = links
             loadingPurchaseLinkEntryIDs.remove(entry.id)
+        }
+    }
+
+    private func refreshConfiguredRecordPools() {
+        configuredRecordPools = RecordPoolService.configuredPools(credentialStore: recordPoolCredentialStore)
+    }
+
+    private func findRecordPoolMatches(for entry: PlaylistMatchService.PlaylistEntry) {
+        // Only search pools the user has signed into, once per entry.
+        guard !configuredRecordPools.isEmpty else { return }
+        guard recordPoolResultsByEntryID[entry.id] == nil, !loadingRecordPoolEntryIDs.contains(entry.id) else { return }
+        guard !PurchaseLinkService.searchQuery(title: entry.title, artist: entry.artist).isEmpty else {
+            recordPoolResultsByEntryID[entry.id] = []
+            return
+        }
+
+        loadingRecordPoolEntryIDs.insert(entry.id)
+
+        Task {
+            let results = await RecordPoolService.search(
+                title: entry.title,
+                artist: entry.artist,
+                credentialStore: recordPoolCredentialStore
+            )
+            recordPoolResultsByEntryID[entry.id] = results
+            loadingRecordPoolEntryIDs.remove(entry.id)
         }
     }
 
