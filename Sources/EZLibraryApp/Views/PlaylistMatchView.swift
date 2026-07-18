@@ -82,6 +82,11 @@ struct PlaylistMatchView: View {
 
     @State private var purchaseLinksByEntryID: [UUID: [PurchaseLinkService.PurchaseLink]] = [:]
     @State private var loadingPurchaseLinkEntryIDs: Set<UUID> = []
+    @State private var recordPoolResultsByEntryID: [UUID: [RecordPoolResult]] = [:]
+    @State private var loadingRecordPoolEntryIDs: Set<UUID> = []
+    @State private var configuredRecordPools: [RecordPool] = []
+    @State private var showRecordPoolCredentials = false
+    private let recordPoolCredentialStore = RecordPoolCredentialStore()
     @State private var importingPlanIDs: Set<UUID> = []
     @State private var importingEntryIDs: Set<UUID> = []
     @State private var expandedDownloadPlanIDs: Set<UUID> = []
@@ -115,6 +120,7 @@ struct PlaylistMatchView: View {
         }
         .onAppear {
             restoreCachedStateIfNeeded()
+            refreshConfiguredRecordPools()
             downloadsWatcher.start()
         }
         .onDisappear {
@@ -126,6 +132,13 @@ struct PlaylistMatchView: View {
         }
         .onChange(of: planItems) {
             processDetectedDownloads()
+        }
+        .sheet(isPresented: $showRecordPoolCredentials) {
+            RecordPoolCredentialsSheet(onCredentialsChanged: {
+                refreshConfiguredRecordPools()
+                recordPoolResultsByEntryID = [:]
+                loadingRecordPoolEntryIDs = []
+            })
         }
     }
 
@@ -202,6 +215,11 @@ struct PlaylistMatchView: View {
                 }
                 .disabled(isRunning)
                 .help("Load a previously saved plan of unmatched tracks.")
+
+                Button(configuredRecordPools.isEmpty ? "Record Pools…" : "Record Pools (\(configuredRecordPools.count))") {
+                    showRecordPoolCredentials = true
+                }
+                .help("Sign in to DJ record pools (BPM Supreme, DJcity) to search them in-app for tracks you can't buy.")
 
                 Spacer(minLength: 0)
             }
