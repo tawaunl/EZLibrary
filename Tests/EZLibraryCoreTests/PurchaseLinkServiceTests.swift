@@ -25,6 +25,39 @@ import Testing
     #expect(!PurchaseLinkService.artistMatches(entryArtist: "Drake", candidate: "FISHER (OZ)"))
 }
 
+@Test func purchaseLinkArtistMatchingIsOrderIndependent() {
+    // Reordered multi-artist credit (the No Broke Boys bug).
+    #expect(PurchaseLinkService.artistMatches(entryArtist: "Disco Lines & Tinashe", candidate: "Tinashe, Disco Lines"))
+    // Remix credit that adds an extra artist.
+    #expect(PurchaseLinkService.artistMatches(entryArtist: "Disco Lines & Tinashe", candidate: "Tinashe, AVELLO, Disco Lines"))
+    // Subset either way.
+    #expect(PurchaseLinkService.artistMatches(entryArtist: "Tinashe", candidate: "Tinashe, Disco Lines"))
+    #expect(!PurchaseLinkService.artistMatches(entryArtist: "Drake", candidate: "Tinashe, Disco Lines"))
+}
+
+@Test func purchaseLinkArtistNameListSplitsCredits() {
+    #expect(PurchaseLinkService.artistNameList("Disco Lines & Tinashe") == ["Disco Lines", "Tinashe"])
+    #expect(PurchaseLinkService.artistNameList("Tinashe, Disco Lines") == ["Tinashe", "Disco Lines"])
+    #expect(PurchaseLinkService.artistNameList("Calvin Harris feat. Example") == ["Calvin Harris", "Example"])
+    #expect(PurchaseLinkService.artistNameList("Fisher") == ["Fisher"])
+}
+
+@Test func purchaseLinkBeatportMatchesReorderedMultiArtistCredit() {
+    let html = """
+    <script id="__NEXT_DATA__" type="application/json">
+    {"tracks":{"data":[
+    {"track_id":100,"track_name":"No Broke Boys","mix_name":"Extended","artists":[{"artist_name":"Tinashe"},{"artist_name":"Disco Lines"}],"price":{"display":"$2.99"}},
+    {"track_id":101,"track_name":"No Broke Boys","mix_name":"Original Mix","artists":[{"artist_name":"Tinashe"},{"artist_name":"Disco Lines"}],"price":{"display":"$1.99"}}
+    ]}}
+    </script>
+    """
+    let tracks = PurchaseLinkService.parseBeatportTracks(fromHTML: html)
+    let links = PurchaseLinkService.beatportLinks(matchingTitle: "No Broke Boys", artist: "Disco Lines & Tinashe", in: tracks)
+
+    #expect(links.count == 2)
+    #expect(Set(links.map { $0.versionLabel }) == ["Extended", "Original Mix"])
+}
+
 private let beatportSampleHTML = """
 <html><head>
 <script id="__NEXT_DATA__" type="application/json">

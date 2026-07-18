@@ -114,13 +114,33 @@ public enum PurchaseLinkService {
 
     // MARK: - iTunes
 
-    /// Queries the iTunes Search API and returns direct product-page links for
-    /// results that actually match the requested title/artist.
+    /// Resolves iTunes purchase links. The `term` song search is fast but its
+    /// index misses some singles (e.g. recent DJ collabs), so when it finds no
+    /// buyable result we fall back to enumerating the artist's catalog by
+    /// artistId, which does list them.
     static func itunesTrackLinks(
         title: String,
         artist: String,
         maxResults: Int = 4,
         session: URLSession = .shared
+    ) async throws -> [PurchaseLink] {
+        let termLinks = try await itunesTermSongLinks(
+            title: title, artist: artist, maxResults: maxResults, session: session
+        )
+        if !termLinks.isEmpty {
+            return termLinks
+        }
+        return try await itunesArtistCatalogLinks(
+            title: title, artist: artist, maxResults: maxResults, session: session
+        )
+    }
+
+    /// Fast path: the iTunes `term` song search on the core title.
+    private static func itunesTermSongLinks(
+        title: String,
+        artist: String,
+        maxResults: Int,
+        session: URLSession
     ) async throws -> [PurchaseLink] {
         // Search on the core title (version stripped) so the API returns every
         // version of the song — original, Radio Edit, Extended, remixes, etc.
@@ -140,14 +160,81 @@ public enum PurchaseLinkService {
 
         let (data, _) = try await session.data(from: url)
         let decoded = try JSONDecoder().decode(ITunesPurchaseResponse.self, from: data)
+        return buildITunesLinks(from: decoded.results, title: title, artist: artist, maxResults: maxResults)
+    }
 
+    /// Fallback path: look up each credited artist's iTunes id and scan their
+    /// song catalog for the track. Only runs when the term search came up empty.
+    private static func itunesArtistCatalogLinks(
+        title: String,
+        artist: String,
+        maxResults: Int,
+        session: URLSession
+    ) async throws -> [PurchaseLink] {
+        for name in artistNameList(artist).prefix(2) {
+            guard let artistId = try await itunesArtistID(for: name, session: session) else { continue }
+
+            var components = URLComponents(string: "https://itunes.apple.com/lookup")
+            components?.queryItems = [
+                URLQueryItem(name: "id", value: String(artistId)),
+                URLQueryItem(name: "country", value: "US"),
+                URLQueryItem(name: "entity", value: "song"),
+                URLQueryItem(name: "limit", value: "200")
+            ]
+            guard let url = components?.url else { continue }
+
+            let (data, _) = try await session.data(from: url)
+            let decoded = try JSONDecoder().decode(ITunesPurchaseResponse.self, from: data)
+            let links = buildITunesLinks(from: decoded.results, title: title, artist: artist, maxResults: maxResults)
+            if !links.isEmpty {
+                return links
+            }
+        }
+        return []
+    }
+
+    private static func itunesArtistID(for name: String, session: URLSession) async throws -> Int? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        var components = URLComponents(string: "https://itunes.apple.com/search")
+        components?.queryItems = [
+            URLQueryItem(name: "term", value: trimmed),
+            URLQueryItem(name: "country", value: "US"),
+            URLQueryItem(name: "entity", value: "musicArtist"),
+            URLQueryItem(name: "limit", value: "5")
+        ]
+        guard let url = components?.url else { return nil }
+
+        let (data, _) = try await session.data(from: url)
+        let decoded = try JSONDecoder().decode(ITunesArtistResponse.self, from: data)
+
+        let target = normalizedKey(trimmed)
+        if let exact = decoded.results.first(where: { normalizedKey($0.artistName ?? "") == target }) {
+            return exact.artistId
+        }
+        return decoded.results.first?.artistId
+    }
+
+    /// Shared builder: filters iTunes results to purchasable, matching versions
+    /// and turns them into product links. Only tracks with a positive
+    /// `trackPrice` are kept — streaming-only results have no price and open to
+    /// a "not available for purchase" page when forced to the iTunes Store.
+    private static func buildITunesLinks(
+        from tracks: [ITunesPurchaseTrack],
+        title: String,
+        artist: String,
+        maxResults: Int
+    ) -> [PurchaseLink] {
         var links: [PurchaseLink] = []
         var seenVersions = Set<String>()
-        for track in decoded.results {
+        for track in tracks {
             guard
                 let urlString = track.trackViewUrl,
                 let productURL = iTunesStoreURL(from: urlString),
                 let trackName = track.trackName,
+                let trackPrice = track.trackPrice,
+                trackPrice > 0,
                 titleMatchesAnyVersion(title, trackName),
                 artistMatches(entryArtist: artist, candidate: track.artistName ?? "")
             else {
@@ -162,7 +249,7 @@ public enum PurchaseLinkService {
                 .filter { !$0.isEmpty }
                 .joined(separator: " - ")
 
-            let price = itunesPriceText(price: track.trackPrice, currency: track.currency)
+            let price = itunesPriceText(price: trackPrice, currency: track.currency)
 
             links.append(
                 PurchaseLink(
@@ -443,11 +530,44 @@ public enum PurchaseLinkService {
     }
 
     static func artistMatches(entryArtist: String, candidate: String) -> Bool {
-        let entry = normalizedKey(entryArtist)
-        guard !entry.isEmpty else { return true }
-        let candidateKey = normalizedKey(candidate)
-        guard !candidateKey.isEmpty else { return false }
-        return entry == candidateKey || candidateKey.contains(entry) || entry.contains(candidateKey)
+        let entryWords = artistWordSet(entryArtist)
+        // An empty entry artist means "don't constrain by artist".
+        guard !entryWords.isEmpty else { return true }
+        let candidateWords = artistWordSet(candidate)
+        guard !candidateWords.isEmpty else { return false }
+        // Order-independent: match when one credit's artist words are all
+        // present in the other. Handles reordered multi-artist credits
+        // ("Disco Lines & Tinashe" vs "Tinashe, Disco Lines") and remixes that
+        // add an extra artist ("Tinashe, AVELLO, Disco Lines").
+        return entryWords.isSubset(of: candidateWords) || candidateWords.isSubset(of: entryWords)
+    }
+
+    /// Splits an artist credit into a set of normalized name words, dropping
+    /// separators (`&`, `,`, `x`, `feat`, …) which normalization turns into
+    /// spaces.
+    private static func artistWordSet(_ raw: String) -> Set<String> {
+        Set(normalizedKey(raw).split(separator: " ").map(String.init))
+    }
+
+    /// Splits a multi-artist credit into individual artist names, e.g.
+    /// "Disco Lines & Tinashe" -> ["Disco Lines", "Tinashe"].
+    static func artistNameList(_ raw: String) -> [String] {
+        var working = " \(raw) "
+        let separators = [
+            " & ", " and ", " x ", " X ", ", ", " feat. ", " feat ", " ft. ",
+            " ft ", " featuring ", " vs. ", " vs ", " with ", " + ", " / "
+        ]
+        for separator in separators {
+            working = working.replacingOccurrences(of: separator, with: "|")
+        }
+        var seen = Set<String>()
+        var names: [String] = []
+        for part in working.split(separator: "|") {
+            let name = part.trimmingCharacters(in: .whitespaces)
+            guard !name.isEmpty, seen.insert(name.lowercased()).inserted else { continue }
+            names.append(name)
+        }
+        return names
     }
 
     /// Extracts a version/mix label from an iTunes track name, e.g.
@@ -478,4 +598,13 @@ private struct ITunesPurchaseTrack: Decodable {
     let trackViewUrl: String?
     let trackPrice: Double?
     let currency: String?
+}
+
+private struct ITunesArtistResponse: Decodable {
+    let results: [ITunesArtist]
+}
+
+private struct ITunesArtist: Decodable {
+    let artistId: Int?
+    let artistName: String?
 }
