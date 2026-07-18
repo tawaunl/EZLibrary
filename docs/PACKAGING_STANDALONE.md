@@ -5,7 +5,7 @@ This project can now be packaged as a self-contained macOS app + installer packa
 ## What gets bundled
 
 - `EZLibrary.app`
-- `SeratoToolsCLI` inside app resources
+- `EZLibraryCLI` inside app resources
 - `fpcalc` (required for AcoustID fingerprint lookup)
 - `yt-dlp` and `ffmpeg` when available on the build machine
 - Finder Quick Action helper scripts in app resources
@@ -30,7 +30,7 @@ Optionally require the **bundled runtime tools** (fpcalc/ffmpeg/ffprobe) to be
 universal2 as well:
 
 ```bash
-SERATOTOOLS_BUILD_UNIVERSAL=1 ./Scripts/build-app.sh
+EZLIBRARY_BUILD_UNIVERSAL=1 ./Scripts/build-app.sh
 ```
 
 Runtime tool notes:
@@ -40,7 +40,7 @@ Runtime tool notes:
   different-arch Mac the installer's Homebrew bootstrap installs arch-correct
   `yt-dlp`/`ffmpeg`/`fpcalc` at install time (and the YouTube Rip screen's
   **Install Dependencies** button can do the same on demand).
-- With `SERATOTOOLS_BUILD_UNIVERSAL=1`, a preflight validates that the bundled
+- With `EZLIBRARY_BUILD_UNIVERSAL=1`, a preflight validates that the bundled
   runtime tools and their dylibs are universal2 and fails early if they are not.
   This requires universal Homebrew dependencies on the build host.
 
@@ -59,7 +59,7 @@ From repository root:
 Build universal2 installer package:
 
 ```bash
-SERATOTOOLS_BUILD_UNIVERSAL=1 ./Scripts/build-installer.sh
+EZLIBRARY_BUILD_UNIVERSAL=1 ./Scripts/build-installer.sh
 ```
 
 Universal installer note:
@@ -106,7 +106,7 @@ installer -pkg "dist/EZLibrary-<version>.pkg" -target /
 If you have a Developer ID Installer identity, provide it at build time:
 
 ```bash
-SERATOTOOLS_PKG_SIGN_IDENTITY="Developer ID Installer: Your Name (TEAMID)" ./Scripts/build-installer.sh
+EZLIBRARY_PKG_SIGN_IDENTITY="Developer ID Installer: Your Name (TEAMID)" ./Scripts/build-installer.sh
 ```
 
 ## Quick Action after app install

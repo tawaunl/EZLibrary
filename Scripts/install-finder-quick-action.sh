@@ -7,13 +7,13 @@ SERVICE_DIR="$HOME/Library/Services/$SERVICE_NAME.workflow"
 CONTENTS_DIR="$SERVICE_DIR/Contents"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 
-MODE="${SERATOTOOLS_ADD_MODE:-move}"
-DESTINATION="${SERATOTOOLS_ADD_DESTINATION:-$HOME/Music}"
-CRATE_PREFIX="${SERATOTOOLS_ADD_CRATE_PREFIX:-New Music}"
-LIBRARY_DIR="${SERATOTOOLS_LIBRARY_DIR:-}"
+MODE="${EZLIBRARY_ADD_MODE:-${SERATOTOOLS_ADD_MODE:-move}}"
+DESTINATION="${EZLIBRARY_ADD_DESTINATION:-${SERATOTOOLS_ADD_DESTINATION:-$HOME/Music}}"
+CRATE_PREFIX="${EZLIBRARY_ADD_CRATE_PREFIX:-${SERATOTOOLS_ADD_CRATE_PREFIX:-New Music}}"
+LIBRARY_DIR="${EZLIBRARY_LIBRARY_DIR:-${SERATOTOOLS_LIBRARY_DIR:-}}"
 
 if [[ "$MODE" != "move" && "$MODE" != "copy" ]]; then
-  echo "Invalid SERATOTOOLS_ADD_MODE: $MODE (expected move or copy)" >&2
+  echo "Invalid EZLIBRARY_ADD_MODE: $MODE (expected move or copy)" >&2
   exit 2
 fi
 
@@ -26,9 +26,9 @@ if [[ ! -x "$SCRIPT_PATH" ]]; then
   chmod +x "$SCRIPT_PATH"
 fi
 
-echo "Building SeratoToolsCLI so the Quick Action can run immediately..."
+echo "Building EZLibraryCLI so the Quick Action can run immediately..."
 cd "$ROOT_DIR"
-swift build --product SeratoToolsCLI >/dev/null
+swift build --product EZLibraryCLI >/dev/null
 
 mkdir -p "$RESOURCES_DIR"
 
@@ -37,10 +37,10 @@ INPUT_UUID="$(uuidgen)"
 OUTPUT_UUID="$(uuidgen)"
 
 COMMAND_STRING=$(cat <<EOF
-export SERATOTOOLS_ADD_MODE="${MODE}"
-export SERATOTOOLS_ADD_DESTINATION="${DESTINATION}"
-export SERATOTOOLS_ADD_CRATE_PREFIX="${CRATE_PREFIX}"
-export SERATOTOOLS_LIBRARY_DIR="${LIBRARY_DIR}"
+export EZLIBRARY_ADD_MODE="${MODE}"
+export EZLIBRARY_ADD_DESTINATION="${DESTINATION}"
+export EZLIBRARY_ADD_CRATE_PREFIX="${CRATE_PREFIX}"
+export EZLIBRARY_LIBRARY_DIR="${LIBRARY_DIR}"
 
 "${SCRIPT_PATH}" "\$@"
 EOF

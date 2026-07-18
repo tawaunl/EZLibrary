@@ -5,7 +5,7 @@
 #   ./Scripts/release.sh
 #
 # Environment overrides:
-#   SERATOTOOLS_BUILD_UNIVERSAL=1   Build a universal2 (arm64 + x86_64) pkg.
+#   EZLIBRARY_BUILD_UNIVERSAL=1     Build a universal2 (arm64 + x86_64) pkg.
 #                                   Requires universal Homebrew runtime deps.
 #   RELEASE_TAG=v1.2.3              Override the git tag (default: v<pkg-version>).
 #   RELEASE_DRAFT=1                 Create the release as a draft.

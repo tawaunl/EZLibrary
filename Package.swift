@@ -7,25 +7,25 @@ let package = Package(
         .macOS(.v14)
     ],
     products: [
-        .executable(name: "EZLibrary", targets: ["SeratoToolsApp"]),
-        .executable(name: "SeratoToolsCLI", targets: ["SeratoToolsCLI"]),
-        .library(name: "SeratoToolsCore", targets: ["SeratoToolsCore"])
+        .executable(name: "EZLibrary", targets: ["EZLibraryApp"]),
+        .executable(name: "EZLibraryCLI", targets: ["EZLibraryCLI"]),
+        .library(name: "EZLibraryCore", targets: ["EZLibraryCore"])
     ],
     targets: [
         .target(
-            name: "SeratoToolsCore"
+            name: "EZLibraryCore"
         ),
         .executableTarget(
-            name: "SeratoToolsCLI",
-            dependencies: ["SeratoToolsCore"]
+            name: "EZLibraryCLI",
+            dependencies: ["EZLibraryCore"]
         ),
         .executableTarget(
-            name: "SeratoToolsApp",
-            dependencies: ["SeratoToolsCore"]
+            name: "EZLibraryApp",
+            dependencies: ["EZLibraryCore"]
         ),
         .testTarget(
-            name: "SeratoToolsCoreTests",
-            dependencies: ["SeratoToolsCore"],
+            name: "EZLibraryCoreTests",
+            dependencies: ["EZLibraryCore"],
             resources: [
                 .copy("Fixtures")
             ],

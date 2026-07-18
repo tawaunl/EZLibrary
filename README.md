@@ -23,9 +23,9 @@ From broken file paths to crate organization to bulk metadata cleanup, EZLibrary
 
 | Module | What it does |
 |---|---|
-| SeratoToolsApp | Visual workflows for tracks, crates, matching, backup, and consolidation |
-| SeratoToolsCLI | Scriptable import flow for fast ingestion and crate assignment |
-| SeratoToolsCore | Shared parsers, writers, and safety-focused data operations |
+| EZLibraryApp | Visual workflows for tracks, crates, matching, backup, and consolidation |
+| EZLibraryCLI | Scriptable import flow for fast ingestion and crate assignment |
+| EZLibraryCore | Shared parsers, writers, and safety-focused data operations |
 
 ## Feature Highlights
 
@@ -105,13 +105,13 @@ swift run EZLibrary
 ### Check CLI
 
 ```bash
-swift run SeratoToolsCLI --help
+swift run EZLibraryCLI --help
 ```
 
 ## CLI Example
 
 ```bash
-swift run SeratoToolsCLI \
+swift run EZLibraryCLI \
   --mode move \
   --destination "$HOME/Music" \
   --crate-prefix "New Music" \
@@ -142,10 +142,10 @@ Install from packaged app:
 
 Environment controls:
 
-- SERATOTOOLS_ADD_MODE
-- SERATOTOOLS_ADD_DESTINATION
-- SERATOTOOLS_ADD_CRATE_PREFIX
-- SERATOTOOLS_LIBRARY_DIR
+- EZLIBRARY_ADD_MODE
+- EZLIBRARY_ADD_DESTINATION
+- EZLIBRARY_ADD_CRATE_PREFIX
+- EZLIBRARY_LIBRARY_DIR
 
 ## Safety and Reliability
 
@@ -163,8 +163,8 @@ EZLibrary is built to reduce risk during library mutation.
 - Swift 6
 - yt-dlp and ffmpeg for YouTube workflows
 - fpcalc for audio fingerprint lookup
-- Optional: SERATOTOOLS_DISCOGS_TOKEN
-- Optional: SERATOTOOLS_ACOUSTID_KEY
+- Optional: EZLIBRARY_DISCOGS_TOKEN
+- Optional: EZLIBRARY_ACOUSTID_KEY
 
 ## Test
 
@@ -191,24 +191,24 @@ Artifacts are written to dist/.
 Architecture:
 
 - The app and CLI binaries are **always built universal2 (arm64 + x86_64)**, so the shipped app installs and launches on both Apple Silicon and Intel Macs. (An arm64-only app makes Intel Macs report *"This application is not supported on this Mac."*)
-- `SERATOTOOLS_BUILD_UNIVERSAL=1` additionally requires the bundled runtime tools (fpcalc/ffmpeg/ffprobe) to be universal2, and validates this with a preflight. It needs universal Homebrew dependencies on the build host.
+- `EZLIBRARY_BUILD_UNIVERSAL=1` additionally requires the bundled runtime tools (fpcalc/ffmpeg/ffprobe) to be universal2, and validates this with a preflight. It needs universal Homebrew dependencies on the build host.
 
   ```bash
-  SERATOTOOLS_BUILD_UNIVERSAL=1 ./Scripts/build-installer.sh
+  EZLIBRARY_BUILD_UNIVERSAL=1 ./Scripts/build-installer.sh
   ```
 
 Installer note:
 
-- Runtime dependencies are bundled inside the app (fpcalc, yt-dlp, ffmpeg, ffprobe, plus required non-system dylibs), so target machines do not need Homebrew dependency provisioning. Without `SERATOTOOLS_BUILD_UNIVERSAL=1`, the bundled tools are the build host's native architecture; on a different-arch Mac the installer's Homebrew bootstrap installs arch-correct copies at install time.
+- Runtime dependencies are bundled inside the app (fpcalc, yt-dlp, ffmpeg, ffprobe, plus required non-system dylibs), so target machines do not need Homebrew dependency provisioning. Without `EZLIBRARY_BUILD_UNIVERSAL=1`, the bundled tools are the build host's native architecture; on a different-arch Mac the installer's Homebrew bootstrap installs arch-correct copies at install time.
 
 ## Project Layout
 
-- Sources/SeratoToolsApp/
-- Sources/SeratoToolsCLI/
-- Sources/SeratoToolsCore/
+- Sources/EZLibraryApp/
+- Sources/EZLibraryCLI/
+- Sources/EZLibraryCore/
 - Scripts/
 - docs/
-- Tests/SeratoToolsCoreTests/
+- Tests/EZLibraryCoreTests/
 
 ## Docs
 

@@ -57,6 +57,7 @@ BOOTSTRAP="$APP_PATH/Contents/Resources/scripts/install-dependencies.sh"
 if [[ -x "$BOOTSTRAP" ]]; then
   log "Launching dependency bootstrap: $BOOTSTRAP"
   SERATOTOOLS_DEPS_LOG="/tmp/seratotools-install-dependencies.log" \
+    EZLIBRARY_DEPS_LOG="/tmp/seratotools-install-dependencies.log" \
     nohup /bin/bash "$BOOTSTRAP" >>"$LOG_FILE" 2>&1 </dev/null &
   disown 2>/dev/null || true
 else
@@ -76,8 +77,8 @@ PKGBUILD_ARGS=(
   --scripts "$PKGSCRIPTS"
 )
 
-if [[ -n "${SERATOTOOLS_PKG_SIGN_IDENTITY:-}" ]]; then
-  PKGBUILD_ARGS+=(--sign "$SERATOTOOLS_PKG_SIGN_IDENTITY")
+if [[ -n "${EZLIBRARY_PKG_SIGN_IDENTITY:-${SERATOTOOLS_PKG_SIGN_IDENTITY:-}}" ]]; then
+  PKGBUILD_ARGS+=(--sign "${EZLIBRARY_PKG_SIGN_IDENTITY:-${SERATOTOOLS_PKG_SIGN_IDENTITY}}")
 fi
 
 pkgbuild "${PKGBUILD_ARGS[@]}" "$PKG_PATH"

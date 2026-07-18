@@ -10,7 +10,7 @@ APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
 RESOURCE_BIN_DIR="$APP_BUNDLE/Contents/Resources/bin"
 RESOURCE_SCRIPT_DIR="$APP_BUNDLE/Contents/Resources/scripts"
 BUILD_ARTIFACT_DIR="$DIST_DIR/build-artifacts"
-BUILD_UNIVERSAL="${SERATOTOOLS_BUILD_UNIVERSAL:-0}"
+BUILD_UNIVERSAL="${EZLIBRARY_BUILD_UNIVERSAL:-${SERATOTOOLS_BUILD_UNIVERSAL:-0}}"
 
 build_product_binary() {
 	# The app and CLI binaries are ALWAYS built as universal2 (arm64 + x86_64)
@@ -71,18 +71,18 @@ echo "Runtime tools (yt-dlp, ffmpeg/ffprobe, fpcalc) are NOT bundled; the app in
 rm -rf "$BUILD_ARTIFACT_DIR"
 mkdir -p "$BUILD_ARTIFACT_DIR"
 APP_BIN_PATH="$BUILD_ARTIFACT_DIR/$APP_NAME"
-CLI_BIN_PATH="$BUILD_ARTIFACT_DIR/SeratoToolsCLI"
+CLI_BIN_PATH="$BUILD_ARTIFACT_DIR/EZLibraryCLI"
 
 build_product_binary "$APP_NAME" "$APP_BIN_PATH"
-build_product_binary "SeratoToolsCLI" "$CLI_BIN_PATH"
+build_product_binary "EZLibraryCLI" "$CLI_BIN_PATH"
 
 rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources" "$RESOURCE_BIN_DIR" "$RESOURCE_SCRIPT_DIR"
 
 cp "$APP_BIN_PATH" "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 cp "$ROOT_DIR/Packaging/Info.plist" "$APP_BUNDLE/Contents/Info.plist"
-cp "$CLI_BIN_PATH" "$RESOURCE_BIN_DIR/SeratoToolsCLI"
-chmod +x "$RESOURCE_BIN_DIR/SeratoToolsCLI"
+cp "$CLI_BIN_PATH" "$RESOURCE_BIN_DIR/EZLibraryCLI"
+chmod +x "$RESOURCE_BIN_DIR/EZLibraryCLI"
 
 # App icon (referenced by CFBundleIconFile in Info.plist).
 if [[ -f "$ROOT_DIR/Packaging/AppIcon.icns" ]]; then
@@ -107,7 +107,7 @@ chmod +x "$RESOURCE_SCRIPT_DIR"/*.sh
 
 if [[ "$BUILD_UNIVERSAL" == "1" ]]; then
 	verify_universal_macho "$APP_BUNDLE/Contents/MacOS/$APP_NAME" "app executable"
-	verify_universal_macho "$RESOURCE_BIN_DIR/SeratoToolsCLI" "CLI executable"
+	verify_universal_macho "$RESOURCE_BIN_DIR/EZLibraryCLI" "CLI executable"
 fi
 
 # Ad-hoc sign so Gatekeeper allows a local launch.

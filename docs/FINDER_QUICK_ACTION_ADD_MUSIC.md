@@ -32,7 +32,7 @@ If EZLibrary was installed to `/Applications/EZLibrary.app`, run:
 /Applications/EZLibrary.app/Contents/Resources/scripts/install-finder-quick-action.sh
 ```
 
-This uses the bundled `SeratoToolsCLI` binary, so users do not need Swift or source files.
+This uses the bundled `EZLibraryCLI` binary, so users do not need Swift or source files.
 
 ## Manual setup (fallback)
 
@@ -40,17 +40,19 @@ If you prefer manual setup, use Automator and call `Scripts/finder-add-music.sh`
 
 ## Configuration via environment variables
 
-- `SERATOTOOLS_ADD_MODE`: `move` or `copy` (default `move`)
-- `SERATOTOOLS_ADD_DESTINATION`: destination main music folder (default `~/Music`)
-- `SERATOTOOLS_ADD_CRATE_PREFIX`: crate prefix before date (default `New Music`)
-- `SERATOTOOLS_LIBRARY_DIR`: optional explicit `_Serato_` directory override
+- `EZLIBRARY_ADD_MODE`: `move` or `copy` (default `move`)
+- `EZLIBRARY_ADD_DESTINATION`: destination main music folder (default `~/Music`)
+- `EZLIBRARY_ADD_CRATE_PREFIX`: crate prefix before date (default `New Music`)
+- `EZLIBRARY_LIBRARY_DIR`: optional explicit `_Serato_` directory override
+
+> Legacy `SERATOTOOLS_*` variable names are still honored as a fallback, so existing Quick Actions keep working.
 
 Example custom install:
 
 ```bash
-SERATOTOOLS_ADD_MODE=copy \
-SERATOTOOLS_ADD_DESTINATION="$HOME/Music" \
-SERATOTOOLS_ADD_CRATE_PREFIX="Promo Imports" \
+EZLIBRARY_ADD_MODE=copy \
+EZLIBRARY_ADD_DESTINATION="$HOME/Music" \
+EZLIBRARY_ADD_CRATE_PREFIX="Promo Imports" \
 ./Scripts/install-finder-quick-action.sh
 ```
 
@@ -59,5 +61,5 @@ SERATOTOOLS_ADD_CRATE_PREFIX="Promo Imports" \
 From repository root:
 
 ```bash
-swift run SeratoToolsCLI --mode move --destination "$HOME/Music" --crate-prefix "New Music" -- ~/Downloads/incoming
+swift run EZLibraryCLI --mode move --destination "$HOME/Music" --crate-prefix "New Music" -- ~/Downloads/incoming
 ```

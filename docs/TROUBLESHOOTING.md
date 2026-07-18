@@ -34,7 +34,7 @@ A: There is a documented unresolved UI-layer crash investigation for some enviro
 - Review [CRASH_INVESTIGATION.md](CRASH_INVESTIGATION.md).
 - Check crash reports in `~/Library/Logs/DiagnosticReports/`.
 - Test with an empty library override to separate data issues from UI composition issues:
-  - `SERATOTOOLS_LIBRARY_DIR=/tmp/nonexistent-empty-serato-dir swift run EZLibrary`
+  - `EZLIBRARY_LIBRARY_DIR=/tmp/nonexistent-empty-serato-dir swift run EZLibrary`
 
 ## Q: `swift run EZLibrary` does not open normally like an app.
 
@@ -49,13 +49,13 @@ A: Use packaged app flow for a normal app bundle experience.
 
 A: Set the explicit library override.
 
-- Environment variable: `SERATOTOOLS_LIBRARY_DIR`
+- Environment variable: `EZLIBRARY_LIBRARY_DIR`
 - Point it at your `_Serato_` directory (the folder that contains `database V2`).
 
 Example:
 
 ```bash
-SERATOTOOLS_LIBRARY_DIR="/Volumes/YourDrive/_Serato_" swift run EZLibrary
+EZLIBRARY_LIBRARY_DIR="/Volumes/YourDrive/_Serato_" swift run EZLibrary
 ```
 
 ## Q: I get errors about missing `database V2`.
@@ -64,7 +64,7 @@ A: The selected path is not a valid Serato library root.
 
 - Verify the folder contains `database V2`.
 - If this is a new system, open Serato once so it initializes library files.
-- Retry with explicit `SERATOTOOLS_LIBRARY_DIR`.
+- Retry with explicit `EZLIBRARY_LIBRARY_DIR`.
 
 ## Q: My tracks are on an external drive and paths seem inconsistent.
 
@@ -91,10 +91,10 @@ A: Validate configuration and inputs.
 
 - Confirm selected files are supported audio formats.
 - Check environment settings:
-  - `SERATOTOOLS_ADD_MODE`
-  - `SERATOTOOLS_ADD_DESTINATION`
-  - `SERATOTOOLS_ADD_CRATE_PREFIX`
-  - `SERATOTOOLS_LIBRARY_DIR`
+  - `EZLIBRARY_ADD_MODE`
+  - `EZLIBRARY_ADD_DESTINATION`
+  - `EZLIBRARY_ADD_CRATE_PREFIX`
+  - `EZLIBRARY_LIBRARY_DIR`
 - Test equivalent direct CLI command to isolate Finder workflow issues.
 
 ## Q: What formats are supported by Add Music imports?
@@ -118,14 +118,14 @@ A: Install required binaries and retry.
 A: Ensure `fpcalc` and API key are configured.
 
 - Install `fpcalc` (Chromaprint tool).
-- Set `SERATOTOOLS_ACOUSTID_KEY` or save key in app settings.
+- Set `EZLIBRARY_ACOUSTID_KEY` or save key in app settings.
 - Verify with `command -v fpcalc`.
 
 ## Q: Discogs lookup is failing.
 
 A: Configure Discogs token.
 
-- Set `SERATOTOOLS_DISCOGS_TOKEN`.
+- Set `EZLIBRARY_DISCOGS_TOKEN`.
 - Or store token in app settings if supported by your flow.
 
 ## Packaging and Installer
@@ -166,7 +166,7 @@ A: Install Quick Action from bundled script after app install.
 A: Pass Developer ID Installer identity to packaging script.
 
 ```bash
-SERATOTOOLS_PKG_SIGN_IDENTITY="Developer ID Installer: Your Name (TEAMID)" ./Scripts/build-installer.sh
+EZLIBRARY_PKG_SIGN_IDENTITY="Developer ID Installer: Your Name (TEAMID)" ./Scripts/build-installer.sh
 ```
 
 ## Runtime Behavior and Safety

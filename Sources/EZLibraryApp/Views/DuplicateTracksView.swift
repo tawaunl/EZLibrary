@@ -1,0 +1,709 @@
+import SwiftUI
+import Foundation
+import EZLibraryCore
+
+struct DuplicateTracksView: View {
+    @EnvironmentObject private var libraryService: LibraryService
+
+    let onLibraryChanged: () -> Void
+
+    @State private var searchText = ""
+    @State private var duplicateGroups: [DuplicateTrackGroup] = []
+    @State private var summary = DuplicateTracksSummary(totalTracks: 0, duplicateGroupCount: 0, redundantTrackCount: 0, versionSeparatedGroupCount: 0)
+    @State private var keepSelectionByGroupID: [String: String] = [:]
+    /// Recommended keep per group, computed once per scan — `bestTrack(in:)`
+    /// re-ranks the group every call, and it was being invoked per group per
+    /// render (and across all groups for the bulk-action counts).
+    @State private var bestPathByGroupID: [String: String] = [:]
+    @State private var isScanning = false
+    @State private var rebuildTask: Task<Void, Never>?
+    @State private var pendingDeletion: PendingDeletion?
+    @State private var errorMessage: String?
+    @State private var successMessage: String?
+    @AppStorage(Self.confirmDeletesDefaultsKey) private var confirmDeletes = true
+
+    /// Ignored indefinitely (persisted). Cleared only from the manage section.
+    @StateObject private var ignoreStore = DuplicateIgnoreStore()
+    /// Ignored just for this session ("ignore this time"); cleared on relaunch.
+    @State private var sessionIgnoredGroupIDs: Set<String> = []
+    @State private var sessionIgnoredTrackPaths: Set<String> = []
+
+    private static let confirmDeletesDefaultsKey = "SeratoToolsConfirmDuplicateDeletes"
+
+    private struct PendingDeletion: Identifiable {
+        let id = UUID()
+        let groupLabel: String
+        let keepLabel: String
+        let tracks: [Track]
+        let fromComputer: Bool
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                SectionHeaderCard(
+                    title: "Duplicates",
+                    description: "Find duplicate tracks by title and artist while keeping DJ version variants like Intro, Clean, Quick Hit, and Extended in separate groups.",
+                    icon: "rectangle.on.rectangle"
+                )
+
+                summaryCard
+                searchCard
+                messagesBanner
+                resultsCard
+                ignoredItemsCard
+            }
+            .padding(16)
+        }
+        .onAppear {
+            rebuildDuplicateGroups()
+        }
+        .onChange(of: libraryService.tracks.count) {
+            rebuildDuplicateGroups()
+        }
+        .onChange(of: libraryService.tracks.first?.id) {
+            rebuildDuplicateGroups()
+        }
+        .onChange(of: libraryService.tracks.last?.id) {
+            rebuildDuplicateGroups()
+        }
+        .confirmationDialog(
+            "Delete Duplicates",
+            isPresented: Binding(get: { pendingDeletion != nil }, set: { if !$0 { pendingDeletion = nil } }),
+            titleVisibility: .visible,
+            presenting: pendingDeletion
+        ) { pending in
+            Button(
+                pending.fromComputer
+                    ? "Move \(pending.tracks.count) File\(pending.tracks.count == 1 ? "" : "s") to Trash"
+                    : "Remove \(pending.tracks.count) From Library",
+                role: .destructive
+            ) {
+                performDeletion(pending)
+            }
+            Button("Cancel", role: .cancel) { pendingDeletion = nil }
+        } message: { pending in
+            Text(
+                pending.fromComputer
+                    ? "Moves \(pending.tracks.count) duplicate file\(pending.tracks.count == 1 ? "" : "s") to the Trash and removes them from the Serato library. Keeping: \(pending.keepLabel)."
+                    : "Removes \(pending.tracks.count) duplicate\(pending.tracks.count == 1 ? "" : "s") from the Serato library (files stay on disk). Keeping: \(pending.keepLabel)."
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var messagesBanner: some View {
+        if let successMessage {
+            Text(successMessage)
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(.green)
+        }
+        if let errorMessage {
+            Text(errorMessage)
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(.red)
+        }
+    }
+
+    @ViewBuilder
+    private var ignoredItemsCard: some View {
+        if hasAnyIgnores {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    Text("Ignored Items")
+                        .font(.title3.weight(.semibold))
+                    Spacer(minLength: 0)
+                    if hasSessionIgnores {
+                        Button("Clear This Session") {
+                            sessionIgnoredGroupIDs.removeAll()
+                            sessionIgnoredTrackPaths.removeAll()
+                        }
+                        .controlSize(.small)
+                        .help("Un-ignore everything ignored 'this time'. Indefinite ignores stay.")
+                    }
+                    if hasIndefiniteIgnores {
+                        Button("Restore All Indefinite") {
+                            ignoreStore.restoreAll()
+                        }
+                        .controlSize(.small)
+                        .help("Un-ignore every group and song ignored indefinitely.")
+                    }
+                }
+
+                if hasSessionIgnores {
+                    Text("This session: \(sessionIgnoredGroupIDs.count) group\(sessionIgnoredGroupIDs.count == 1 ? "" : "s"), \(sessionIgnoredTrackPaths.count) song\(sessionIgnoredTrackPaths.count == 1 ? "" : "s") hidden until relaunch.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                if !ignoreStore.ignoredGroupIDs.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Groups ignored indefinitely (\(ignoreStore.ignoredGroupIDs.count))")
+                            .font(.subheadline.weight(.semibold))
+                        ForEach(ignoreStore.ignoredGroupIDs.sorted(), id: \.self) { groupID in
+                            HStack(spacing: 8) {
+                                Text(groupLabel(forID: groupID))
+                                    .font(.callout)
+                                    .lineLimit(1)
+                                Spacer(minLength: 0)
+                                Button("Restore") { ignoreStore.restoreGroup(groupID) }
+                                    .controlSize(.small)
+                            }
+                        }
+                    }
+                }
+
+                if !ignoreStore.ignoredTrackPaths.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Songs ignored indefinitely (\(ignoreStore.ignoredTrackPaths.count))")
+                            .font(.subheadline.weight(.semibold))
+                        ForEach(ignoreStore.ignoredTrackPaths.sorted(), id: \.self) { storedPath in
+                            HStack(spacing: 8) {
+                                Text(trackLabel(forPath: storedPath))
+                                    .font(.callout)
+                                    .lineLimit(1)
+                                Spacer(minLength: 0)
+                                Button("Restore") { ignoreStore.restoreTrack(storedPath) }
+                                    .controlSize(.small)
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(16)
+            .background(RoundedRectangle(cornerRadius: 12).fill(Color(nsColor: .controlBackgroundColor).opacity(0.55)))
+        }
+    }
+
+    private var hasSessionIgnores: Bool {
+        !sessionIgnoredGroupIDs.isEmpty || !sessionIgnoredTrackPaths.isEmpty
+    }
+
+    private var hasIndefiniteIgnores: Bool {
+        !ignoreStore.ignoredGroupIDs.isEmpty || !ignoreStore.ignoredTrackPaths.isEmpty
+    }
+
+    private var hasAnyIgnores: Bool {
+        hasSessionIgnores || hasIndefiniteIgnores
+    }
+
+    private func groupLabel(forID groupID: String) -> String {
+        if let group = duplicateGroups.first(where: { $0.id == groupID }) {
+            return "\(group.artist) - \(group.title) (\(group.versionLabel))"
+        }
+        return groupID
+    }
+
+    private func trackLabel(forPath storedPath: String) -> String {
+        if let track = libraryService.tracks.first(where: { $0.seratoStoredPath == storedPath }) {
+            let title = track.title.isEmpty ? track.fileURL.lastPathComponent : track.title
+            return track.artist.isEmpty ? title : "\(track.artist) - \(title)"
+        }
+        return (storedPath as NSString).lastPathComponent
+    }
+
+    private var summaryCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Duplicate Summary")
+                .font(.title3.weight(.semibold))
+
+            HStack(spacing: 10) {
+                statTag(title: "Tracks", value: "\(summary.totalTracks)")
+                statTag(title: "Groups", value: "\(summary.duplicateGroupCount)", accent: true)
+                statTag(title: "Redundant", value: "\(summary.redundantTrackCount)")
+                statTag(title: "Versioned", value: "\(summary.versionSeparatedGroupCount)")
+                statTag(title: "Diff Names", value: "\(differentFilenameGroupCount)")
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(16)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Color(nsColor: .controlBackgroundColor).opacity(0.55)))
+    }
+
+    private var searchCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            TextField("Search title, artist, version, or path", text: $searchText)
+                .textFieldStyle(.roundedBorder)
+
+            if duplicateGroups.isEmpty {
+                Text(libraryService.tracks.isEmpty ? "Load a library first to scan for duplicates." : "No duplicate groups found.")
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("\(filteredGroups.count) groups match the current search.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(16)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Color(nsColor: .controlBackgroundColor).opacity(0.55)))
+    }
+
+    private var resultsCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Text("Duplicate Groups")
+                    .font(.title3.weight(.semibold))
+                Spacer(minLength: 0)
+                Toggle("Confirm Deletes", isOn: $confirmDeletes)
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .help("When off, delete actions run immediately without a confirmation prompt.")
+            }
+
+            if !filteredGroups.isEmpty {
+                bulkActionsBar
+            }
+
+            if filteredGroups.isEmpty {
+                if isScanning {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Scanning for duplicates…")
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    Text(duplicateGroups.isEmpty ? "No duplicate groups detected in the current library." : "No duplicate groups matched your search.")
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                // Lazy so a library with thousands of duplicate groups only
+                // builds the cards that scroll into view.
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    ForEach(filteredGroups) { group in
+                        groupCard(for: group)
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Color(nsColor: .controlBackgroundColor).opacity(0.55)))
+    }
+
+    private var bulkActionsBar: some View {
+        let totalDeletable = filteredGroups.reduce(0) { $0 + deletableTracks(for: $1).count }
+        return HStack(spacing: 8) {
+            Button("Pick Best (All)") {
+                pickBestForAll()
+            }
+            .help("Select the most complete copy (oldest on ties) to keep in every group.")
+
+            Button("Delete All Others → Library") {
+                requestMassDeletion(fromComputer: false)
+            }
+            .disabled(totalDeletable == 0)
+            .help("Across every group, remove all copies except the kept one from the Serato library. Files stay on disk.")
+
+            Button("Delete All Others → Computer") {
+                requestMassDeletion(fromComputer: true)
+            }
+            .disabled(totalDeletable == 0)
+            .help("Across every group, remove all copies except the kept one and move their files to the Trash.")
+
+            Text("\(totalDeletable) removable")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func groupCard(for group: DuplicateTrackGroup) -> some View {
+        let bestPath = bestPathByGroupID[group.id]
+        let kept = keptPath(for: group)
+        let deletable = deletableTracks(for: group)
+
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 10) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("\(group.artist) - \(group.title)")
+                        .font(.headline)
+                        .lineLimit(1)
+                    HStack(spacing: 6) {
+                        Text("Version: \(group.versionLabel)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(group.hasDifferentFilenames ? "Different filenames" : "Same filename")
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(
+                                Capsule().fill((group.hasDifferentFilenames ? Color.orange : Color.green).opacity(0.16))
+                            )
+                            .foregroundStyle(group.hasDifferentFilenames ? Color.orange : Color.green)
+                    }
+                }
+
+                Spacer(minLength: 0)
+
+                statTag(title: "Tracks", value: "\(group.trackCount)", accent: true)
+                statTag(title: "Redundant", value: "\(group.redundantTrackCount)")
+            }
+
+            groupActionBar(group: group, bestPath: bestPath, deletable: deletable)
+
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(group.tracks) { track in
+                    trackRow(track: track, group: group, keptPath: kept, bestPath: bestPath)
+                }
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(nsColor: .windowBackgroundColor).opacity(0.66))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
+        )
+    }
+
+    private func groupActionBar(group: DuplicateTrackGroup, bestPath: String?, deletable: [Track]) -> some View {
+        HStack(spacing: 8) {
+            Button("Pick Best") {
+                if let bestPath {
+                    keepSelectionByGroupID[group.id] = bestPath
+                }
+            }
+            .help("Keep the copy with the most complete tags; ties keep the oldest by date added.")
+
+            Button("Delete Others → Library") {
+                requestDeletion(group: group, tracks: deletable, fromComputer: false)
+            }
+            .disabled(deletable.isEmpty)
+            .help("Remove the other copies in this group from the Serato library. Files stay on disk.")
+
+            Button("Delete Others → Computer") {
+                requestDeletion(group: group, tracks: deletable, fromComputer: true)
+            }
+            .disabled(deletable.isEmpty)
+            .help("Remove the other copies in this group and move their files to the Trash.")
+
+            Menu("Ignore Group") {
+                Button("Ignore This Time") {
+                    sessionIgnoredGroupIDs.insert(group.id)
+                }
+                Button("Ignore Indefinitely") {
+                    ignoreStore.ignoreGroup(group.id)
+                }
+            }
+            .frame(maxWidth: 150)
+            .help("Skip this group so it isn't shown or deleted. 'This time' clears on relaunch; 'indefinitely' persists until restored.")
+
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func trackRow(track: Track, group: DuplicateTrackGroup, keptPath: String?, bestPath: String?) -> some View {
+        let isKept = track.seratoStoredPath == keptPath
+        let isBest = track.seratoStoredPath == bestPath
+        let tagCount = DuplicateTracksService.completenessScore(for: track)
+
+        return VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
+                Text(track.title.isEmpty ? track.fileURL.deletingPathExtension().lastPathComponent : track.title)
+                    .font(.subheadline)
+                Text(DuplicateTracksService.versionLabel(for: track))
+                    .font(.caption2.weight(.semibold))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.accentColor.opacity(0.15)))
+
+                if isBest {
+                    Text("Best")
+                        .font(.caption2.weight(.bold))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color.green.opacity(0.18)))
+                        .foregroundStyle(.green)
+                }
+
+                Spacer(minLength: 0)
+
+                Text("Tags: \(tagCount)")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+
+                if isKept {
+                    Text("Keep")
+                        .font(.caption2.weight(.bold))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color.green.opacity(0.22)))
+                        .foregroundStyle(.green)
+                } else {
+                    Button("Keep This") {
+                        keepSelectionByGroupID[group.id] = track.seratoStoredPath
+                    }
+                    .controlSize(.small)
+                    .help("Keep this copy and mark the others in the group for deletion.")
+                }
+
+                Menu {
+                    Button("Ignore This Time") {
+                        sessionIgnoredTrackPaths.insert(track.seratoStoredPath)
+                    }
+                    Button("Ignore Indefinitely") {
+                        ignoreStore.ignoreTrack(track.seratoStoredPath)
+                    }
+                } label: {
+                    Image(systemName: "eye.slash")
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .controlSize(.small)
+                .help("Ignore just this copy so it isn't shown or deleted. 'This time' clears on relaunch; 'indefinitely' persists until restored.")
+            }
+            Text(track.artist.isEmpty ? track.fileURL.lastPathComponent : track.artist)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text("File: \(track.fileURL.lastPathComponent)")
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            if let dateAdded = track.dateAdded {
+                Text("Added: \(dateAdded.formatted(date: .abbreviated, time: .omitted))")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            Text(track.fileURL.path)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(nsColor: .windowBackgroundColor).opacity(0.55))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(isKept ? Color.green.opacity(0.55) : Color.clear, lineWidth: 1)
+        )
+    }
+
+    private var filteredGroups: [DuplicateTrackGroup] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else { return visibleGroups }
+
+        return visibleGroups.filter { group in
+            if group.artist.lowercased().contains(query) { return true }
+            if group.title.lowercased().contains(query) { return true }
+            if group.versionLabel.lowercased().contains(query) { return true }
+            return group.tracks.contains { track in
+                track.title.lowercased().contains(query)
+                    || track.artist.lowercased().contains(query)
+                    || track.fileURL.path.lowercased().contains(query)
+            }
+        }
+    }
+
+    /// Duplicate groups with ignored groups removed and ignored tracks stripped
+    /// out. A group that drops below two tracks after removing ignored ones is
+    /// no longer a duplicate, so it's hidden too.
+    private var visibleGroups: [DuplicateTrackGroup] {
+        duplicateGroups.compactMap { group in
+            if isGroupIgnored(group.id) { return nil }
+
+            let remaining = group.tracks.filter { !isTrackIgnored($0.seratoStoredPath) }
+            guard remaining.count > 1 else { return nil }
+            if remaining.count == group.tracks.count { return group }
+
+            return DuplicateTrackGroup(
+                id: group.id,
+                artist: group.artist,
+                title: group.title,
+                versionLabel: group.versionLabel,
+                tracks: remaining
+            )
+        }
+    }
+
+    private func isGroupIgnored(_ groupID: String) -> Bool {
+        ignoreStore.isGroupIgnored(groupID) || sessionIgnoredGroupIDs.contains(groupID)
+    }
+
+    private func isTrackIgnored(_ storedPath: String) -> Bool {
+        ignoreStore.isTrackIgnored(storedPath) || sessionIgnoredTrackPaths.contains(storedPath)
+    }
+
+    private var differentFilenameGroupCount: Int {
+        duplicateGroups.filter { $0.hasDifferentFilenames }.count
+    }
+
+    private func rebuildDuplicateGroups() {
+        let tracks = libraryService.tracks
+        rebuildTask?.cancel()
+        isScanning = true
+        // The duplicate scan normalizes every track's title/artist — run it
+        // off the main actor so opening this tab doesn't freeze the app.
+        rebuildTask = Task {
+            let (groups, groupSummary, bestPaths) = await Task.detached(priority: .userInitiated) {
+                () -> ([DuplicateTrackGroup], DuplicateTracksSummary, [String: String]) in
+                let groups = DuplicateTracksService.duplicateGroups(in: tracks)
+                let summary = DuplicateTracksService.summary(forGroups: groups, totalTracks: tracks.count)
+                var bestPaths: [String: String] = [:]
+                for group in groups {
+                    bestPaths[group.id] = DuplicateTracksService.bestTrack(in: group.tracks)?.seratoStoredPath
+                }
+                return (groups, summary, bestPaths)
+            }.value
+
+            guard !Task.isCancelled else { return }
+            duplicateGroups = groups
+            summary = groupSummary
+            bestPathByGroupID = bestPaths
+            let groupIDs = Set(groups.map(\.id))
+            keepSelectionByGroupID = keepSelectionByGroupID.filter { key, _ in
+                groupIDs.contains(key)
+            }
+            isScanning = false
+        }
+    }
+
+    private func keptPath(for group: DuplicateTrackGroup) -> String? {
+        let selected = keepSelectionByGroupID[group.id] ?? bestPathByGroupID[group.id]
+        if let selected, group.tracks.contains(where: { $0.seratoStoredPath == selected }) {
+            return selected
+        }
+        // The selected/best copy was ignored or removed from this group; fall
+        // back to the best of the copies that are still present.
+        return DuplicateTracksService.bestTrack(in: group.tracks)?.seratoStoredPath
+    }
+
+    private func deletableTracks(for group: DuplicateTrackGroup) -> [Track] {
+        let kept = keptPath(for: group)
+        return group.tracks.filter { $0.seratoStoredPath != kept }
+    }
+
+    private func pickBestForAll() {
+        for group in filteredGroups {
+            if let bestPath = bestPathByGroupID[group.id] {
+                keepSelectionByGroupID[group.id] = bestPath
+            }
+        }
+    }
+
+    private func requestDeletion(group: DuplicateTrackGroup, tracks: [Track], fromComputer: Bool) {
+        guard !tracks.isEmpty else { return }
+        let keptTrack = group.tracks.first { $0.seratoStoredPath == keptPath(for: group) }
+        let keepLabel = keptTrack.map { $0.fileURL.lastPathComponent } ?? group.title
+
+        confirmOrPerform(
+            PendingDeletion(
+                groupLabel: "\(group.artist) - \(group.title)",
+                keepLabel: keepLabel,
+                tracks: tracks,
+                fromComputer: fromComputer
+            )
+        )
+    }
+
+    private func requestMassDeletion(fromComputer: Bool) {
+        let tracks = filteredGroups.flatMap { deletableTracks(for: $0) }
+        guard !tracks.isEmpty else { return }
+
+        confirmOrPerform(
+            PendingDeletion(
+                groupLabel: "\(filteredGroups.count) groups",
+                keepLabel: "the best copy in each group",
+                tracks: tracks,
+                fromComputer: fromComputer
+            )
+        )
+    }
+
+    private func confirmOrPerform(_ pending: PendingDeletion) {
+        if confirmDeletes {
+            pendingDeletion = pending
+        } else {
+            performDeletion(pending)
+        }
+    }
+
+    private func performDeletion(_ pending: PendingDeletion) {
+        pendingDeletion = nil
+        successMessage = nil
+        errorMessage = nil
+
+        let deletePaths = Set(pending.tracks.map(\.seratoStoredPath))
+
+        do {
+            var trashedCount = 0
+            if pending.fromComputer {
+                // Never trash a physical file that a surviving library entry
+                // still references (e.g. two DB entries pointing at one file).
+                let retainedFilePaths = Set(
+                    libraryService.tracks
+                        .filter { !deletePaths.contains($0.seratoStoredPath) }
+                        .map { $0.fileURL.standardizedFileURL.path }
+                )
+
+                for track in pending.tracks {
+                    let filePath = track.fileURL.standardizedFileURL.path
+                    guard FileManager.default.fileExists(atPath: filePath) else { continue }
+                    if retainedFilePaths.contains(filePath) { continue }
+                    _ = try FileManager.default.trashItem(at: track.fileURL, resultingItemURL: nil)
+                    trashedCount += 1
+                }
+            }
+
+            try removeFromLibraryMetadata(paths: deletePaths)
+            onLibraryChanged()
+            rebuildDuplicateGroups()
+
+            let count = pending.tracks.count
+            successMessage = pending.fromComputer
+                ? "Moved \(trashedCount) file\(trashedCount == 1 ? "" : "s") to Trash and removed \(count) duplicate\(count == 1 ? "" : "s") from the library."
+                : "Removed \(count) duplicate\(count == 1 ? "" : "s") from the library."
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func removeFromLibraryMetadata(paths: Set<String>) throws {
+        guard !paths.isEmpty else { return }
+
+        let databaseURL = libraryService.databaseFile
+        if FileManager.default.fileExists(atPath: databaseURL.path) {
+            try SeratoBackupBeforeWrite.snapshot(of: databaseURL)
+        }
+
+        let databaseData = try Data(contentsOf: databaseURL)
+        let rewritten = SeratoDatabaseWriter.removingPaths(paths, in: databaseData)
+        if rewritten.didRewrite {
+            try AtomicFileWriter.write(rewritten.data, to: databaseURL)
+        }
+
+        for crate in libraryService.crates {
+            guard crate.fileURL?.pathExtension.lowercased() == "crate" else { continue }
+            if crate.trackPaths.contains(where: { paths.contains($0) }) {
+                let rewrittenPaths = crate.trackPaths.filter { !paths.contains($0) }
+                _ = try SeratoCrateEditor.rewriteTrackPaths(in: crate, to: rewrittenPaths)
+            }
+        }
+    }
+
+    private func statTag(title: String, value: String, accent: Bool = false) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.footnote)
+                .foregroundStyle(accent ? .white.opacity(0.92) : .secondary)
+            Text(value)
+                .font(.system(size: 24, weight: .semibold, design: .default))
+                .monospacedDigit()
+                .foregroundStyle(accent ? .white : .primary)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(accent ? Color.accentColor.opacity(0.92) : Color(nsColor: .windowBackgroundColor))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(accent ? Color.accentColor : Color.secondary.opacity(0.25), lineWidth: 1)
+        )
+    }
+}

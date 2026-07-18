@@ -3,7 +3,7 @@
 ## Status: unresolved, paused mid-bisection
 
 The app reliably crashes 4–90 seconds after launch whenever it's actually run
-as a GUI app (window on screen). This is **not** a bug in `SeratoToolsCore`
+as a GUI app (window on screen). This is **not** a bug in `EZLibraryCore`
 or in the Phase 1 feature logic (CrateView / Missing Tracks) — those are all
 verified correct via scratch-executable tests against the real library (see
 `docs/ROADMAP.md`). This is purely a SwiftUI/AppKit UI-layer crash.
@@ -43,9 +43,9 @@ Environment: macOS 26.5.1 (25F80), only Xcode Command Line Tools installed
    stable bundle id `com.seratotools.app`) instead of the raw
    `.build/debug/EZLibrary` executable — no effect, crashed identically.
 3. **Disabling window restoration**: added
-   `Sources/SeratoToolsApp/Views/WindowConfigurator.swift`, an
+   `Sources/EZLibraryApp/Views/WindowConfigurator.swift`, an
    `NSViewRepresentable` that sets `window.isRestorable = false`, wired in
-   via `.background(WindowConfigurator())` in `SeratoToolsApp.swift`. No
+   via `.background(WindowConfigurator())` in `EZLibraryApp.swift`. No
    effect. **Currently still in the tree, uncommitted** — didn't help, kept
    only because it's harmless; feel free to rip it out if it stays useless.
 4. **Hiding the window toolbar**: added `.toolbar(.hidden, for: .windowToolbar)`
@@ -67,7 +67,7 @@ now deleted) to bisect:
   `Table` in isolation as the trigger. The bug needs something specific to
   *our* app.
 - The **real app pointed at an empty/nonexistent library directory**
-  (`SERATOTOOLS_LIBRARY_DIR=/tmp/nonexistent-empty-serato-dir`, so
+  (`EZLIBRARY_LIBRARY_DIR=/tmp/nonexistent-empty-serato-dir`, so
   `reload()` throws immediately via `try?` and `tracks`/`crates` stay
   empty) **still crashed**, in ~4 seconds, identical signature.
 - **This rules out**: real data volume (1343 tracks) or the timing of the
@@ -79,10 +79,10 @@ now deleted) to bisect:
 ## What hasn't been tried yet — where to pick up
 
 Bisect **within the real app** by temporarily gutting pieces of
-`Sources/SeratoToolsApp/Views/ContentView.swift` (and rebuilding via
+`Sources/EZLibraryApp/Views/ContentView.swift` (and rebuilding via
 `swift build && ./Scripts/build-app.sh`, then launching
 `dist/EZLibrary.app/Contents/MacOS/EZLibrary` with
-`SERATOTOOLS_LIBRARY_DIR` set to the empty path above — no need for real
+`EZLIBRARY_LIBRARY_DIR` set to the empty path above — no need for real
 data given the finding above) to find the minimal trigger. Candidates, in
 suggested test order (each is present in the real app but absent from the
 minimal repros that survived):
@@ -136,7 +136,7 @@ the pragmatic workaround.
 - **Uncommitted, not yet proven useful**: `WindowConfigurator.swift` (new
   file) and the `.toolbar(.hidden, for: .windowToolbar)` line in
   `ContentView.swift`, plus the `.background(WindowConfigurator())` line in
-  `SeratoToolsApp.swift`. Leave them for now (harmless) or revert them —
+  `EZLibraryApp.swift`. Leave them for now (harmless) or revert them —
   your call — but don't treat them as "the fix," they aren't.
 - Everything else (Phase 0 + Phase 1 core logic, tests, fixtures) is
   committed and verified working correctly via non-GUI scratch executables.
@@ -150,5 +150,5 @@ the pragmatic workaround.
   needing to actually execute and assert.
 - The real, populated Serato library for testing lives at
   `/Volumes/Crucial X10/_Serato_` (1343 tracks) — `~/Music/_Serato_` is
-  empty. `SERATOTOOLS_LIBRARY_DIR` env var (DEBUG-only override in
-  `SeratoToolsApp.swift`) points the app at any path for testing.
+  empty. `EZLIBRARY_LIBRARY_DIR` env var (DEBUG-only override in
+  `EZLibraryApp.swift`) points the app at any path for testing.

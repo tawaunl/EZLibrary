@@ -2,7 +2,7 @@
 
 ## Context
 
-The skeleton macOS SwiftUI app (`SeratoToolsCore` + `SeratoToolsApp`) is in place and launches successfully. The user wants to build out 11 features (Add New Music, Missing Tracks, CrateView, Find Duplicates, CrateMatch, Switch, Misplaced Tracks, iTunes Migration, Backup, Tags & Cues, Sync/Rekordbox). Building all 11 at once isn't practical — they share a lot of core infrastructure (reading/writing Serato's binary library files) but vary hugely in risk (some are pure local file work, others require reverse-engineering third-party formats or external APIs). This plan lays out shared architecture, a phase order, and an MVP recommendation so we build the risky, load-bearing pieces once, early, and defer the most speculative work (audio fingerprinting, Rekordbox export, Spotify/iTunes integration) until the core is proven.
+The skeleton macOS SwiftUI app (`EZLibraryCore` + `EZLibraryApp`) is in place and launches successfully. The user wants to build out 11 features (Add New Music, Missing Tracks, CrateView, Find Duplicates, CrateMatch, Switch, Misplaced Tracks, iTunes Migration, Backup, Tags & Cues, Sync/Rekordbox). Building all 11 at once isn't practical — they share a lot of core infrastructure (reading/writing Serato's binary library files) but vary hugely in risk (some are pure local file work, others require reverse-engineering third-party formats or external APIs). This plan lays out shared architecture, a phase order, and an MVP recommendation so we build the risky, load-bearing pieces once, early, and defer the most speculative work (audio fingerprinting, Rekordbox export, Spotify/iTunes integration) until the core is proven.
 
 Decisions already confirmed with the user: macOS-only (the Windows mention in Feature 1's spec is leftover boilerplate, ignored), native Swift/SwiftUI, and the user delegated MVP/phase selection to us.
 
@@ -17,14 +17,14 @@ Project rule reference: see `docs/ENGINEERING_RULES.md` for code standards that 
 
 Only the file header/envelope was validated on this machine (the local library is empty of tracks) — before trusting the writer against a real user's data, we need a populated library or fixture to validate the full record schema (`otrk`/`pfil`/`tsng`/`tart`/`tbpm`/`tkey`, plus crate track-membership tags).
 
-> **Update (Phase 0 complete):** all of the above has since been validated against a real, populated 1343-track library (see `Tests/SeratoToolsCoreTests/Fixtures/RealLibrarySample/`), including a byte-exact path-rewrite round-trip. See git history for `Sources/SeratoToolsCore/Format/`, `Parsers/`, `Writers/`, and `Safety/`.
+> **Update (Phase 0 complete):** all of the above has since been validated against a real, populated 1343-track library (see `Tests/EZLibraryCoreTests/Fixtures/RealLibrarySample/`), including a byte-exact path-rewrite round-trip. See git history for `Sources/EZLibraryCore/Format/`, `Parsers/`, `Writers/`, and `Safety/`.
 
 ## Shared core architecture (built once, reused across features)
 
-All in `SeratoToolsCore`:
+All in `EZLibraryCore`:
 
 - **`Format/` (new)** — `SeratoChunk`/reader/writer: a generic tag(4 ASCII bytes)+length(4-byte big-endian)+payload primitive shared by both `database V2` and `.crate` files, since they're the same envelope with different schemas. Every other format piece builds on this instead of re-parsing bytes independently.
-- **`SeratoDatabaseParser` + new `SeratoDatabaseWriter`** — replaces the current stub in `Sources/SeratoToolsCore/Parsers/SeratoDatabaseParser.swift`. Writer must round-trip byte-compatibly; this is the single highest-risk piece in the whole roadmap since a bug corrupts a real user's library.
+- **`SeratoDatabaseParser` + new `SeratoDatabaseWriter`** — replaces the current stub in `Sources/EZLibraryCore/Parsers/SeratoDatabaseParser.swift`. Writer must round-trip byte-compatibly; this is the single highest-risk piece in the whole roadmap since a bug corrupts a real user's library.
 - **`SeratoCrateParser` + `SeratoCrateWriter` (new)** — reads/writes individual `.crate` files (track membership + `ovct` column-view metadata).
 - **`CrateHierarchy` (new)** — builds the parent/child tree from `Subcrates/` filenames split on `≫≫`.
 - **`Safety/` (new)** — `SeratoProcessGuard` (refuse/warn on writes while Serato.app is running), `SeratoBackupBeforeWrite` (timestamped shadow copy before any mutation — the precursor to the user-facing Backup feature, not a duplicate of it), `AtomicFileWriter` (temp-file-then-rename so a crash never truncates a live file).

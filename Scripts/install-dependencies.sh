@@ -18,7 +18,7 @@
 # output is logged.
 set -u
 
-LOG_FILE="${SERATOTOOLS_DEPS_LOG:-/tmp/seratotools-install-dependencies.log}"
+LOG_FILE="${EZLIBRARY_DEPS_LOG:-${SERATOTOOLS_DEPS_LOG:-/tmp/seratotools-install-dependencies.log}}"
 
 log() {
 	printf '%s %s\n' "$(date '+%Y-%m-%dT%H:%M:%S')" "$*" | tee -a "$LOG_FILE" >&2
