@@ -27,8 +27,6 @@ final class UpdateCheckViewModel: ObservableObject {
 
     @Published var installPhase: InstallPhase = .idle
 
-    /// How often the app checks automatically in the background.
-    static let automaticCheckInterval: TimeInterval = 7 * 24 * 60 * 60
     private static let lastAutomaticCheckDefaultsKey = "SeratoToolsLastAutomaticUpdateCheck"
 
     private let service: UpdateCheckService
@@ -66,14 +64,9 @@ final class UpdateCheckViewModel: ObservableObject {
         }
     }
 
-    /// Runs a silent weekly check. The sheet is only presented when a newer
-    /// version is available; "up to date" and failures stay quiet.
-    func runAutomaticCheckIfDue() async {
-        if let lastCheck = defaults.object(forKey: Self.lastAutomaticCheckDefaultsKey) as? Date,
-           Date().timeIntervalSince(lastCheck) < Self.automaticCheckInterval {
-            return
-        }
-
+    /// Runs a silent check on every launch. The sheet is only presented when a
+    /// newer version is available; "up to date" and failures stay quiet.
+    func runAutomaticCheck() async {
         do {
             let result = try await service.checkForUpdates()
             defaults.set(Date(), forKey: Self.lastAutomaticCheckDefaultsKey)

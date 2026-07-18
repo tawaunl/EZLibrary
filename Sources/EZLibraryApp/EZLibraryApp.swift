@@ -87,7 +87,7 @@ struct EZLibraryApp: App {
                     UpdateCheckView(viewModel: updateChecker)
                 }
                 .task {
-                    await updateChecker.runAutomaticCheckIfDue()
+                    await updateChecker.runAutomaticCheck()
                 }
                 .task {
                     // Verify on every launch that the Homebrew-managed tools
