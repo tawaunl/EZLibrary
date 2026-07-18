@@ -62,6 +62,7 @@ struct ContentView: View {
     @State private var audioActivationToken = 0
     @State private var filteredLibraryTracks: [Track] = []
     @AppStorage(Self.confirmDeleteActionsDefaultsKey) private var confirmDeleteActions = true
+    @AppStorage(SeratoFeatureFlags.mainMusicFolderDefaultsKey) private var centralMusicFolderPath = ""
 
     private var totalCratesCount: Int {
         libraryService.crates.count
@@ -69,6 +70,15 @@ struct ContentView: View {
 
     private var totalTracksInCratesCount: Int {
         libraryService.tracksInCratesCount
+    }
+
+    private var centralMusicFolderStartURL: URL {
+        let trimmed = centralMusicFolderPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            return URL(fileURLWithPath: trimmed, isDirectory: true)
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Music", isDirectory: true)
     }
 
     private var smartCratesCount: Int {
@@ -366,6 +376,22 @@ struct ContentView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 8)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    FinderFolderControls(
+                        label: "Central music folder",
+                        path: $centralMusicFolderPath,
+                        browsePrompt: "Use Folder",
+                        browseStartURL: centralMusicFolderStartURL,
+                        allowsNewFolderCreation: true,
+                        onPathChanged: {}
+                    )
+
+                    Text("The folder your library is consolidated into. New downloads and imported/purchased tracks are moved here automatically.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 8)
 
                 SectionHeaderCard(
                     title: "Tracks",

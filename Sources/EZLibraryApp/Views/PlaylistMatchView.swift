@@ -85,6 +85,17 @@ struct PlaylistMatchView: View {
     @State private var loadingPurchaseLinkPlanIDs: Set<UUID> = []
     @State private var purchaseLinksByEntryID: [UUID: [PurchaseLinkService.PurchaseLink]] = [:]
     @State private var loadingPurchaseLinkEntryIDs: Set<UUID> = []
+    @State private var importingPlanIDs: Set<UUID> = []
+    @StateObject private var downloadsWatcher = DownloadsFolderWatcher()
+    @State private var detectedDownloadMatches: [DownloadMatch] = []
+    @State private var downloadTagCache: [URL: AudioFileTagReader.Tags] = [:]
+    @AppStorage(SeratoFeatureFlags.mainMusicFolderDefaultsKey) private var centralMusicFolderPath = ""
+
+    struct DownloadMatch: Identifiable, Hashable {
+        let url: URL
+        let item: PlaylistMatchService.PlanItem
+        var id: URL { url }
+    }
 
     var body: some View {
         ScrollView {
@@ -97,15 +108,24 @@ struct PlaylistMatchView: View {
 
                 inputCard
                 summaryCard
+                detectedDownloadsCard
                 planCard
             }
             .padding(16)
         }
         .onAppear {
             restoreCachedStateIfNeeded()
+            downloadsWatcher.start()
         }
         .onDisappear {
             cacheCurrentState()
+            downloadsWatcher.stop()
+        }
+        .onChange(of: downloadsWatcher.detectedFiles) {
+            processDetectedDownloads()
+        }
+        .onChange(of: planItems) {
+            processDetectedDownloads()
         }
     }
 
@@ -477,12 +497,101 @@ struct PlaylistMatchView: View {
         .padding(16)
         .background(RoundedRectangle(cornerRadius: 12).fill(Color(nsColor: .controlBackgroundColor).opacity(0.55)))
     }
+    /// Re-evaluates detected downloads against the current Plan, using the
+    /// filename first and the file's ID3/metadata tags as a fallback. Reads run
+    /// off the main actor and results are cached per file.
+    private func processDetectedDownloads() {
+        let files = downloadsWatcher.detectedFiles
+        guard !files.isEmpty, !planItems.isEmpty else {
+            detectedDownloadMatches = []
+            return
+        }
+
+        let entries = planItems.map(\.entry)
+        let items = planItems
+
+        Task {
+            var matches: [DownloadMatch] = []
+            for url in files {
+                let tags: AudioFileTagReader.Tags
+                if let cached = downloadTagCache[url] {
+                    tags = cached
+                } else {
+                    tags = await AudioFileTagReader.readTags(from: url)
+                    downloadTagCache[url] = tags
+                }
+
+                if let entry = PlaylistMatchService.matchDownloadedTrack(
+                        filename: url.lastPathComponent,
+                        tagTitle: tags.title,
+                        tagArtist: tags.artist,
+                        entries: entries
+                   ),
+                   let item = items.first(where: { $0.entry.id == entry.id }) {
+                    matches.append(DownloadMatch(url: url, item: item))
+                }
+            }
+            detectedDownloadMatches = matches
+        }
+    }
+
+    @ViewBuilder
+    private var detectedDownloadsCard: some View {
+        if !detectedDownloadMatches.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                Label("New downloads detected", systemImage: "arrow.down.circle.fill")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(.green)
+
+                Text("These files just landed in your Downloads folder and match a Plan track. Import them into \(targetCrateName) (they'll be moved to your central music folder).")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+
+                ForEach(detectedDownloadMatches) { pair in
+                    HStack(spacing: 10) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(pair.url.lastPathComponent)
+                                .font(.callout.weight(.semibold))
+                                .lineLimit(1)
+                            Text("Matches: \(pair.item.entry.artist.isEmpty ? "Unknown Artist" : pair.item.entry.artist) - \(pair.item.entry.title)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+
+                        Spacer(minLength: 0)
+
+                        Button(importingPlanIDs.contains(pair.item.id) ? "Importing…" : "Import") {
+                            importPurchasedFileForPlan(pair.item, fileURL: pair.url)
+                            downloadsWatcher.dismiss(pair.url)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .disabled(importingPlanIDs.contains(pair.item.id))
+                        .help("Add \(pair.url.lastPathComponent) to \(targetCrateName) and clear this Plan gap.")
+
+                        Button("Dismiss") {
+                            downloadsWatcher.dismiss(pair.url)
+                        }
+                        .controlSize(.small)
+                    }
+                    .padding(10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(Color(nsColor: .windowBackgroundColor).opacity(0.62))
+                    )
+                }
+            }
+            .padding(16)
+            .background(RoundedRectangle(cornerRadius: 12).fill(Color.green.opacity(0.10)))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.green.opacity(0.35), lineWidth: 1))
+        }
+    }
 
     private var planCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Plan")
                 .font(.title3.weight(.semibold))
-
             if planItems.isEmpty {
                 Text("No gaps found. Your matched crate can be created as-is.")
                     .foregroundStyle(.secondary)
@@ -506,6 +615,28 @@ struct PlaylistMatchView: View {
                             isLoading: loadingPurchaseLinkPlanIDs.contains(item.id)
                         )
                         .onAppear { findPurchaseLinks(forPlan: item) }
+
+                        HStack(spacing: 8) {
+                            Button {
+                                importPurchasedFileForPlan(item)
+                            } label: {
+                                Label(
+                                    importingPlanIDs.contains(item.id) ? "Importing…" : "I Bought It — Import File…",
+                                    systemImage: "square.and.arrow.down"
+                                )
+                            }
+                            .controlSize(.small)
+                            .disabled(importingPlanIDs.contains(item.id))
+                            .help("Pick the audio file you just purchased to add it to \(targetCrateName).")
+
+                            Spacer(minLength: 0)
+                        }
+
+                        if let status = planStatusByID[item.id] {
+                            Text(status)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
 
                         DisclosureGroup("Can't buy it? Download from YouTube") {
                             youtubePlanControls(for: item)
@@ -713,12 +844,6 @@ struct PlaylistMatchView: View {
                     RoundedRectangle(cornerRadius: 8)
                         .fill(Color(nsColor: .windowBackgroundColor).opacity(0.5))
                 )
-            }
-
-            if let status = planStatusByID[item.id] {
-                Text(status)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
         }
     }
@@ -1099,6 +1224,107 @@ struct PlaylistMatchView: View {
         components.queryItems = [URLQueryItem(name: "search_query", value: query)]
         guard let searchURL = components.url else { return }
         NSWorkspace.shared.open(searchURL)
+    }
+
+    /// Imports a file the user purchased from a store into the target crate:
+    /// moves it into the central music folder (the consolidation destination),
+    /// registers it in the Serato database, appends it to the crate, then
+    /// re-matches to clear the gap.
+    private func importPurchasedFileForPlan(_ item: PlaylistMatchService.PlanItem, fileURL: URL? = nil) {
+        guard let selectedURL = fileURL ?? chooseAudioFileFromDownloads() else { return }
+
+        errorMessage = nil
+        successMessage = nil
+        importingPlanIDs.insert(item.id)
+        planStatusByID[item.id] = "Importing \(selectedURL.lastPathComponent)…"
+
+        let metadata = metadataForPurchasedFile(item.entry)
+        let destinationFolderURL = centralImportDestinationFolder
+
+        Task {
+            do {
+                let crate = try resolveOrCreateTargetCrate()
+                let rootDirectory = libraryService.rootDirectory
+                let databaseFileURL = libraryService.databaseFile
+
+                let importedURL = try await Task.detached(priority: .userInitiated) { () throws -> URL in
+                    let importResult = try AddMusicImportService.importAudioFiles(
+                        inputURLs: [selectedURL],
+                        destinationFolderURL: destinationFolderURL,
+                        transferMode: .move
+                    )
+                    guard let importedURL = importResult.importedFileURLs.first else {
+                        throw AddMusicImportService.ImportError.noSupportedAudioFiles
+                    }
+
+                    try writeDownloadedTrackToSeratoDatabase(
+                        fileURL: importedURL,
+                        rootDirectory: rootDirectory,
+                        databaseFileURL: databaseFileURL,
+                        metadata: metadata
+                    )
+
+                    _ = try AddMusicImportService.appendAudioFiles(
+                        [importedURL],
+                        toExistingCrate: crate,
+                        rootDirectory: rootDirectory
+                    )
+
+                    return importedURL
+                }.value
+
+                onLibraryChanged()
+                await refreshMatchAfterRip(removing: item)
+                try? alignTargetCrateToCurrentSelectionOrder()
+                planStatusByID[item.id] = "Imported \(importedURL.lastPathComponent) into \(targetCrateName)."
+                successMessage = "Imported \(importedURL.lastPathComponent) into \(targetCrateName). Matched: \(matchedEntries.count), Plan: \(planItems.count)."
+            } catch {
+                errorMessage = error.localizedDescription
+                planStatusByID[item.id] = "Import failed: \(error.localizedDescription)"
+            }
+
+            importingPlanIDs.remove(item.id)
+        }
+    }
+
+    private func metadataForPurchasedFile(_ entry: PlaylistMatchService.PlaylistEntry) -> SeratoTrackMetadataUpdate {
+        SeratoTrackMetadataUpdate(
+            title: entry.title,
+            artist: entry.artist,
+            album: "",
+            genre: "",
+            comment: "",
+            key: "",
+            bpm: nil,
+            year: nil
+        )
+    }
+
+    /// Where imported/downloaded files land: the central music folder set on the
+    /// home page (same setting the library was consolidated into). Falls back to
+    /// the library's Music folder when that hasn't been configured yet.
+    private var centralImportDestinationFolder: URL {
+        let trimmed = centralMusicFolderPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            return URL(fileURLWithPath: trimmed, isDirectory: true)
+        }
+        return preferredRipDestinationFolder()
+    }
+
+    private func chooseAudioFileFromDownloads() -> URL? {
+        let panel = NSOpenPanel()
+        panel.title = "Choose the file you purchased"
+        panel.prompt = "Import"
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.directoryURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+
+        let audioTypes = AddMusicImportService.supportedAudioExtensions
+            .compactMap { UTType(filenameExtension: $0) }
+        panel.allowedContentTypes = audioTypes.isEmpty ? [UTType.audio] : audioTypes + [UTType.audio]
+
+        return panel.runModal() == .OK ? panel.url : nil
     }
 
     private func findPurchaseLinks(forPlan item: PlaylistMatchService.PlanItem) {

@@ -49,6 +49,67 @@ import Testing
     #expect(result.planItems.first?.entry.title == "Turn Off The Lights")
 }
 
+@Test func matchDownloadedFileLinksToPlanEntry() {
+    let entries: [PlaylistMatchService.PlaylistEntry] = [
+        .init(title: "Feel So Close", artist: "Calvin Harris", sourceLine: ""),
+        .init(title: "Headlines", artist: "Drake", sourceLine: "")
+    ]
+
+    #expect(
+        PlaylistMatchService.matchDownloadedFile(
+            filename: "Calvin Harris - Feel So Close (Radio Edit).mp3",
+            entries: entries
+        )?.title == "Feel So Close"
+    )
+    #expect(
+        PlaylistMatchService.matchDownloadedFile(
+            filename: "01 Headlines - Drake.m4a",
+            entries: entries
+        )?.title == "Headlines"
+    )
+    #expect(
+        PlaylistMatchService.matchDownloadedFile(
+            filename: "Some Unrelated Track.mp3",
+            entries: entries
+        ) == nil
+    )
+}
+
+@Test func matchDownloadedTrackFallsBackToID3Tags() {
+    let entries: [PlaylistMatchService.PlaylistEntry] = [
+        .init(title: "Feel So Close", artist: "Calvin Harris", sourceLine: ""),
+        .init(title: "Headlines", artist: "Drake", sourceLine: "")
+    ]
+
+    // Filename is useless; ID3 tags resolve the match.
+    #expect(
+        PlaylistMatchService.matchDownloadedTrack(
+            filename: "track_01.mp3",
+            tagTitle: "Feel So Close (Radio Edit)",
+            tagArtist: "Calvin Harris",
+            entries: entries
+        )?.title == "Feel So Close"
+    )
+    // Neither filename nor tags match anything.
+    #expect(
+        PlaylistMatchService.matchDownloadedTrack(
+            filename: "track_02.mp3",
+            tagTitle: "Totally Different Song",
+            tagArtist: "Nobody",
+            entries: entries
+        ) == nil
+    )
+    // Filename still wins when it's conclusive even without tags.
+    #expect(
+        PlaylistMatchService.matchDownloadedTrack(
+            filename: "Drake - Headlines.m4a",
+            tagTitle: nil,
+            tagArtist: nil,
+            entries: entries
+        )?.title == "Headlines"
+    )
+}
+
 @Test func playlistMatchReturnsAllLibraryVersionsForMatchedSong() {
     let libraryTracks: [Track] = [
         Track(

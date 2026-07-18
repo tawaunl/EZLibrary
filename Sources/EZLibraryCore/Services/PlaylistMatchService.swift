@@ -400,6 +400,82 @@ public enum PlaylistMatchService {
         try AtomicFileWriter.write(data, to: fileURL)
     }
 
+    /// Best-effort match of a downloaded audio file (by filename) to one of the
+    /// plan entries, so a purchased/downloaded track can be routed to the right
+    /// gap. Matches when the normalized filename contains the entry's
+    /// normalized title and (when present) artist; the most specific match
+    /// wins. Returns `nil` when nothing is confident enough.
+    public static func matchDownloadedFile(filename: String, entries: [PlaylistEntry]) -> PlaylistEntry? {
+        let haystack = normalizedFileStem(filename)
+        guard !haystack.isEmpty else { return nil }
+
+        var best: (entry: PlaylistEntry, score: Int)?
+        for entry in entries {
+            let title = normalizedTitle(entry.title)
+            guard !title.isEmpty, haystack.contains(title) else { continue }
+
+            let artist = normalizedArtist(entry.artist)
+            let artistMatched = !artist.isEmpty && haystack.contains(artist)
+            if !artist.isEmpty && !artistMatched {
+                continue
+            }
+
+            let score = title.count + (artistMatched ? artist.count : 0)
+            if best == nil || score > best!.score {
+                best = (entry, score)
+            }
+        }
+
+        return best?.entry
+    }
+
+    /// Filename → normalized comparison key: drops the extension and applies the
+    /// same normalization used for titles/artists.
+    static func normalizedFileStem(_ filename: String) -> String {
+        let stem = (filename as NSString).deletingPathExtension
+        return normalized(stem)
+    }
+
+    /// Match a downloaded file to a plan entry using the filename first, then
+    /// falling back to the file's ID3/metadata title + artist when the filename
+    /// alone isn't conclusive (e.g. "track01.mp3").
+    public static func matchDownloadedTrack(
+        filename: String,
+        tagTitle: String?,
+        tagArtist: String?,
+        entries: [PlaylistEntry]
+    ) -> PlaylistEntry? {
+        if let byFilename = matchDownloadedFile(filename: filename, entries: entries) {
+            return byFilename
+        }
+
+        let title = normalizedTitle(tagTitle ?? "")
+        guard !title.isEmpty else { return nil }
+        let artist = normalizedArtist(tagArtist ?? "")
+
+        var best: (entry: PlaylistEntry, score: Int)?
+        for entry in entries {
+            let entryTitle = normalizedTitle(entry.title)
+            guard !entryTitle.isEmpty else { continue }
+            let titleMatched = entryTitle == title || entryTitle.contains(title) || title.contains(entryTitle)
+            guard titleMatched else { continue }
+
+            let entryArtist = normalizedArtist(entry.artist)
+            let artistMatched = !entryArtist.isEmpty && !artist.isEmpty
+                && (entryArtist.contains(artist) || artist.contains(entryArtist))
+            if !entryArtist.isEmpty && !artist.isEmpty && !artistMatched {
+                continue
+            }
+
+            let score = title.count + (artistMatched ? artist.count : 0)
+            if best == nil || score > best!.score {
+                best = (entry, score)
+            }
+        }
+
+        return best?.entry
+    }
+
     public static func loadPlan(from fileURL: URL) throws -> [PlanItem] {
         let data: Data
         do {
