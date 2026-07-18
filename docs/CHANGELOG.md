@@ -4,6 +4,17 @@ Notable changes per release. The version headings match the packaged build
 version (`CFBundleShortVersionString.CFBundleVersion`) and are used verbatim by
 `Scripts/release.sh` to populate the GitHub release notes.
 
+## 0.1.0.6
+
+### Renamed to EZLibrary
+- The app is now called **EZLibrary**. Your existing settings, saved library
+  location, API keys, and Finder Quick Actions keep working unchanged.
+- Added a clear notice that EZLibrary is an independent tool and is **not
+  affiliated with or endorsed by Serato**.
+- Configuration environment variables were renamed from `SERATOTOOLS_*` to
+  `EZLIBRARY_*`. The old names are still honored as a fallback, so existing
+  Finder Quick Actions continue to work without reinstalling.
+
 ## 0.1.0.5
 
 ### Dependencies now managed by Homebrew
