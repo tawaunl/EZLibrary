@@ -87,6 +87,8 @@ struct PlaylistMatchView: View {
     @State private var loadingPurchaseLinkEntryIDs: Set<UUID> = []
     @State private var importingPlanIDs: Set<UUID> = []
     @State private var importingEntryIDs: Set<UUID> = []
+    @State private var expandedDownloadPlanIDs: Set<UUID> = []
+    @State private var expandedDownloadEntryIDs: Set<UUID> = []
     @StateObject private var downloadsWatcher = DownloadsFolderWatcher()
     @State private var detectedDownloadMatches: [DownloadMatch] = []
     @State private var downloadTagCache: [URL: AudioFileTagReader.Tags] = [:]
@@ -371,12 +373,20 @@ struct PlaylistMatchView: View {
                             }
 
                             if !includedMatchedEntryIDs.contains(item.entry.id) {
-                                DisclosureGroup("Can't buy it? Download from YouTube") {
+                                DisclosureGroupRow(
+                                    title: "Can't Download it?",
+                                    isExpanded: expandedDownloadEntryIDs.contains(item.entry.id),
+                                    toggle: {
+                                        if expandedDownloadEntryIDs.contains(item.entry.id) {
+                                            expandedDownloadEntryIDs.remove(item.entry.id)
+                                        } else {
+                                            expandedDownloadEntryIDs.insert(item.entry.id)
+                                        }
+                                    }
+                                ) {
                                     youtubeMatchedControls(for: item.entry)
                                         .padding(.top, 6)
                                 }
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
                             }
 
                             VStack(alignment: .leading, spacing: 2) {
@@ -559,12 +569,20 @@ struct PlaylistMatchView: View {
                                 .foregroundStyle(.secondary)
                         }
 
-                        DisclosureGroup("Can't buy it? Download from YouTube") {
+                        DisclosureGroupRow(
+                            title: "Can't Download it?",
+                            isExpanded: expandedDownloadPlanIDs.contains(item.id),
+                            toggle: {
+                                if expandedDownloadPlanIDs.contains(item.id) {
+                                    expandedDownloadPlanIDs.remove(item.id)
+                                } else {
+                                    expandedDownloadPlanIDs.insert(item.id)
+                                }
+                            }
+                        ) {
                             youtubePlanControls(for: item)
                                 .padding(.top, 6)
                         }
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
                     }
                     .padding(10)
                     .background(
@@ -671,7 +689,7 @@ struct PlaylistMatchView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 TextField(
-                    "Paste YouTube URL",
+                    "Paste URL",
                     text: Binding(
                         get: { youtubeURLByPlanID[item.id] ?? "" },
                         set: { youtubeURLByPlanID[item.id] = $0 }
@@ -683,18 +701,18 @@ struct PlaylistMatchView: View {
                     searchYouTubeSuggestions(for: item)
                 }
                 .disabled(searchingPlanIDs.contains(item.id))
-                .help("Search YouTube inside the app and list matching results below.")
+                .help("Search inside the app and list matching results below.")
 
-                Button("Search YouTube") {
-                    openYouTubeSearch(for: item.entry)
+                Button("Search URL") {
+                    openDownloadSearch(for: item.entry)
                 }
-                .help("Open a YouTube search for this track in your browser.")
+                .help("Open a search for this track on YouTube and SoundCloud in your browser.")
 
-                Button(rippingPlanIDs.contains(item.id) ? "Ripping..." : "Rip + Add") {
+                Button(rippingPlanIDs.contains(item.id) ? "Downloading..." : "Download + Add") {
                     ripPlanItemFromYouTube(item)
                 }
                 .disabled(rippingPlanIDs.contains(item.id))
-                .help("Download the audio from the pasted YouTube URL and add it to your library.")
+                .help("Download the audio from the pasted URL and add it to your library.")
             }
 
             if let suggestions = youtubeSuggestionsByPlanID[item.id], !suggestions.isEmpty {
@@ -725,7 +743,7 @@ struct PlaylistMatchView: View {
                                 .controlSize(.small)
                                 .help("Use this suggestion's URL in the field above.")
 
-                                Button(rippingPlanIDs.contains(item.id) ? "Ripping..." : "Use + Rip") {
+                                Button(rippingPlanIDs.contains(item.id) ? "Downloading..." : "Use + Download") {
                                     ripPlanItemFromYouTube(item, preferredURL: suggestion.webpageURL)
                                 }
                                 .buttonStyle(.borderedProminent)
@@ -774,7 +792,7 @@ struct PlaylistMatchView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 TextField(
-                    "Paste YouTube URL",
+                    "Paste URL",
                     text: Binding(
                         get: { matchedYoutubeURLByEntryID[entry.id] ?? "" },
                         set: { matchedYoutubeURLByEntryID[entry.id] = $0 }
@@ -786,18 +804,18 @@ struct PlaylistMatchView: View {
                     searchYouTubeSuggestions(for: entry)
                 }
                 .disabled(matchedSearchingEntryIDs.contains(entry.id))
-                .help("Search YouTube inside the app and list matching results below.")
+                .help("Search inside the app and list matching results below.")
 
-                Button("Search YouTube") {
-                    openYouTubeSearch(for: entry)
+                Button("Search URL") {
+                    openDownloadSearch(for: entry)
                 }
-                .help("Open a YouTube search for this track in your browser.")
+                .help("Open a search for this track on YouTube and SoundCloud in your browser.")
 
-                Button(matchedRippingEntryIDs.contains(entry.id) ? "Ripping..." : "Rip + Add") {
+                Button(matchedRippingEntryIDs.contains(entry.id) ? "Downloading..." : "Download + Add") {
                     ripMatchedEntryFromYouTube(entry)
                 }
                 .disabled(matchedRippingEntryIDs.contains(entry.id))
-                .help("Download the audio from the pasted YouTube URL and add it to your library.")
+                .help("Download the audio from the pasted URL and add it to your library.")
             }
 
             if let suggestions = matchedSuggestionsByEntryID[entry.id], !suggestions.isEmpty {
@@ -828,7 +846,7 @@ struct PlaylistMatchView: View {
                                 .controlSize(.small)
                                 .help("Use this suggestion's URL in the field above.")
 
-                                Button(matchedRippingEntryIDs.contains(entry.id) ? "Ripping..." : "Use + Rip") {
+                                Button(matchedRippingEntryIDs.contains(entry.id) ? "Downloading..." : "Use + Download") {
                                     ripMatchedEntryFromYouTube(entry, preferredURL: suggestion.webpageURL)
                                 }
                                 .buttonStyle(.borderedProminent)
@@ -1237,17 +1255,50 @@ struct PlaylistMatchView: View {
         }
     }
 
-    private func openYouTubeSearch(for entry: PlaylistMatchService.PlaylistEntry) {
+    /// Accepts a pasted YouTube or SoundCloud URL (yt-dlp downloads from both).
+    private func parseDownloadableURL(from raw: String) -> URL? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        let withScheme = (trimmed.lowercased().hasPrefix("http://") || trimmed.lowercased().hasPrefix("https://"))
+            ? trimmed
+            : "https://\(trimmed)"
+
+        guard
+            let url = URL(string: withScheme),
+            let scheme = url.scheme?.lowercased(),
+            ["http", "https"].contains(scheme),
+            let host = url.host?.lowercased(),
+            host.contains("youtube.com") || host.contains("youtu.be") || host.contains("soundcloud.com")
+        else {
+            return nil
+        }
+
+        return url
+    }
+
+    private func openDownloadSearch(for entry: PlaylistMatchService.PlaylistEntry) {
         let query = [entry.artist, entry.title]
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .joined(separator: " ")
 
         guard !query.isEmpty else { return }
-        guard var components = URLComponents(string: "https://www.youtube.com/results") else { return }
-        components.queryItems = [URLQueryItem(name: "search_query", value: query)]
-        guard let searchURL = components.url else { return }
-        NSWorkspace.shared.open(searchURL)
+
+        // Search both YouTube and SoundCloud — yt-dlp can download from either.
+        if var youtube = URLComponents(string: "https://www.youtube.com/results") {
+            youtube.queryItems = [URLQueryItem(name: "search_query", value: query)]
+            if let url = youtube.url {
+                NSWorkspace.shared.open(url)
+            }
+        }
+
+        if var soundcloud = URLComponents(string: "https://soundcloud.com/search") {
+            soundcloud.queryItems = [URLQueryItem(name: "q", value: query)]
+            if let url = soundcloud.url {
+                NSWorkspace.shared.open(url)
+            }
+        }
     }
 
     /// Imports a file the user purchased from a store into the target crate:
@@ -1522,7 +1573,7 @@ struct PlaylistMatchView: View {
             youtubeURLByPlanID[item.id] = preferredURL.absoluteString
         } else {
             let rawURL = youtubeURLByPlanID[item.id]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            selectedURL = YouTubeBatchLinkImportService.parseVideoURLs(from: rawURL).first
+            selectedURL = parseDownloadableURL(from: rawURL)
         }
 
         guard let videoURL = selectedURL else {
@@ -1605,7 +1656,7 @@ struct PlaylistMatchView: View {
             matchedYoutubeURLByEntryID[entry.id] = preferredURL.absoluteString
         } else {
             let rawURL = matchedYoutubeURLByEntryID[entry.id]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            selectedURL = YouTubeBatchLinkImportService.parseVideoURLs(from: rawURL).first
+            selectedURL = parseDownloadableURL(from: rawURL)
         }
 
         guard let videoURL = selectedURL else {
@@ -2022,6 +2073,39 @@ private extension PlaylistMatchView {
     }
 }
 
+/// Fully-clickable disclosure row: the whole title (not just the chevron)
+/// toggles the section open/closed.
+private struct DisclosureGroupRow<Content: View>: View {
+    let title: String
+    let isExpanded: Bool
+    let toggle: () -> Void
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Button(action: toggle) {
+                HStack(spacing: 6) {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .frame(width: 12)
+                    Text(title)
+                        .font(.callout.weight(.semibold))
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+                .padding(.vertical, 4)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+
+            if isExpanded {
+                content()
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 private struct CachedState {
     let rawInput: String
     let crateName: String
@@ -2089,22 +2173,22 @@ private enum PlaylistMatchRipError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .dependenciesMissing:
-            return "yt-dlp and ffmpeg are required before ripping from YouTube."
+            return "yt-dlp and ffmpeg are required before downloading audio."
         case .invalidYouTubeURL:
-            return "Paste a valid YouTube URL for this Plan item first."
+            return "Paste a valid YouTube or SoundCloud URL for this Plan item first."
         case .targetCrateMissing:
-            return "Create your PlaylistMatch crate from matched tracks before adding ripped Plan items."
+            return "Create your PlaylistMatch crate from matched tracks before adding downloaded Plan items."
         }
     }
 
     var recoverySuggestion: String? {
         switch self {
         case .dependenciesMissing:
-            return "Install yt-dlp and ffmpeg, then try Rip + Add again."
+            return "Install yt-dlp and ffmpeg, then try Download + Add again."
         case .invalidYouTubeURL:
-            return "Use a full youtube.com or youtu.be link."
+            return "Use a full youtube.com, youtu.be, or soundcloud.com link."
         case .targetCrateMissing:
-            return "Click Create Crate From Matches, then retry the Plan item rip."
+            return "Click Create Crate From Matches, then retry the Plan item download."
         }
     }
 }
