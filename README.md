@@ -4,6 +4,8 @@
   <img src="docs/files/seratotools_icon_glow_gold.png" alt="SeratoTools app icon" width="160" height="160">
 </p>
 
+> SeratoTools is an independent, community-built utility. It isn't affiliated with, endorsed by, or sponsored by Serato Audio Research or any other music platform referenced in this project. "Serato" is a trademark of its respective owner. This tool reads and writes Serato's library file format for interoperability purposes only.
+
 SeratoTools is a native macOS toolkit for DJs who want a cleaner, safer, and more reliable Serato library.
 
 From broken file paths to crate organization to bulk metadata cleanup, SeratoTools helps you spend less time fixing your library and more time playing music.

@@ -265,9 +265,12 @@ struct UpdateCheckView: View {
             Divider()
 
             HStack {
-                Text("Installed version \(viewModel.currentVersion)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Installed version \(viewModel.currentVersion)")
+                    Text("Not affiliated with Serato Audio Research.")
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
                 Spacer()
                 Button("Close") { dismiss() }
                     .keyboardShortcut(.cancelAction)
