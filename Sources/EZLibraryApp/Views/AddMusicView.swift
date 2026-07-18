@@ -627,7 +627,7 @@ struct AddMusicView: View {
     }
 }
 
-private struct FastHoverHelp: View {
+struct FastHoverHelp: View {
     let text: String
 
     @State private var isHovering = false

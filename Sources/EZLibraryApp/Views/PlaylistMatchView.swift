@@ -217,9 +217,20 @@ struct PlaylistMatchView: View {
             }
 
             if let warningMessage {
-                Text(warningMessage)
-                    .font(.callout)
-                    .foregroundStyle(.orange)
+                HStack(alignment: .top, spacing: 6) {
+                    Text(warningMessage)
+                        .font(.callout)
+                        .foregroundStyle(.orange)
+
+                    Image(systemName: "questionmark.circle")
+                        .foregroundStyle(.secondary)
+                        .overlay(alignment: .topTrailing) {
+                            FastHoverHelp(
+                                text: "In Spotify: open the mix → … → Add to Playlist → New Playlist, then paste the new playlist's link here."
+                            )
+                            .offset(x: 2, y: -2)
+                        }
+                }
             }
 
             if let errorMessage {
