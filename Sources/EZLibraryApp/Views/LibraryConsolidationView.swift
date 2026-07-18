@@ -49,7 +49,11 @@ struct LibraryConsolidationView: View {
         .onChange(of: libraryService.tracks.count) {
             schedulePreviewRefresh()
         }
+        .onChange(of: transferMode) {
+            clearStatusMessages()
+        }
         .onChange(of: destinationPath) {
+            clearStatusMessages()
             refreshDestinationCapacity()
         }
         .onDisappear {
@@ -197,6 +201,7 @@ struct LibraryConsolidationView: View {
                 browseStartURL: currentDestinationURL,
                 allowsNewFolderCreation: true,
                 onPathChanged: {
+                    clearStatusMessages()
                     refreshDestinationCapacity()
                     schedulePreviewRefresh()
                 }
@@ -400,6 +405,7 @@ struct LibraryConsolidationView: View {
         guard !path.isEmpty else { return }
 
         let url = URL(fileURLWithPath: path)
+        clearStatusMessages()
         libraryService.setLibraryDirectory(url)
         UserDefaults.standard.set(path, forKey: SeratoLibraryLocator.libraryDirectoryDefaultsKey)
         onLibraryChanged()
@@ -468,6 +474,11 @@ struct LibraryConsolidationView: View {
         return String(format: "%.2f GB", gigabytes)
     }
 
+    private func clearStatusMessages() {
+        successMessage = nil
+        errorMessage = nil
+    }
+
     private func refreshPreview() {
         schedulePreviewRefresh()
     }
@@ -478,9 +489,13 @@ struct LibraryConsolidationView: View {
         let tracksSnapshot = libraryService.tracks
         let destinationSnapshot = currentDestinationURL
 
+        // NOTE: do NOT clear `successMessage` here. This runs as part of the
+        // post-run refresh (directly and via the tracks-count observer after
+        // `onLibraryChanged()`), so clearing it would immediately wipe the
+        // success banner set by `runConsolidation()`. Stale banners are instead
+        // cleared via `clearStatusMessages()` on genuine user input changes.
         isRefreshingPreview = true
         errorMessage = nil
-        successMessage = nil
 
         previewRefreshTask = Task {
             let computedPreview = await Task.detached(priority: .userInitiated) {
@@ -511,6 +526,7 @@ struct LibraryConsolidationView: View {
     }
 
     private func toggleSourceSelection(_ sourceGroupID: String) {
+        clearStatusMessages()
         if selectedSourceGroupIDs.contains(sourceGroupID) {
             selectedSourceGroupIDs.remove(sourceGroupID)
         } else {
@@ -531,6 +547,7 @@ struct LibraryConsolidationView: View {
     }
 
     private func toggleSelectAllSources() {
+        clearStatusMessages()
         guard let preview else {
             selectedSourceGroupIDs = []
             updateActivePreview()
