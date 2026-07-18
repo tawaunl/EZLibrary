@@ -292,21 +292,14 @@ struct PlaylistMatchView: View {
                 .disabled(matchedEntries.isEmpty)
                 .help("Exclude all matched tracks from the crate.")
 
-                Toggle("Show Unchecked Only", isOn: $showOnlyUncheckedMatches)
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                    .disabled(matchedEntries.isEmpty)
-
                 Spacer(minLength: 0)
             }
 
             if !matchedEntries.isEmpty {
-                let visibleEntries = showOnlyUncheckedMatches
-                    ? matchedEntries.filter { !includedMatchedEntryIDs.contains($0.entry.id) }
-                    : matchedEntries
+                let visibleEntries = matchedEntries.filter { includedMatchedEntryIDs.contains($0.entry.id) }
 
                 if visibleEntries.isEmpty {
-                    Text("All matched songs are currently included.")
+                    Text("No matched songs are included. Unchecked matches move to the Plan below — re-include them there anytime.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .padding(.top, 4)
@@ -387,23 +380,6 @@ struct PlaylistMatchView: View {
                                     Text(status)
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
-                                }
-                            }
-
-                            if !includedMatchedEntryIDs.contains(item.entry.id) {
-                                DisclosureGroupRow(
-                                    title: "Can't Download it?",
-                                    isExpanded: expandedDownloadEntryIDs.contains(item.entry.id),
-                                    toggle: {
-                                        if expandedDownloadEntryIDs.contains(item.entry.id) {
-                                            expandedDownloadEntryIDs.remove(item.entry.id)
-                                        } else {
-                                            expandedDownloadEntryIDs.insert(item.entry.id)
-                                        }
-                                    }
-                                ) {
-                                    youtubeMatchedControls(for: item.entry)
-                                        .padding(.top, 6)
                                 }
                             }
 
@@ -538,22 +514,34 @@ struct PlaylistMatchView: View {
     }
 
     private var planCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        let excludedMatches = matchedEntries.filter { !includedMatchedEntryIDs.contains($0.entry.id) }
+        return VStack(alignment: .leading, spacing: 10) {
             Text("Plan")
                 .font(.title3.weight(.semibold))
-            if planItems.isEmpty {
+            if planItems.isEmpty && excludedMatches.isEmpty {
                 Text("No gaps found. Your matched crate can be created as-is.")
                     .foregroundStyle(.secondary)
             } else {
-                Text("Tracks PlaylistMatch couldn't find in your library:")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                if !excludedMatches.isEmpty {
+                    Text("Excluded matches — you have these in your library but left them out. Re-include to add them back to Matched.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
 
-                Text("Buy the track first — we check iTunes and Beatport and only show a store when it actually has the song. Fall back to a YouTube rip only if you can't purchase it.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    ForEach(excludedMatches) { item in
+                        excludedMatchRow(for: item)
+                    }
+                }
 
-                ForEach(planItems) { item in
+                if !planItems.isEmpty {
+                    Text("Tracks PlaylistMatch couldn't find in your library:")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+
+                    Text("Buy the track first — we check iTunes and Beatport and only show a store when it actually has the song. Fall back to a YouTube rip only if you can't purchase it.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+
+                    ForEach(planItems) { item in
                     let artist = item.entry.artist.isEmpty ? "Unknown Artist" : item.entry.artist
                     VStack(alignment: .leading, spacing: 8) {
                         Text("• \(artist) - \(item.entry.title)")
@@ -613,10 +601,103 @@ struct PlaylistMatchView: View {
                     )
                     .padding(.vertical, 4)
                 }
+                }
             }
         }
         .padding(16)
         .background(RoundedRectangle(cornerRadius: 12).fill(Color(nsColor: .controlBackgroundColor).opacity(0.55)))
+    }
+
+    /// A matched song the user unchecked: it lives in the Plan so they can act
+    /// on it, but the match stays persistent — "Add back to Matched" re-includes
+    /// it (and its selected version) in the crate.
+    @ViewBuilder
+    private func excludedMatchRow(for item: PlaylistMatchService.MatchedEntry) -> some View {
+        let artist = item.entry.artist.isEmpty ? "Unknown Artist" : item.entry.artist
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("• \(artist) - \(item.entry.title)")
+                        .font(.callout.weight(.semibold))
+                        .lineLimit(1)
+                    Text("In your library: \(item.primaryTrack.title.isEmpty ? item.primaryTrack.fileURL.lastPathComponent : item.primaryTrack.title)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 0)
+
+                Button {
+                    includedMatchedEntryIDs.insert(item.entry.id)
+                    matchedTracks = selectedMatchedTracks(from: matchedEntries)
+                } label: {
+                    Label("Add back to Matched", systemImage: "checkmark.circle")
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .help("Re-include this match so it's added to the crate again.")
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Other versions to buy:")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                purchaseLinksSection(
+                    links: purchaseLinksByEntryID[item.entry.id],
+                    isLoading: loadingPurchaseLinkEntryIDs.contains(item.entry.id)
+                )
+                .onAppear { findPurchaseLinks(forEntry: item.entry) }
+
+                HStack(spacing: 8) {
+                    Button {
+                        importPurchasedFileForMatched(item.entry)
+                    } label: {
+                        Label(
+                            importingEntryIDs.contains(item.entry.id) ? "Importing…" : "I Bought It — Import File…",
+                            systemImage: "square.and.arrow.down"
+                        )
+                    }
+                    .controlSize(.small)
+                    .disabled(importingEntryIDs.contains(item.entry.id))
+                    .help("Pick a version you bought to add it to \(targetCrateName).")
+
+                    Spacer(minLength: 0)
+                }
+
+                if let status = matchedStatusByEntryID[item.entry.id] {
+                    Text(status)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            DisclosureGroupRow(
+                title: "Can't Download it?",
+                isExpanded: expandedDownloadEntryIDs.contains(item.entry.id),
+                toggle: {
+                    if expandedDownloadEntryIDs.contains(item.entry.id) {
+                        expandedDownloadEntryIDs.remove(item.entry.id)
+                    } else {
+                        expandedDownloadEntryIDs.insert(item.entry.id)
+                    }
+                }
+            ) {
+                youtubeMatchedControls(for: item.entry)
+                    .padding(.top, 6)
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color(nsColor: .windowBackgroundColor).opacity(0.62))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color.orange.opacity(0.3), lineWidth: 1)
+        )
+        .padding(.vertical, 4)
     }
 
     @ViewBuilder
@@ -745,12 +826,35 @@ struct PlaylistMatchView: View {
                         let isHovered = hoveredSuggestionKey == suggestionRowKey(planID: item.id, suggestionID: suggestion.id)
                         HStack(alignment: .top, spacing: 8) {
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(suggestion.title)
-                                    .font(.caption)
-                                    .lineLimit(1)
-                                Text(suggestion.channel)
-                                    .font(.caption2)
+                                HStack(spacing: 4) {
+                                    Text(suggestion.title)
+                                        .font(.caption)
+                                        .lineLimit(1)
+
+                                    Button {
+                                        NSWorkspace.shared.open(suggestion.webpageURL)
+                                    } label: {
+                                        Image(systemName: "arrow.up.right.square")
+                                            .font(.caption2)
+                                    }
+                                    .buttonStyle(.plain)
                                     .foregroundStyle(.secondary)
+                                    .help("Open this result in your browser to check the exact link.")
+                                }
+
+                                HStack(spacing: 6) {
+                                    Text(suggestionSourceName(suggestion.webpageURL))
+                                        .font(.caption2.weight(.semibold))
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 1)
+                                        .background(Capsule().fill(suggestionSourceColor(suggestion.webpageURL).opacity(0.18)))
+                                        .foregroundStyle(suggestionSourceColor(suggestion.webpageURL))
+
+                                    Text(suggestion.channel)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
                             }
 
                             Spacer(minLength: 0)
@@ -853,12 +957,35 @@ struct PlaylistMatchView: View {
                         let isHovered = hoveredMatchedSuggestionKey == matchedSuggestionRowKey(entryID: entry.id, suggestionID: suggestion.id)
                         HStack(alignment: .top, spacing: 8) {
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(suggestion.title)
-                                    .font(.caption)
-                                    .lineLimit(1)
-                                Text(suggestion.channel)
-                                    .font(.caption2)
+                                HStack(spacing: 4) {
+                                    Text(suggestion.title)
+                                        .font(.caption)
+                                        .lineLimit(1)
+
+                                    Button {
+                                        NSWorkspace.shared.open(suggestion.webpageURL)
+                                    } label: {
+                                        Image(systemName: "arrow.up.right.square")
+                                            .font(.caption2)
+                                    }
+                                    .buttonStyle(.plain)
                                     .foregroundStyle(.secondary)
+                                    .help("Open this result in your browser to check the exact link.")
+                                }
+
+                                HStack(spacing: 6) {
+                                    Text(suggestionSourceName(suggestion.webpageURL))
+                                        .font(.caption2.weight(.semibold))
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 1)
+                                        .background(Capsule().fill(suggestionSourceColor(suggestion.webpageURL).opacity(0.18)))
+                                        .foregroundStyle(suggestionSourceColor(suggestion.webpageURL))
+
+                                    Text(suggestion.channel)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
                             }
 
                             Spacer(minLength: 0)
@@ -980,6 +1107,17 @@ struct PlaylistMatchView: View {
 
     private func matchedSuggestionRowKey(entryID: UUID, suggestionID: String) -> String {
         "\(entryID.uuidString)|\(suggestionID)"
+    }
+
+    private func suggestionSourceName(_ url: URL) -> String {
+        let host = url.host?.lowercased() ?? ""
+        if host.contains("soundcloud") { return "SoundCloud" }
+        if host.contains("youtube") || host.contains("youtu.be") { return "YouTube" }
+        return "Web"
+    }
+
+    private func suggestionSourceColor(_ url: URL) -> Color {
+        (url.host?.lowercased().contains("soundcloud") ?? false) ? .orange : .red
     }
 
     private func confidenceColor(_ confidence: PlaylistMatchService.MatchConfidence) -> Color {
