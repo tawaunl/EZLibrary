@@ -130,6 +130,7 @@ public enum PurchaseLinkService {
         var components = URLComponents(string: "https://itunes.apple.com/search")
         components?.queryItems = [
             URLQueryItem(name: "term", value: term),
+            URLQueryItem(name: "country", value: "US"),
             URLQueryItem(name: "entity", value: "song"),
             URLQueryItem(name: "media", value: "music"),
             URLQueryItem(name: "limit", value: "50")

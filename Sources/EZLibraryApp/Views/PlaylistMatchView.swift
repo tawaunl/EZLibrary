@@ -348,120 +348,12 @@ struct PlaylistMatchView: View {
                             }
 
                             if !includedMatchedEntryIDs.contains(item.entry.id) {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    Text("Unchecked match: buy a version above, or link a YouTube source if you want to add a new rip instead.")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-
-                                    HStack(spacing: 8) {
-                                        TextField(
-                                            "Paste YouTube URL",
-                                            text: Binding(
-                                                get: { matchedYoutubeURLByEntryID[item.entry.id] ?? "" },
-                                                set: { matchedYoutubeURLByEntryID[item.entry.id] = $0 }
-                                            )
-                                        )
-                                        .textFieldStyle(.roundedBorder)
-
-                                        Button(matchedSearchingEntryIDs.contains(item.entry.id) ? "Finding..." : "Find In-App") {
-                                            searchYouTubeSuggestions(for: item.entry)
-                                        }
-                                        .disabled(matchedSearchingEntryIDs.contains(item.entry.id))
-                                        .help("Search YouTube inside the app and list matching results below.")
-
-                                        Button("Search YouTube") {
-                                            openYouTubeSearch(for: item.entry)
-                                        }
-                                        .help("Open a YouTube search for this track in your browser.")
-
-                                        Button(matchedRippingEntryIDs.contains(item.entry.id) ? "Ripping..." : "Rip + Add") {
-                                            ripMatchedEntryFromYouTube(item.entry)
-                                        }
-                                        .disabled(matchedRippingEntryIDs.contains(item.entry.id))
-                                        .help("Download the audio from the pasted YouTube URL and add it to your library.")
-                                    }
-
-                                    if let suggestions = matchedSuggestionsByEntryID[item.entry.id], !suggestions.isEmpty {
-                                        VStack(alignment: .leading, spacing: 6) {
-                                            Text("Suggestions")
-                                                .font(.caption.weight(.semibold))
-                                                .foregroundStyle(.secondary)
-
-                                            ForEach(Array(suggestions.prefix(5))) { suggestion in
-                                                let isHovered = hoveredMatchedSuggestionKey == matchedSuggestionRowKey(entryID: item.entry.id, suggestionID: suggestion.id)
-                                                HStack(alignment: .top, spacing: 8) {
-                                                    VStack(alignment: .leading, spacing: 2) {
-                                                        Text(suggestion.title)
-                                                            .font(.caption)
-                                                            .lineLimit(1)
-                                                        Text(suggestion.channel)
-                                                            .font(.caption2)
-                                                            .foregroundStyle(.secondary)
-                                                    }
-
-                                                    Spacer(minLength: 0)
-
-                                                    HStack(spacing: 6) {
-                                                        Button("Use Link") {
-                                                            matchedYoutubeURLByEntryID[item.entry.id] = suggestion.webpageURL.absoluteString
-                                                        }
-                                                        .buttonStyle(.bordered)
-                                                        .controlSize(.small)
-                                                        .help("Use this suggestion's URL in the field above.")
-
-                                                        Button(matchedRippingEntryIDs.contains(item.entry.id) ? "Ripping..." : "Use + Rip") {
-                                                            ripMatchedEntryFromYouTube(item.entry, preferredURL: suggestion.webpageURL)
-                                                        }
-                                                        .buttonStyle(.borderedProminent)
-                                                        .controlSize(.small)
-                                                        .disabled(matchedRippingEntryIDs.contains(item.entry.id))
-                                                        .help("Download this suggestion's audio and add it to your library.")
-                                                    }
-                                                    .padding(.horizontal, 6)
-                                                    .padding(.vertical, 5)
-                                                    .background(
-                                                        RoundedRectangle(cornerRadius: 8)
-                                                            .fill(Color(nsColor: .windowBackgroundColor).opacity(0.9))
-                                                    )
-                                                    .overlay(
-                                                        RoundedRectangle(cornerRadius: 8)
-                                                            .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
-                                                    )
-                                                }
-                                                .padding(.horizontal, 8)
-                                                .padding(.vertical, 7)
-                                                .background(
-                                                    RoundedRectangle(cornerRadius: 8)
-                                                        .fill(Color.accentColor.opacity(isHovered ? 0.18 : 0.08))
-                                                )
-                                                .overlay(
-                                                    RoundedRectangle(cornerRadius: 8)
-                                                        .stroke(Color.accentColor.opacity(isHovered ? 0.42 : 0.22), lineWidth: 1)
-                                                )
-                                                .onHover { hovering in
-                                                    let key = matchedSuggestionRowKey(entryID: item.entry.id, suggestionID: suggestion.id)
-                                                    hoveredMatchedSuggestionKey = hovering ? key : (hoveredMatchedSuggestionKey == key ? nil : hoveredMatchedSuggestionKey)
-                                                }
-                                            }
-                                        }
-                                        .padding(8)
-                                        .background(
-                                            RoundedRectangle(cornerRadius: 8)
-                                                .fill(Color(nsColor: .windowBackgroundColor).opacity(0.5))
-                                        )
-                                    }
-
-                                    if let status = matchedStatusByEntryID[item.entry.id] {
-                                        Text(status)
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
+                                DisclosureGroup("Can't buy it? Download from YouTube") {
+                                    youtubeMatchedControls(for: item.entry)
+                                        .padding(.top, 6)
                                 }
-                                .padding(8)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .fill(Color(nsColor: .windowBackgroundColor).opacity(0.45))
-                                )
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
                             }
 
                             VStack(alignment: .leading, spacing: 2) {
@@ -850,6 +742,115 @@ struct PlaylistMatchView: View {
                     RoundedRectangle(cornerRadius: 8)
                         .fill(Color(nsColor: .windowBackgroundColor).opacity(0.5))
                 )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func youtubeMatchedControls(for entry: PlaylistMatchService.PlaylistEntry) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                TextField(
+                    "Paste YouTube URL",
+                    text: Binding(
+                        get: { matchedYoutubeURLByEntryID[entry.id] ?? "" },
+                        set: { matchedYoutubeURLByEntryID[entry.id] = $0 }
+                    )
+                )
+                .textFieldStyle(.roundedBorder)
+
+                Button(matchedSearchingEntryIDs.contains(entry.id) ? "Finding..." : "Find In-App") {
+                    searchYouTubeSuggestions(for: entry)
+                }
+                .disabled(matchedSearchingEntryIDs.contains(entry.id))
+                .help("Search YouTube inside the app and list matching results below.")
+
+                Button("Search YouTube") {
+                    openYouTubeSearch(for: entry)
+                }
+                .help("Open a YouTube search for this track in your browser.")
+
+                Button(matchedRippingEntryIDs.contains(entry.id) ? "Ripping..." : "Rip + Add") {
+                    ripMatchedEntryFromYouTube(entry)
+                }
+                .disabled(matchedRippingEntryIDs.contains(entry.id))
+                .help("Download the audio from the pasted YouTube URL and add it to your library.")
+            }
+
+            if let suggestions = matchedSuggestionsByEntryID[entry.id], !suggestions.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Suggestions")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+
+                    ForEach(Array(suggestions.prefix(5))) { suggestion in
+                        let isHovered = hoveredMatchedSuggestionKey == matchedSuggestionRowKey(entryID: entry.id, suggestionID: suggestion.id)
+                        HStack(alignment: .top, spacing: 8) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(suggestion.title)
+                                    .font(.caption)
+                                    .lineLimit(1)
+                                Text(suggestion.channel)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            Spacer(minLength: 0)
+
+                            HStack(spacing: 6) {
+                                Button("Use Link") {
+                                    matchedYoutubeURLByEntryID[entry.id] = suggestion.webpageURL.absoluteString
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .help("Use this suggestion's URL in the field above.")
+
+                                Button(matchedRippingEntryIDs.contains(entry.id) ? "Ripping..." : "Use + Rip") {
+                                    ripMatchedEntryFromYouTube(entry, preferredURL: suggestion.webpageURL)
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .controlSize(.small)
+                                .disabled(matchedRippingEntryIDs.contains(entry.id))
+                                .help("Download this suggestion's audio and add it to your library.")
+                            }
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 5)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(Color(nsColor: .windowBackgroundColor).opacity(0.9))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+                            )
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 7)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color.accentColor.opacity(isHovered ? 0.18 : 0.08))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(Color.accentColor.opacity(isHovered ? 0.42 : 0.22), lineWidth: 1)
+                        )
+                        .onHover { hovering in
+                            let key = matchedSuggestionRowKey(entryID: entry.id, suggestionID: suggestion.id)
+                            hoveredMatchedSuggestionKey = hovering ? key : (hoveredMatchedSuggestionKey == key ? nil : hoveredMatchedSuggestionKey)
+                        }
+                    }
+                }
+                .padding(8)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color(nsColor: .windowBackgroundColor).opacity(0.5))
+                )
+            }
+
+            if let status = matchedStatusByEntryID[entry.id] {
+                Text(status)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
     }

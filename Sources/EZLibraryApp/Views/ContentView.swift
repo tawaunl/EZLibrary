@@ -31,6 +31,8 @@ struct ContentView: View {
     }
 
     private static let confirmDeleteActionsDefaultsKey = "SeratoToolsConfirmTrackDeleteActions"
+    private static let recentLibraryFoldersDefaultsKey = "SeratoToolsRecentLibraryFolders"
+    private static let recentCentralFoldersDefaultsKey = "SeratoToolsRecentCentralFolders"
 
     private let sidebarWidth: CGFloat = 220
     private let middlePaneWidth: CGFloat = 320
@@ -79,6 +81,23 @@ struct ContentView: View {
         }
         return FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Music", isDirectory: true)
+    }
+
+    private var centralMusicFolderSuggestions: [String] {
+        var suggestions: [String] = []
+        let central = centralMusicFolderPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !central.isEmpty {
+            suggestions.append(central)
+        }
+        suggestions.append(
+            FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Music", isDirectory: true).path
+        )
+        let root = libraryService.rootDirectory.standardizedFileURL
+        if root.path != "/" {
+            suggestions.append(root.appendingPathComponent("Music", isDirectory: true).path)
+        }
+        return suggestions
     }
 
     private var smartCratesCount: Int {
@@ -354,12 +373,13 @@ struct ContentView: View {
         case .tracks:
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
-                    FinderFolderControls(
+                    FolderDropdownControl(
                         label: "Library directory",
                         path: $libraryPathDraft,
+                        recentsKey: Self.recentLibraryFoldersDefaultsKey,
                         browsePrompt: "Use Library",
                         browseStartURL: URL(fileURLWithPath: libraryPathDraft.isEmpty ? libraryService.libraryDirectory.path : libraryPathDraft),
-                        allowsNewFolderCreation: false,
+                        suggestedPaths: [libraryService.libraryDirectory.path],
                         onPathChanged: applyLibraryDirectory
                     )
                     Button("Apply") { applyLibraryDirectory() }
@@ -368,6 +388,7 @@ struct ContentView: View {
                         .help("Re-read tracks and crates from the current library directory.")
                     Button("API Keys…") { showDiscogsTokenSheet = true }
                         .help("Manage Discogs and AcoustID API keys used for online metadata lookups.")
+                    Spacer(minLength: 0)
                 }
                 .padding(.horizontal, 8)
                 .padding(.top, 8)
@@ -378,12 +399,13 @@ struct ContentView: View {
                     .padding(.horizontal, 8)
 
                 VStack(alignment: .leading, spacing: 4) {
-                    FinderFolderControls(
+                    FolderDropdownControl(
                         label: "Central music folder",
                         path: $centralMusicFolderPath,
+                        recentsKey: Self.recentCentralFoldersDefaultsKey,
                         browsePrompt: "Use Folder",
                         browseStartURL: centralMusicFolderStartURL,
-                        allowsNewFolderCreation: true,
+                        suggestedPaths: centralMusicFolderSuggestions,
                         onPathChanged: {}
                     )
 
