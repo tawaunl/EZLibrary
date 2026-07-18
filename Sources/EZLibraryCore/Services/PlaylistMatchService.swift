@@ -362,23 +362,6 @@ public enum PlaylistMatchService {
                     }
                     continue
                 }
-
-                if let first = titleCandidates.first?.track {
-                    let versions = libraryVersions(for: entry, selectedTrack: first, in: normalizedTracks)
-                    matchedEntries.append(
-                        MatchedEntry(
-                            entry: entry,
-                            primaryTrack: first,
-                            versions: versions,
-                            reason: .exactTitleOnly,
-                            confidence: .medium
-                        )
-                    )
-                    if matchedIDs.insert(first.id).inserted {
-                        matched.append(first)
-                    }
-                    continue
-                }
             }
 
             if let fuzzy = fuzzyFind(entry: entry, in: normalizedTracks) {
