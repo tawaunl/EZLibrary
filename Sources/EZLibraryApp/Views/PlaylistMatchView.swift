@@ -86,7 +86,7 @@ struct PlaylistMatchView: View {
             VStack(alignment: .leading, spacing: 14) {
                 SectionHeaderCard(
                     title: "PlaylistMatch",
-                    description: "Paste a Spotify or Apple Music playlist link, text list, or CSV. PlaylistMatch scans your Serato library, builds a crate from matches, and keeps unmatched tracks in a Plan.",
+                    description: "Paste a single Spotify or Apple Music playlist link (or upload a CSV). PlaylistMatch scans your Serato library, builds a crate from matches, and keeps unmatched tracks in a Plan.",
                     icon: "music.quarternote.3"
                 )
 
@@ -106,18 +106,16 @@ struct PlaylistMatchView: View {
 
     private var inputCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Paste Playlist Input")
+            Text("Paste Playlist Link")
                 .font(.title3.weight(.semibold))
 
-            TextEditor(text: $rawInput)
+            TextField("https://open.spotify.com/playlist/… or Apple Music link", text: $rawInput)
+                .textFieldStyle(.roundedBorder)
                 .font(.system(size: 13, weight: .regular, design: .monospaced))
-                .frame(minHeight: 200)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
-                )
+                .lineLimit(1)
+                .onSubmit { runMatch() }
 
-            Text("Input examples: Spotify or Apple Music playlist URL, CSV with Title/Artist columns, or lines like 'Artist - Title'. Up to \(PlaylistMatchService.maxPlaylistEntries) tracks are matched per run.")
+            Text("Paste one Spotify or Apple Music playlist link at a time, then Scan Playlist. Use Upload CSV to match a Title/Artist file instead. Up to \(PlaylistMatchService.maxPlaylistEntries) tracks are matched per run.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
 
