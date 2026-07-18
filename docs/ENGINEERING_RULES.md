@@ -1,4 +1,4 @@
-# SeratoTools Engineering Rules
+# EZLibrary Engineering Rules
 
 These rules apply to all new code in this repository.
 

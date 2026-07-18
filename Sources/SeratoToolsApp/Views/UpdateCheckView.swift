@@ -117,7 +117,7 @@ final class UpdateCheckViewModel: ObservableObject {
     }
 
     /// Installs the downloaded `.pkg` with an admin prompt, then quits and
-    /// relaunches SeratoTools automatically once the install finishes.
+    /// relaunches EZLibrary automatically once the install finishes.
     func installAndRelaunch(pkgURL: URL) {
         do {
             try AppUpdateInstaller.installAndRelaunch(pkgURL: pkgURL)
@@ -140,7 +140,7 @@ final class UpdateCheckViewModel: ObservableObject {
     }
 }
 
-/// Writes and launches a detached script that waits for SeratoTools to quit,
+/// Writes and launches a detached script that waits for EZLibrary to quit,
 /// installs the downloaded package with administrator privileges, and reopens
 /// the app.
 enum AppUpdateInstaller {
@@ -156,7 +156,7 @@ enum AppUpdateInstaller {
         APP="$2"
         PID="$3"
 
-        # Wait (up to ~60s) for SeratoTools to fully quit.
+        # Wait (up to ~60s) for EZLibrary to fully quit.
         for _ in $(seq 1 120); do
           kill -0 "$PID" 2>/dev/null || break
           sleep 0.5
@@ -200,7 +200,7 @@ private final class InstallerDownloader: NSObject, URLSessionDownloadDelegate, @
         return try await withCheckedThrowingContinuation { continuation in
             self.continuation = continuation
             var request = URLRequest(url: url)
-            request.setValue("SeratoTools", forHTTPHeaderField: "User-Agent")
+            request.setValue("EZLibrary", forHTTPHeaderField: "User-Agent")
             session.downloadTask(with: request).resume()
         }
     }
@@ -224,7 +224,7 @@ private final class InstallerDownloader: NSObject, URLSessionDownloadDelegate, @
         guard let continuation else { return }
         self.continuation = nil
         let destination = FileManager.default.temporaryDirectory
-            .appendingPathComponent("SeratoTools-Update-\(UUID().uuidString).pkg")
+            .appendingPathComponent("EZLibrary-Update-\(UUID().uuidString).pkg")
         do {
             try? FileManager.default.removeItem(at: destination)
             try FileManager.default.moveItem(at: location, to: destination)
@@ -297,7 +297,7 @@ struct UpdateCheckView: View {
                 Label("You're up to date", systemImage: "checkmark.circle.fill")
                     .foregroundStyle(.green)
                     .font(.headline)
-                Text("SeratoTools \(currentVersion) is the latest version.")
+                Text("EZLibrary \(currentVersion) is the latest version.")
                     .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -307,7 +307,7 @@ struct UpdateCheckView: View {
                 Label("Update available", systemImage: "sparkles")
                     .foregroundStyle(.tint)
                     .font(.headline)
-                Text("SeratoTools \(release.version) is available.")
+                Text("EZLibrary \(release.version) is available.")
                     .foregroundStyle(.secondary)
 
                 if !release.releaseNotes.isEmpty {
@@ -382,7 +382,7 @@ struct UpdateCheckView: View {
                 Label("Ready to install", systemImage: "checkmark.circle.fill")
                     .foregroundStyle(.green)
                     .font(.callout.weight(.semibold))
-                Text("SeratoTools will quit, install the update (you'll be asked for your password), and reopen automatically.")
+                Text("EZLibrary will quit, install the update (you'll be asked for your password), and reopen automatically.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                 HStack(spacing: 10) {
@@ -401,7 +401,7 @@ struct UpdateCheckView: View {
             HStack(spacing: 10) {
                 ProgressView()
                     .controlSize(.small)
-                Text("Quitting to install… SeratoTools will reopen when the update finishes.")
+                Text("Quitting to install… EZLibrary will reopen when the update finishes.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }

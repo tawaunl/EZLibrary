@@ -1,4 +1,4 @@
-# SeratoTools Troubleshooting
+# EZLibrary Troubleshooting
 
 This guide covers the most common setup, build, packaging, and runtime issues.
 
@@ -34,18 +34,18 @@ A: There is a documented unresolved UI-layer crash investigation for some enviro
 - Review [CRASH_INVESTIGATION.md](CRASH_INVESTIGATION.md).
 - Check crash reports in `~/Library/Logs/DiagnosticReports/`.
 - Test with an empty library override to separate data issues from UI composition issues:
-  - `SERATOTOOLS_LIBRARY_DIR=/tmp/nonexistent-empty-serato-dir swift run SeratoTools`
+  - `SERATOTOOLS_LIBRARY_DIR=/tmp/nonexistent-empty-serato-dir swift run EZLibrary`
 
-## Q: `swift run SeratoTools` does not open normally like an app.
+## Q: `swift run EZLibrary` does not open normally like an app.
 
 A: Use packaged app flow for a normal app bundle experience.
 
 - Build app bundle: `./Scripts/build-app.sh`
-- Launch bundled app from `dist/SeratoTools.app`
+- Launch bundled app from `dist/EZLibrary.app`
 
 ## Library Location and Paths
 
-## Q: SeratoTools is reading the wrong library. How do I force the path?
+## Q: EZLibrary is reading the wrong library. How do I force the path?
 
 A: Set the explicit library override.
 
@@ -55,7 +55,7 @@ A: Set the explicit library override.
 Example:
 
 ```bash
-SERATOTOOLS_LIBRARY_DIR="/Volumes/YourDrive/_Serato_" swift run SeratoTools
+SERATOTOOLS_LIBRARY_DIR="/Volumes/YourDrive/_Serato_" swift run EZLibrary
 ```
 
 ## Q: I get errors about missing `database V2`.
@@ -68,7 +68,7 @@ A: The selected path is not a valid Serato library root.
 
 ## Q: My tracks are on an external drive and paths seem inconsistent.
 
-A: Ensure the external volume is mounted before launching SeratoTools.
+A: Ensure the external volume is mounted before launching EZLibrary.
 
 - Confirm the drive appears under `/Volumes`.
 - Confirm expected audio file paths exist.
@@ -158,7 +158,7 @@ A: No. The app is packaged with required runtime dependencies already bundled.
 A: Install Quick Action from bundled script after app install.
 
 ```bash
-/Applications/SeratoTools.app/Contents/Resources/scripts/install-finder-quick-action.sh
+/Applications/EZLibrary.app/Contents/Resources/scripts/install-finder-quick-action.sh
 ```
 
 ## Q: How do I produce a signed installer package?

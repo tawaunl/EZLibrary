@@ -1,7 +1,7 @@
 # Finder Quick Action: Add Music
 
 This project now includes a command-line importer and helper script so Finder
-right-click imports can flow into SeratoTools.
+right-click imports can flow into EZLibrary.
 
 ## What it does
 
@@ -26,10 +26,10 @@ If the action does not appear immediately, relaunch Finder.
 
 ## Install from packaged app (no source checkout)
 
-If SeratoTools was installed to `/Applications/SeratoTools.app`, run:
+If EZLibrary was installed to `/Applications/EZLibrary.app`, run:
 
 ```bash
-/Applications/SeratoTools.app/Contents/Resources/scripts/install-finder-quick-action.sh
+/Applications/EZLibrary.app/Contents/Resources/scripts/install-finder-quick-action.sh
 ```
 
 This uses the bundled `SeratoToolsCLI` binary, so users do not need Swift or source files.

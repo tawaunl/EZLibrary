@@ -1,6 +1,6 @@
 import Foundation
 
-/// Information about a published SeratoTools release on GitHub.
+/// Information about a published EZLibrary release on GitHub.
 public struct AppReleaseInfo: Sendable, Equatable {
     /// The version parsed from the release tag (leading `v` stripped), e.g. `0.1.0.3`.
     public let version: String
@@ -52,19 +52,19 @@ public enum UpdateCheckError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .invalidResponse:
-            return "SeratoTools received an unexpected response while checking for updates."
+            return "EZLibrary received an unexpected response while checking for updates."
         case .notFound:
-            return "No published releases were found for SeratoTools."
+            return "No published releases were found for EZLibrary."
         case .rateLimited:
             return "GitHub temporarily rate-limited the update check."
         case .server(let statusCode):
             return "The update server returned an error (HTTP \(statusCode))."
         case .decoding:
-            return "SeratoTools couldn't read the update information from GitHub."
+            return "EZLibrary couldn't read the update information from GitHub."
         case .network(let message):
             return "Couldn't reach the update server: \(message)"
         case .unknownCurrentVersion:
-            return "SeratoTools couldn't determine its own version to compare against."
+            return "EZLibrary couldn't determine its own version to compare against."
         }
     }
 
@@ -80,7 +80,7 @@ public enum UpdateCheckError: LocalizedError {
     }
 }
 
-/// Checks GitHub Releases for a newer version of SeratoTools.
+/// Checks GitHub Releases for a newer version of EZLibrary.
 public struct UpdateCheckService: Sendable {
     private let owner: String
     private let repository: String
@@ -136,7 +136,7 @@ public struct UpdateCheckService: Sendable {
         let url = URL(string: "https://api.github.com/repos/\(owner)/\(repository)/releases/latest")!
         var request = URLRequest(url: url)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-        request.setValue("SeratoTools", forHTTPHeaderField: "User-Agent")
+        request.setValue("EZLibrary", forHTTPHeaderField: "User-Agent")
         request.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
         request.timeoutInterval = 20
 

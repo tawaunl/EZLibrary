@@ -2,12 +2,12 @@
 import PackageDescription
 
 let package = Package(
-    name: "SeratoTools",
+    name: "EZLibrary",
     platforms: [
         .macOS(.v14)
     ],
     products: [
-        .executable(name: "SeratoTools", targets: ["SeratoToolsApp"]),
+        .executable(name: "EZLibrary", targets: ["SeratoToolsApp"]),
         .executable(name: "SeratoToolsCLI", targets: ["SeratoToolsCLI"]),
         .library(name: "SeratoToolsCore", targets: ["SeratoToolsCore"])
     ],

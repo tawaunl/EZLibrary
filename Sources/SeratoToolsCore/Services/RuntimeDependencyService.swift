@@ -1,6 +1,6 @@
 import Foundation
 
-/// Single source of truth for the external command-line tools SeratoTools
+/// Single source of truth for the external command-line tools EZLibrary
 /// depends on. The app deliberately ships **without** packaged copies of
 /// `yt-dlp`, `ffmpeg`/`ffprobe`, or `fpcalc`; they are installed and kept
 /// current through Homebrew on the user's machine so they never go stale. This

@@ -23,8 +23,8 @@ if [[ -n "$APP_BUILD" ]]; then
 fi
 
 TAG="${RELEASE_TAG:-v$PKG_VERSION}"
-PKG_PATH="$ROOT_DIR/dist/SeratoTools-$PKG_VERSION.pkg"
-PKG_NAME="SeratoTools-$PKG_VERSION.pkg"
+PKG_PATH="$ROOT_DIR/dist/EZLibrary-$PKG_VERSION.pkg"
+PKG_NAME="EZLibrary-$PKG_VERSION.pkg"
 
 # --- Preconditions --------------------------------------------------------
 if ! command -v gh >/dev/null 2>&1; then
@@ -91,8 +91,8 @@ will warn on first open. To install:
 
 ## What it installs
 
-- \`SeratoTools.app\` into /Applications
-- On install (and on every launch), SeratoTools installs and keeps its
+- \`EZLibrary.app\` into /Applications
+- On install (and on every launch), EZLibrary installs and keeps its
   command-line tools — \`yt-dlp\`, \`ffmpeg\`/\`ffprobe\`, and \`fpcalc\` —
   up to date via Homebrew. Nothing is bundled, so the tools always stay current.
 
@@ -107,7 +107,7 @@ EOF
 CREATE_ARGS=(
   "$TAG"
   "$PKG_PATH"
-  --title "SeratoTools $PKG_VERSION"
+  --title "EZLibrary $PKG_VERSION"
   --notes-file "$NOTES_FILE"
 )
 

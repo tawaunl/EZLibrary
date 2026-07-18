@@ -109,7 +109,7 @@ public enum LibraryConsolidationService {
             case .destinationExists:
                 return "A file with the same name is already in the destination folder. Remove or rename it, or pick a different destination, then try again."
             case .noPermission:
-                return "Grant SeratoTools access to the source and destination folders (System Settings → Privacy & Security → Files and Folders / Full Disk Access), check the files aren't locked, then try again."
+                return "Grant EZLibrary access to the source and destination folders (System Settings → Privacy & Security → Files and Folders / Full Disk Access), check the files aren't locked, then try again."
             case .outOfSpace:
                 return "Free up space on the destination disk, or choose a destination with more room, then try again."
             case .sourceMissing:

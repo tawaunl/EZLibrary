@@ -29,7 +29,7 @@ else
   if [[ -d "$INFERRED_BUNDLE/Contents/Resources" ]]; then
     APP_BUNDLE="$INFERRED_BUNDLE"
   else
-    APP_BUNDLE="/Applications/SeratoTools.app"
+    APP_BUNDLE="/Applications/EZLibrary.app"
   fi
 fi
 
@@ -39,13 +39,13 @@ CLI_PATH="$APP_RESOURCES/bin/SeratoToolsCLI"
 
 if [[ ! -x "$SCRIPT_PATH" ]]; then
   echo "Missing script: $SCRIPT_PATH" >&2
-  echo "Rebuild/reinstall SeratoTools.app and try again." >&2
+  echo "Rebuild/reinstall EZLibrary.app and try again." >&2
   exit 3
 fi
 
 if [[ ! -x "$CLI_PATH" ]]; then
   echo "Missing CLI binary: $CLI_PATH" >&2
-  echo "Rebuild/reinstall SeratoTools.app and try again." >&2
+  echo "Rebuild/reinstall EZLibrary.app and try again." >&2
   exit 3
 fi
 

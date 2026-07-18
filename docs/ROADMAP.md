@@ -1,4 +1,4 @@
-# SeratoTools Feature Roadmap
+# EZLibrary Feature Roadmap
 
 ## Context
 

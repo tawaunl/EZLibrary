@@ -4,7 +4,7 @@ This project can now be packaged as a self-contained macOS app + installer packa
 
 ## What gets bundled
 
-- `SeratoTools.app`
+- `EZLibrary.app`
 - `SeratoToolsCLI` inside app resources
 - `fpcalc` (required for AcoustID fingerprint lookup)
 - `yt-dlp` and `ffmpeg` when available on the build machine
@@ -12,7 +12,7 @@ This project can now be packaged as a self-contained macOS app + installer packa
 
 Bundled tools are placed in:
 
-- `SeratoTools.app/Contents/Resources/bin`
+- `EZLibrary.app/Contents/Resources/bin`
 
 ## Build app bundle
 
@@ -46,7 +46,7 @@ Runtime tool notes:
 
 Output:
 
-- `dist/SeratoTools.app`
+- `dist/EZLibrary.app`
 
 ## Build installer package (.pkg)
 
@@ -69,11 +69,11 @@ Universal installer note:
 
 Output:
 
-- `dist/SeratoTools-<version>.pkg`
+- `dist/EZLibrary-<version>.pkg`
 
 Installer behavior on target machines:
 
-- Removes quarantine attributes from `/Applications/SeratoTools.app` when present.
+- Removes quarantine attributes from `/Applications/EZLibrary.app` when present.
 - Bootstraps runtime dependencies for the logged-in user on a fresh machine:
   installs Homebrew (if missing) plus `yt-dlp`, `ffmpeg`, and `chromaprint`
   (`fpcalc`). This runs best-effort and detached so it never blocks or fails the
@@ -89,7 +89,7 @@ Installer behavior on target machines:
 Run the dependency bootstrap manually at any time:
 
 ```bash
-/Applications/SeratoTools.app/Contents/Resources/scripts/install-dependencies.sh
+/Applications/EZLibrary.app/Contents/Resources/scripts/install-dependencies.sh
 ```
 
 The YouTube Rip screen also exposes an **Install Dependencies** button that runs
@@ -98,7 +98,7 @@ the same bootstrap on demand when `yt-dlp`/`ffmpeg` are missing.
 Install locally for testing:
 
 ```bash
-installer -pkg "dist/SeratoTools-<version>.pkg" -target /
+installer -pkg "dist/EZLibrary-<version>.pkg" -target /
 ```
 
 ## Optional: signed package
@@ -114,7 +114,7 @@ SERATOTOOLS_PKG_SIGN_IDENTITY="Developer ID Installer: Your Name (TEAMID)" ./Scr
 After installing the app into `/Applications`, install Finder Quick Action:
 
 ```bash
-/Applications/SeratoTools.app/Contents/Resources/scripts/install-finder-quick-action.sh
+/Applications/EZLibrary.app/Contents/Resources/scripts/install-finder-quick-action.sh
 ```
 
 ## Notes

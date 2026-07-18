@@ -1,4 +1,4 @@
-# SeratoTools GUI crash — investigation handoff (2026-06-30)
+# EZLibrary GUI crash — investigation handoff (2026-06-30)
 
 ## Status: unresolved, paused mid-bisection
 
@@ -27,7 +27,7 @@ An `NSException` is thrown while AppKit tries to decode a persisted toolbar
 item using the ancient `NSCalendarDate` class, inside SwiftUI's internal
 `NavigationSplitView` toolbar bridge. AppKit's `_crashOnException:` then
 terminates the process. Crash reports are saved at
-`~/Library/Logs/DiagnosticReports/SeratoTools-*.ips` — 9 are there now,
+`~/Library/Logs/DiagnosticReports/EZLibrary-*.ips` — 9 are there now,
 useful for a fresh `grep`/parse pass.
 
 Environment: macOS 26.5.1 (25F80), only Xcode Command Line Tools installed
@@ -36,12 +36,12 @@ Environment: macOS 26.5.1 (25F80), only Xcode Command Line Tools installed
 
 ## What's been ruled out (tried, did not fix it — identical crash signature persisted)
 
-1. **Clearing app preferences** (`~/Library/Preferences/SeratoTools.plist`,
+1. **Clearing app preferences** (`~/Library/Preferences/EZLibrary.plist`,
    `com.seratotools.app.plist`, which hold `NSSplitView Subview Frames`/
    `NSWindow Frame` autosave data) — no effect.
 2. **Running as a properly-signed `.app` bundle** (via `Scripts/build-app.sh`,
    stable bundle id `com.seratotools.app`) instead of the raw
-   `.build/debug/SeratoTools` executable — no effect, crashed identically.
+   `.build/debug/EZLibrary` executable — no effect, crashed identically.
 3. **Disabling window restoration**: added
    `Sources/SeratoToolsApp/Views/WindowConfigurator.swift`, an
    `NSViewRepresentable` that sets `window.isRestorable = false`, wired in
@@ -81,7 +81,7 @@ now deleted) to bisect:
 Bisect **within the real app** by temporarily gutting pieces of
 `Sources/SeratoToolsApp/Views/ContentView.swift` (and rebuilding via
 `swift build && ./Scripts/build-app.sh`, then launching
-`dist/SeratoTools.app/Contents/MacOS/SeratoTools` with
+`dist/EZLibrary.app/Contents/MacOS/EZLibrary` with
 `SERATOTOOLS_LIBRARY_DIR` set to the empty path above — no need for real
 data given the finding above) to find the minimal trigger. Candidates, in
 suggested test order (each is present in the real app but absent from the
@@ -116,7 +116,7 @@ the pragmatic workaround.
 
 ## Also worth trying if the above doesn't pin it down
 
-- `log show --predicate 'process == "SeratoTools"' --last 5m` right after a
+- `log show --predicate 'process == "EZLibrary"' --last 5m` right after a
   fresh crash, for any warnings/errors beyond what's in the `.ips` file
   (the `.ips` only captures the final stack, not preceding log lines).
 - The existing benign "reentrant operation in its NSTableView delegate"

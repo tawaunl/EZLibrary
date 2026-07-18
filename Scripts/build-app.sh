@@ -1,10 +1,10 @@
 #!/bin/bash
 # Builds a release binary via SwiftPM and assembles it into a launchable
-# SeratoTools.app bundle under dist/, without requiring full Xcode.
+# EZLibrary.app bundle under dist/, without requiring full Xcode.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP_NAME="SeratoTools"
+APP_NAME="EZLibrary"
 DIST_DIR="$ROOT_DIR/dist"
 APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
 RESOURCE_BIN_DIR="$APP_BUNDLE/Contents/Resources/bin"
@@ -91,7 +91,7 @@ else
 	echo "Warning: Packaging/AppIcon.icns not found; app will build without a custom icon." >&2
 fi
 
-# Bundle scripts so Quick Actions can be installed from /Applications/SeratoTools.app.
+# Bundle scripts so Quick Actions can be installed from /Applications/EZLibrary.app.
 cp "$ROOT_DIR/Scripts/finder-add-music.sh" "$RESOURCE_SCRIPT_DIR/finder-add-music.sh"
 if [[ -f "$ROOT_DIR/Scripts/install-finder-quick-action-from-app.sh" ]]; then
 	cp "$ROOT_DIR/Scripts/install-finder-quick-action-from-app.sh" "$RESOURCE_SCRIPT_DIR/install-finder-quick-action.sh"

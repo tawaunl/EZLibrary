@@ -56,7 +56,7 @@ struct SeratoToolsApp: App {
         SeratoFeatureFlags.applyDisableAutoRenameMigrationIfNeeded()
 
         let libraryDirectory = SeratoLibraryLocator.discoverLibraryDirectory()
-        print("SeratoTools library directory: \(libraryDirectory.path)")
+        print("EZLibrary library directory: \(libraryDirectory.path)")
 
         let library = LibraryService(libraryDirectory: libraryDirectory)
         let hiddenStore = HiddenCrateStore()

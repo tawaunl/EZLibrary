@@ -7,7 +7,7 @@ version (`CFBundleShortVersionString.CFBundleVersion`) and are used verbatim by
 ## 0.1.0.5
 
 ### Dependencies now managed by Homebrew
-- SeratoTools no longer bundles `yt-dlp`, `ffmpeg`/`ffprobe`, or `fpcalc`.
+- EZLibrary no longer bundles `yt-dlp`, `ffmpeg`/`ffprobe`, or `fpcalc`.
   These command-line tools are now installed and kept up to date through
   Homebrew, so they never go stale as YouTube and the audio tools change.
 - **Every launch checks that the tools are installed and current.** When

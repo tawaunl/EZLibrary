@@ -50,7 +50,7 @@ elif [[ -f "$REPO_ROOT/Package.swift" ]]; then
   cd "$REPO_ROOT"
   cmd=(swift run --quiet SeratoToolsCLI --mode "$MODE" --destination "$DESTINATION" --crate-prefix "$CRATE_PREFIX")
 else
-  echo "SeratoToolsCLI was not found. Reinstall SeratoTools or set SERATOTOOLS_CLI_PATH." >&2
+  echo "SeratoToolsCLI was not found. Reinstall EZLibrary or set SERATOTOOLS_CLI_PATH." >&2
   exit 3
 fi
 

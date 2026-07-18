@@ -1,5 +1,5 @@
 #!/bin/bash
-# Bootstraps the runtime dependencies SeratoTools relies on:
+# Bootstraps the runtime dependencies EZLibrary relies on:
 #   - Homebrew (installed per-user, never as root)
 #   - yt-dlp   (YouTube import/rip)
 #   - ffmpeg   (audio transcode/probe; provides ffprobe)
@@ -162,7 +162,7 @@ ensure_formula() {
 }
 
 main() {
-	log "Starting SeratoTools dependency bootstrap (user: $(id -un), arch: $(/usr/bin/uname -m))."
+	log "Starting EZLibrary dependency bootstrap (user: $(id -un), arch: $(/usr/bin/uname -m))."
 
 	local brew_path
 	if ! brew_path="$(resolve_brew)"; then

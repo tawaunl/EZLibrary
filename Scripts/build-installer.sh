@@ -1,10 +1,10 @@
 #!/bin/bash
-# Builds SeratoTools.app and a standalone macOS installer package (.pkg).
+# Builds EZLibrary.app and a standalone macOS installer package (.pkg).
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="$ROOT_DIR/dist"
-APP_NAME="SeratoTools"
+APP_NAME="EZLibrary"
 APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
 
 APP_VERSION="$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$ROOT_DIR/Packaging/Info.plist")"
@@ -34,7 +34,7 @@ cat > "$PKGSCRIPTS/postinstall" <<'EOF'
 # Runs as root after the app is copied into /Applications.
 set -u
 
-APP_PATH="/Applications/SeratoTools.app"
+APP_PATH="/Applications/EZLibrary.app"
 LOG_FILE="/tmp/seratotools-postinstall.log"
 
 log() {
@@ -85,4 +85,4 @@ pkgbuild "${PKGBUILD_ARGS[@]}" "$PKG_PATH"
 echo "Built installer: $PKG_PATH"
 echo "Install with: installer -pkg \"$PKG_PATH\" -target /"
 echo "On install, the pkg bootstraps Homebrew + yt-dlp + ffmpeg + chromaprint for the logged-in user (best effort; the app also re-checks and installs them on every launch)."
-echo "Quick Action setup after install: /Applications/SeratoTools.app/Contents/Resources/scripts/install-finder-quick-action.sh"
+echo "Quick Action setup after install: /Applications/EZLibrary.app/Contents/Resources/scripts/install-finder-quick-action.sh"
