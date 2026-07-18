@@ -95,7 +95,7 @@ public struct UpdateCheckService: Sendable {
     ///   - session: URLSession used for the request.
     public init(
         owner: String = "tawaunl",
-        repository: String = "SeratoTools",
+        repository: String = "EZLibrary",
         currentVersion: String? = UpdateCheckService.bundleVersion(),
         session: URLSession = .shared
     ) {

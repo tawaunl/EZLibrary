@@ -1,7 +1,7 @@
 # EZLibrary
 
 <p align="center">
-  <img src="docs/files/seratotools_icon_glow_gold.png" alt="EZLibrary app icon" width="160" height="160">
+  <img src="docs/files/ezlibrary_icon_glow_gold.png" alt="EZLibrary app icon" width="160" height="160">
 </p>
 
 > EZLibrary is an independent, community-built utility. It isn't affiliated with, endorsed by, or sponsored by Serato Audio Research or any other music platform referenced in this project. "Serato" is a trademark of its respective owner. This tool reads and writes Serato's library file format for interoperability purposes only.
