@@ -247,7 +247,10 @@ public enum LibraryBackupService {
             )
 
             let selectedTrackPaths = Set(crate.trackPaths)
-            let selectedTracks = tracks.filter { selectedTrackPaths.contains($0.seratoStoredPath) }
+            let selectedTracks = tracks.filter {
+                selectedTrackPaths.contains($0.seratoStoredPath)
+                    && fileManager.fileExists(atPath: $0.fileURL.path)
+            }
             copiedTrackSourcePaths = try copyTracks(
                 selectedTracks,
                 rootDirectory: rootDirectory,
@@ -295,7 +298,7 @@ public enum LibraryBackupService {
             let manifestURL = directory.appendingPathComponent("backup-manifest.json")
             guard fileManager.fileExists(atPath: manifestURL.path),
                   let data = try? Data(contentsOf: manifestURL),
-                  let manifest = try? JSONDecoder().decode(BackupManifest.self, from: data) else {
+                  let manifest = try? manifestDecoder().decode(BackupManifest.self, from: data) else {
                 continue
             }
             return manifest.createdAt
@@ -367,7 +370,7 @@ public enum LibraryBackupService {
             let manifestURL = directory.appendingPathComponent("backup-manifest.json")
             guard fileManager.fileExists(atPath: manifestURL.path),
                   let data = try? Data(contentsOf: manifestURL),
-                  let manifest = try? JSONDecoder().decode(BackupManifest.self, from: data) else {
+                  let manifest = try? manifestDecoder().decode(BackupManifest.self, from: data) else {
                 continue
             }
             return manifest
@@ -508,6 +511,17 @@ public enum LibraryBackupService {
         } catch {
             throw BackupError.manifestWriteFailed(manifestURL, underlying: error)
         }
+    }
+
+    /// Decoder for reading `backup-manifest.json`. Must mirror the encoder in
+    /// `writeManifest` (ISO-8601 dates); a plain `JSONDecoder()` uses
+    /// `.deferredToDate` and silently fails to decode the manifest, which made
+    /// incremental backups treat every prior backup as missing and re-copy
+    /// every track.
+    private static func manifestDecoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
     }
 
     private static func timestampString(from date: Date) -> String {

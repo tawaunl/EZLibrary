@@ -6,7 +6,10 @@ import Foundation
     let library = URL(fileURLWithPath: "/tmp/_Serato_")
     let database = SeratoLibraryLocator.databaseFile(in: library)
     #expect(database.lastPathComponent == "database V2")
-    #expect(database.deletingLastPathComponent() == library)
+    // Compare paths, not URLs: `deletingLastPathComponent()` appends a
+    // trailing slash (file:///tmp/_Serato_/), so a raw URL `==` against the
+    // slash-less library URL fails even though they're the same directory.
+    #expect(database.deletingLastPathComponent().path == library.path)
 }
 
 @Test func subcrateFilesRecurseIntoRealSubdirectories() throws {
