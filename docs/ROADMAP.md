@@ -1,6 +1,60 @@
 # EZLibrary Feature Roadmap
 
-## Context
+## Status at a glance (updated 2026-07-18)
+
+Legend: ✅ Done (shipped) · 🚧 In progress / partial · 📋 Planned · ⏸️ Tabled
+
+The app has grown well past the original MVP. Phase 0 (binary read/write foundation) and most of the originally-planned features are shipped, plus a number of features that weren't in the original 11.
+
+### Original 11 features
+
+| # | Feature | Status | Where it lives / notes |
+|---|---|---|---|
+| 1 | Add New Music | ✅ Done | "Add Music" tab (`AddMusicView`/`AddMusicImportService`) + Finder Quick Action; import with primary + secondary crate assignment |
+| 2 | Missing Tracks | ✅ Done | "Missing Tracks" tab (`MissingTracksView`/`MissingTracksService`); scan + relink candidates |
+| 3 | CrateView | ✅ Done | "Crates" tab (`CrateTreeView` + `CrateDetailView` + `TrackTableView`), hidden-crate support |
+| 4 | Find Duplicates | ✅ Done | "Duplicates" tab; completeness scoring, keep-best, delete → Library/Computer; `AudioFingerprintService` (fpcalc) |
+| 5 | CrateMatch | ✅ Done | shipped as **PlaylistMatch**: Spotify/Apple/CSV → crate, buy-first purchase links (iTunes/Beatport), YouTube/SoundCloud rip + import |
+| 6 | Switch | 📋 Planned | not built as a dedicated feature |
+| 7 | Misplaced Tracks | 🚧 Partial | continuous FSEvents watcher not built; "Library Consolidation" + `LibraryFolderSyncService` cover the "keep everything in one folder" goal |
+| 8 | iTunes Migration | 📋 Planned | not started |
+| 9 | Backup | ✅ Done | "Backup" tab (`LibraryBackupView`/`LibraryBackupService`); snapshot + restore |
+| 10 | Tags & Cues | ✅ Tags / 🚧 Cues | "Tags" bulk editor + online metadata (iTunes/MusicBrainz/Discogs) + cover art; Serato cues/beatgrids are **preserved** on edit, but there's no dedicated cue-point editor yet |
+| 11 | Sync (Rekordbox) | 📋 Planned | not started |
+
+### Shipped beyond the original spec
+
+- ✅ **Download Audio** — YouTube/SoundCloud rip via yt-dlp (`YouTubeRipView`, `YouTubeAudioImportService`)
+- ✅ **Library Consolidation** — flatten the whole library into one central folder
+- ✅ **Buy-first purchase links** — confirmed iTunes + Beatport listings in PlaylistMatch (`PurchaseLinkService`)
+- ✅ **Online metadata lookup** — iTunes/MusicBrainz/Discogs with cover-art embedding, DJ-descriptor-preserving titles
+- ✅ **In-app audio player** with full transport controls
+- ✅ **Serato play-count reader**
+- ✅ **Auto-update checker + one-click installer** (`UpdateCheckService`)
+- ✅ **Homebrew-managed runtime deps** + launch readiness banner (`RuntimeDependencyService`)
+- ✅ **Finder Quick Action** ("Add to EZLibrary")
+
+### Foundation
+
+- ✅ **Phase 0 complete** — `Format/`, `Parsers/`, `Writers/`, `Safety/`, `FileOps/`, `Watching/` all built and validated against a real 1343-track library (byte-exact path-rewrite round-trip).
+
+### In progress
+
+- 🚧 **ID3 title descriptor preservation** — keep DJ markers like "(Intro)"/"(Clean)" when applying an online title match (branch `feature/id3-title-descriptors`, PR #16).
+
+### Planned / not started
+
+- 📋 Feature 6 **Switch**, Feature 8 **iTunes Migration**, Feature 11 **Rekordbox Sync**
+- 📋 Feature 7 continuous **Misplaced-Tracks watcher** (FSEvents `DirectoryWatcher`)
+- 📋 Dedicated **cue-point editor** (Feature 10 cues)
+
+### Tabled
+
+- ⏸️ **Record Pool Search** (BPM Supreme / DJcity) — see "Tabled / future exploration" at the bottom.
+
+---
+
+## Context (original plan)
 
 The skeleton macOS SwiftUI app (`EZLibraryCore` + `EZLibraryApp`) is in place and launches successfully. The user wants to build out 11 features (Add New Music, Missing Tracks, CrateView, Find Duplicates, CrateMatch, Switch, Misplaced Tracks, iTunes Migration, Backup, Tags & Cues, Sync/Rekordbox). Building all 11 at once isn't practical — they share a lot of core infrastructure (reading/writing Serato's binary library files) but vary hugely in risk (some are pure local file work, others require reverse-engineering third-party formats or external APIs). This plan lays out shared architecture, a phase order, and an MVP recommendation so we build the risky, load-bearing pieces once, early, and defer the most speculative work (audio fingerprinting, Rekordbox export, Spotify/iTunes integration) until the core is proven.
 
@@ -21,6 +75,8 @@ Only the file header/envelope was validated on this machine (the local library i
 
 ## Shared core architecture (built once, reused across features)
 
+> **Status: ✅ built.** Every module below now exists under `EZLibraryCore` and is validated against a real library. Kept here as the design reference.
+
 All in `EZLibraryCore`:
 
 - **`Format/` (new)** — `SeratoChunk`/reader/writer: a generic tag(4 ASCII bytes)+length(4-byte big-endian)+payload primitive shared by both `database V2` and `.crate` files, since they're the same envelope with different schemas. Every other format piece builds on this instead of re-parsing bytes independently.
@@ -33,6 +89,8 @@ All in `EZLibraryCore`:
 - **`Licensing/` (new, minimal stub now)** — a `FeatureFlag` seam so Find Duplicates' Pro-gated auto-replace has somewhere to hook in later without retrofitting.
 
 ## Phase order
+
+> **Actual progress (development didn't strictly follow this order):** Phase 0 ✅ · Phase 1 ✅ (CrateView, Missing Tracks) · Phase 2 ✅ Add Music / 🚧 Switch & Misplaced Tracks partial · Phase 3 ✅ (Find Duplicates) · Phase 4 ✅ (Backup) · Phase 5 ✅ Tags / 🚧 Cues · Phase 6 ✅ (CrateMatch → PlaylistMatch) · Phase 7 📋 (iTunes Migration) · Phase 8 📋 (Rekordbox Sync). The table below is the original plan.
 
 | Phase | Features | New core introduced | Why here |
 |---|---|---|---|
@@ -48,20 +106,48 @@ All in `EZLibraryCore`:
 
 ## Key open risks per feature (decide when that phase starts, not now)
 
-- **Feature 1**: Finder Sync Extension needs a real Xcode project (multi-target `.appex` + App Group entitlement) — not possible with plain SwiftPM. Fallback: ship v1 via a menu-bar helper or Quick Action instead of true Finder right-click, upgrade later.
-- **Feature 4**: fingerprinting library choice (Chromaprint C-interop vs custom FFT/Accelerate) — spike this early in Phase 3 to de-risk linking before committing.
-- **Feature 5**: Spotify official API (client-credentials, no user login needed for public playlists) recommended over scraping.
-- **Feature 8**: `Library.xml` (needs user to enable "Share Library XML" in Music.app) recommended over Apple's semi-private `MediaLibrary` framework.
-- **Feature 10**: prefer a pure-Swift ID3 library over C-interop (TagLib) since MP3-only v1 scope is narrow; cue-point tag schema needs its own format research pass.
-- **Feature 11**: target Rekordbox's unencrypted `.PDB` format, not encrypted `master.db` (legally/technically riskier, breaks on Pioneer updates).
-- **Cross-cutting**: `swift test`/swift-testing does not execute under Command-Line-Tools-only (confirmed this session) — write tests as we go but verify Phase 0/1 correctness via manual round-trip diffing until full Xcode is installed.
+- **Feature 1** ✅ resolved: shipped a **Finder Quick Action** ("Add to EZLibrary") instead of a Finder Sync Extension — no `.appex`/Xcode project needed.
+- **Feature 4** ✅ resolved: fingerprinting uses **`fpcalc` (Chromaprint)** via `AudioFingerprintService` (Homebrew-managed), not a custom FFT.
+- **Feature 5** ✅ resolved differently: Spotify's anonymous token/API is blocked, so PlaylistMatch reads the **embed page `__NEXT_DATA__`** JSON (Apple Music + CSV supported too).
+- **Feature 8** 📋 open: `Library.xml` (needs user to enable "Share Library XML" in Music.app) recommended over Apple's semi-private `MediaLibrary` framework.
+- **Feature 10** 🚧 partial: ID3 read/write is done in pure Swift (Serato cues/beatgrids preserved); a dedicated **cue-point tag editor** still needs its own format research pass.
+- **Feature 11** 📋 open: target Rekordbox's unencrypted `.PDB` format, not encrypted `master.db` (legally/technically riskier, breaks on Pioneer updates).
+- **Cross-cutting** ✅ resolved: tests run via the `runTests` tooling / Xcode; correctness validated against the real-library fixture in `Tests/EZLibraryCoreTests/Fixtures/`.
 
-## MVP: Phase 0 + Phase 1 (CrateView + Missing Tracks)
+## MVP: Phase 0 + Phase 1 (CrateView + Missing Tracks) — ✅ shipped
 
-Recommended starting point. Rationale: proves the highest-leverage core (binary read/write layer) while keeping risk to reversible metadata changes (crate delete → Trash, path rewrite only — no audio files touched), ships something every Serato user immediately wants, and needs zero external APIs, zero third-party format reverse-engineering, and zero Xcode/extension work — buildable entirely with today's `swift build` setup.
+The original MVP is done. Rationale it proved out: the highest-leverage core (binary read/write layer) shipped while keeping risk to reversible metadata changes (crate delete → Trash, path rewrite only — no audio files touched), delivered something every Serato user immediately wants, and needed zero external APIs or Xcode/extension work — buildable entirely with `swift build`.
 
-## Next steps after approval
+## Next steps (forward-looking)
 
-1. Start Phase 0: implement `Format/SeratoChunk`, replace the `SeratoDatabaseParser` stub with a real UTF-16BE-aware reader, add `SeratoDatabaseWriter`, `SeratoCrateParser`/`Writer`, and the `Safety/` module (process guard, backup-before-write, atomic writer).
-2. Acquire or synthesize a populated `_Serato_` fixture (real library copy or hand-built test data) to validate the full record schema beyond the empty-header case already inspected.
-3. Only after Phase 0 is verified against that fixture, move into Phase 1 (CrateView UI + Missing Tracks scan/repair flow), extending `LibraryService` and `ContentView`.
+Foundation and MVP are complete; the app now ships 10 sidebar features (Tracks, Duplicates, PlaylistMatch, Add Music, Download Audio, Crates, Tags, Missing Tracks, Backup, Library Consolidation). Candidate next work, roughly in priority order:
+
+1. **Finish in-progress:** land the ID3 title-descriptor-preservation change (PR #16).
+2. **Feature 7 — Misplaced Tracks (full):** add the FSEvents `DirectoryWatcher` for continuous detection, building on the shipped Consolidation/`LibraryFolderSyncService`.
+3. **Feature 10 — Cue-point editor:** cues are preserved today; a dedicated editor is the remaining gap.
+4. **Feature 8 — iTunes Migration:** `Library.xml` reader → crates (isolated, one-time-per-user tool).
+5. **Feature 6 — Switch** and **Feature 11 — Rekordbox Sync:** highest reverse-engineering risk; schedule last.
+6. **Revisit tabled Record Pool Search** if a more reliable pool search surfaces (see below).
+
+## Tabled / future exploration
+
+### Record Pool Search (BPM Supreme / DJcity) — tabled 2026-07-18
+
+**Idea:** In PlaylistMatch, for a track the user can't buy, let a subscriber search the DJ record pools they already pay for (BPM Supreme, DJcity) from inside the app and jump straight to the download page. Would sit as a "Your pools" row next to the iTunes/Beatport Buy links.
+
+**Status:** Fully prototyped end-to-end, then **removed from the codebase** because it wasn't reliable enough to ship. Code lives in git history on branch `feature/record-pool-search` (commits `16778c7`, `db8df63`); removal is `2f45701`. Verified integration details are captured in repo memory (`/memories/repo/notes.md`).
+
+**What worked:**
+- Secure design: credentials/token in the macOS **Keychain** only (never logged), sent over HTTPS to the pool only.
+- **One-click sign-in** via an embedded `WKWebView` that auto-captures the `Authorization: Bearer` token the site sends (no DevTools/paste for the user).
+- BPM Supreme API confirmed: `GET api.download.bpmsupreme.com/v1/albums?term=<title>` with a Bearer UUID device-token; each result is an album (title/artist/`pool_url` + `media[].version`).
+- Order-independent artist matching (ignoring `ft`/`feat`/`with`/`&`) correctly confirmed collab tracks.
+
+**Why it was tabled (the blocker):** BPM's `term` search is too fuzzy to be dependable. Common-word titles ("Walk", "Radio", "ghost", "NOBLE") return 50–100 results that match on **artist-name substrings** ("Radio Slave", "Walk Off The Earth", "HAVEN.") with the *exact* track absent, and many tracks return zero results. Adding the artist to the query makes BPM return **nothing** (`raw=0`), and raising the limit to 100 didn't surface the missing tracks. Net: it reliably found direct/collab hits by well-known artists but missed a large fraction of a real playlist, which felt broken.
+
+**To revive later, investigate:**
+- A better/stricter BPM search endpoint or params than `/v1/albums?term=` (the site's search fans out to several endpoints; find the one that ranks exact title matches first).
+- DJcity's real search endpoints (never verified — its provider was a best-effort stub).
+- Whether a fuzzy pre-filter + a second confirmation pass (e.g. compare BPM `bpm`/`key`/duration) can rescue the ambiguous common-title cases.
+- ToS/rate-limit posture for automated per-track search across a large playlist.
+
