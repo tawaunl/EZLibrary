@@ -43,6 +43,13 @@ struct TracksAndTagsView: View {
 
     private static let allTracksID = "all_tracks"
 
+    private enum FillField: Hashable {
+        case artist
+        case album
+        case genre
+        case year
+    }
+
     @EnvironmentObject private var libraryService: LibraryService
 
     let onApplyMetadata: (Track, SeratoTrackMetadataUpdate) throws -> Void
@@ -58,6 +65,7 @@ struct TracksAndTagsView: View {
     @State private var metadataLookupTrack: Track?
     @State private var searchText = ""
     @State private var selectedGenreFilter: String?
+    @State private var fillFilter: FillField?
     @State private var bulkArtist = ""
     @State private var bulkAlbum = ""
     @State private var bulkGenre = ""
@@ -122,9 +130,14 @@ struct TracksAndTagsView: View {
         return Array(Set(genres)).sorted()
     }
 
-    private var displayedTracks: [Track] {
+    private var scopeGenreTracks: [Track] {
         guard let selectedGenreFilter else { return scopeTracks }
         return scopeTracks.filter { $0.genre == selectedGenreFilter }
+    }
+
+    private var displayedTracks: [Track] {
+        guard let fillFilter else { return scopeGenreTracks }
+        return scopeGenreTracks.filter { !isFilled(fillFilter, $0) }
     }
 
     private var filteredTree: [CrateNode] {
@@ -132,19 +145,19 @@ struct TracksAndTagsView: View {
     }
 
     private var artistFilledCount: Int {
-        displayedTracks.filter { !$0.artist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count
+        scopeGenreTracks.filter { !$0.artist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count
     }
 
     private var albumFilledCount: Int {
-        displayedTracks.filter { !$0.album.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count
+        scopeGenreTracks.filter { !$0.album.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count
     }
 
     private var genreFilledCount: Int {
-        displayedTracks.filter { !$0.genre.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count
+        scopeGenreTracks.filter { !$0.genre.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count
     }
 
     private var yearFilledCount: Int {
-        displayedTracks.filter { $0.year != nil }.count
+        scopeGenreTracks.filter { $0.year != nil }.count
     }
 
     private var globalArtistFilledCount: Int {
@@ -212,6 +225,10 @@ struct TracksAndTagsView: View {
         }
         .onChange(of: selectedScopeID) {
             selectedGenreFilter = nil
+            fillFilter = nil
+        }
+        .onChange(of: selectedGenreFilter) {
+            fillFilter = nil
         }
         .onChange(of: searchText) {
             if let selectedGenreFilter, !scopeGenres.contains(selectedGenreFilter) {
@@ -276,44 +293,58 @@ struct TracksAndTagsView: View {
     }
 
     private var statsHeader: some View {
-        let scopeArtistPercent = percentValue(filled: artistFilledCount, total: displayedTracks.count)
-        let scopeAlbumPercent = percentValue(filled: albumFilledCount, total: displayedTracks.count)
-        let scopeGenrePercent = percentValue(filled: genreFilledCount, total: displayedTracks.count)
-        let scopeYearPercent = percentValue(filled: yearFilledCount, total: displayedTracks.count)
+        let total = scopeGenreTracks.count
+        let scopeArtistPercent = percentValue(filled: artistFilledCount, total: total)
+        let scopeAlbumPercent = percentValue(filled: albumFilledCount, total: total)
+        let scopeGenrePercent = percentValue(filled: genreFilledCount, total: total)
+        let scopeYearPercent = percentValue(filled: yearFilledCount, total: total)
         let globalArtistPercent = percentValue(filled: globalArtistFilledCount, total: libraryService.tracks.count)
         let globalAlbumPercent = percentValue(filled: globalAlbumFilledCount, total: libraryService.tracks.count)
         let globalGenrePercent = percentValue(filled: globalGenreFilledCount, total: libraryService.tracks.count)
         let globalYearPercent = percentValue(filled: globalYearFilledCount, total: libraryService.tracks.count)
 
         return HStack(spacing: 10) {
-            statTag(title: "Tracks", valueText: "\(displayedTracks.count)", subtitle: selectedScopeTitle)
+            statTag(
+                title: "Tracks",
+                valueText: "\(total)",
+                subtitle: fillFilter == nil ? selectedScopeTitle : "\(displayedTracks.count) shown • tap to clear",
+                action: { fillFilter = nil }
+            )
             statTag(
                 title: "Artist Filled",
-                valueText: percentText(filled: artistFilledCount, total: displayedTracks.count),
-                subtitle: "Scope \(artistFilledCount)/\(displayedTracks.count)",
+                valueText: percentText(filled: artistFilledCount, total: total),
+                subtitle: fillSubtitle(field: .artist, filled: artistFilledCount, total: total),
                 baseline: baselineText(globalPercent: globalArtistPercent, scopePercent: scopeArtistPercent),
-                trend: trend(scopePercent: scopeArtistPercent, globalPercent: globalArtistPercent)
+                trend: trend(scopePercent: scopeArtistPercent, globalPercent: globalArtistPercent),
+                isActive: fillFilter == .artist,
+                action: { toggleFillFilter(.artist) }
             )
             statTag(
                 title: "Album Filled",
-                valueText: percentText(filled: albumFilledCount, total: displayedTracks.count),
-                subtitle: "Scope \(albumFilledCount)/\(displayedTracks.count)",
+                valueText: percentText(filled: albumFilledCount, total: total),
+                subtitle: fillSubtitle(field: .album, filled: albumFilledCount, total: total),
                 baseline: baselineText(globalPercent: globalAlbumPercent, scopePercent: scopeAlbumPercent),
-                trend: trend(scopePercent: scopeAlbumPercent, globalPercent: globalAlbumPercent)
+                trend: trend(scopePercent: scopeAlbumPercent, globalPercent: globalAlbumPercent),
+                isActive: fillFilter == .album,
+                action: { toggleFillFilter(.album) }
             )
             statTag(
                 title: "Genre Filled",
-                valueText: percentText(filled: genreFilledCount, total: displayedTracks.count),
-                subtitle: "Scope \(genreFilledCount)/\(displayedTracks.count)",
+                valueText: percentText(filled: genreFilledCount, total: total),
+                subtitle: fillSubtitle(field: .genre, filled: genreFilledCount, total: total),
                 baseline: baselineText(globalPercent: globalGenrePercent, scopePercent: scopeGenrePercent),
-                trend: trend(scopePercent: scopeGenrePercent, globalPercent: globalGenrePercent)
+                trend: trend(scopePercent: scopeGenrePercent, globalPercent: globalGenrePercent),
+                isActive: fillFilter == .genre,
+                action: { toggleFillFilter(.genre) }
             )
             statTag(
                 title: "Year Filled",
-                valueText: percentText(filled: yearFilledCount, total: displayedTracks.count),
-                subtitle: "Scope \(yearFilledCount)/\(displayedTracks.count)",
+                valueText: percentText(filled: yearFilledCount, total: total),
+                subtitle: fillSubtitle(field: .year, filled: yearFilledCount, total: total),
                 baseline: baselineText(globalPercent: globalYearPercent, scopePercent: scopeYearPercent),
-                trend: trend(scopePercent: scopeYearPercent, globalPercent: globalYearPercent)
+                trend: trend(scopePercent: scopeYearPercent, globalPercent: globalYearPercent),
+                isActive: fillFilter == .year,
+                action: { toggleFillFilter(.year) }
             )
             Spacer(minLength: 0)
         }
@@ -860,12 +891,14 @@ struct TracksAndTagsView: View {
         valueText: String,
         subtitle: String,
         baseline: String? = nil,
-        trend: CompletionTrend = .equal
+        trend: CompletionTrend = .equal,
+        isActive: Bool = false,
+        action: (() -> Void)? = nil
     ) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        let content = VStack(alignment: .leading, spacing: 2) {
             Text(title)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(isActive ? Color.white.opacity(0.92) : .secondary)
             HStack(spacing: 6) {
                 Text(valueText)
                     .font(.system(size: 24, weight: .bold, design: .rounded))
@@ -876,15 +909,15 @@ struct TracksAndTagsView: View {
                         .accessibilityLabel(trend.accessibilityLabel)
                 }
             }
-            .foregroundStyle(trend.valueColor)
+            .foregroundStyle(isActive ? Color.white : trend.valueColor)
             Text(subtitle)
                 .font(.caption2)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(isActive ? Color.white.opacity(0.85) : .secondary)
                 .lineLimit(1)
             if let baseline {
                 Text(baseline)
                     .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(isActive ? Color.white.opacity(0.85) : .secondary)
                     .lineLimit(1)
             }
         }
@@ -892,15 +925,56 @@ struct TracksAndTagsView: View {
         .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 9)
-                .fill(Color(nsColor: .windowBackgroundColor))
+                .fill(isActive ? Color.accentColor.opacity(0.92) : Color(nsColor: .windowBackgroundColor))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 9)
                 .stroke(
-                    trend == .equal ? Color.secondary.opacity(0.25) : trend.valueColor.opacity(0.5),
+                    isActive
+                        ? Color.accentColor
+                        : (trend == .equal ? Color.secondary.opacity(0.25) : trend.valueColor.opacity(0.5)),
                     lineWidth: 1
                 )
         )
+
+        return Group {
+            if let action {
+                Button(action: action) { content }
+                    .buttonStyle(.plain)
+            } else {
+                content
+            }
+        }
+    }
+
+    private func fillSubtitle(field: FillField, filled: Int, total: Int) -> String {
+        if fillFilter == field {
+            return "Showing \(total - filled) missing"
+        }
+        return "Scope \(filled)/\(total)"
+    }
+
+    private func isFilled(_ field: FillField, _ track: Track) -> Bool {
+        switch field {
+        case .artist:
+            return !track.artist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .album:
+            return !track.album.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .genre:
+            return !track.genre.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .year:
+            return track.year != nil
+        }
+    }
+
+    private func toggleFillFilter(_ field: FillField) {
+        // Nothing to isolate when every track in scope already has the field.
+        let unfilledCount = scopeGenreTracks.filter { !isFilled(field, $0) }.count
+        guard unfilledCount > 0 else {
+            fillFilter = nil
+            return
+        }
+        fillFilter = (fillFilter == field) ? nil : field
     }
 
     private func effectiveTrackPaths(for node: CrateNode) -> [String] {
