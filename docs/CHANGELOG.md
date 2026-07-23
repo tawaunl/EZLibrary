@@ -4,6 +4,43 @@ Notable changes per release. The version headings match the packaged build
 version (`CFBundleShortVersionString.CFBundleVersion`) and are used verbatim by
 `Scripts/release.sh` to populate the GitHub release notes.
 
+## 0.1.0.7
+
+### Tracks & Tags are now one section
+- The separate **Tracks** and **Tags** views are combined into a single
+  **Tracks & Tags** section with all of both features: browse the whole
+  library, pick a crate scope, bulk-fill artist/album/genre/year, look up
+  metadata online, and delete tracks — all in one place.
+- **Click a completion stat to filter.** Clicking *Artist/Album/Genre/Year
+  Filled* filters the table to just the tracks missing that field (e.g. 80%
+  filled shows the other 20%). Click again, or the **Tracks** box, to clear.
+  A field that's 100% filled applies no filter.
+
+### PlaylistMatch: buy, import, and download
+- Confirmed **purchase links** for matched and planned tracks from the iTunes
+  Store and Beatport, grouped by store with per-version options.
+- **"I bought it" import** brings a purchased file into the library, and a
+  Downloads-folder watcher auto-detects finished downloads and offers to import
+  and file them into your central music folder.
+- **Download fallback** for YouTube and SoundCloud, with in-app suggestions that
+  skip music videos.
+- Remix/version titles now match their library originals, and personalized
+  Spotify mixes are flagged with guidance for an exact match.
+
+### Copy any text
+- **All text throughout the app is now selectable**, so you can highlight and
+  copy values from ID3 lookups, playlist searches, and everywhere else.
+
+### Backups fixed
+- **Incremental backups now correctly skip** tracks already captured in the
+  previous backup instead of re-copying everything.
+- **Single-crate backups no longer abort** when a crate references a file that
+  has been moved or deleted — missing files are skipped.
+
+### Other
+- "YouTube Rip" is now **Download Audio**, and supports SoundCloud as well.
+- Added a reusable folder picker with recent-folder history across views.
+
 ## 0.1.0.6
 
 ### Renamed to EZLibrary
