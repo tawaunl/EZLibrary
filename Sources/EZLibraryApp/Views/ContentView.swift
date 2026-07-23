@@ -648,7 +648,9 @@ struct ContentView: View {
             // the crate view. Reload crates too to keep them in sync.
             reloadLibrary()
         } else {
-            try libraryService.reloadTracksOnly()
+            // Off-main so a single inline edit doesn't freeze the table on
+            // large libraries; the table refreshes reactively when it lands.
+            Task { await libraryService.reloadTracksOnlyAsync() }
         }
         showMetadataSaveSuccess()
     }
@@ -683,7 +685,8 @@ struct ContentView: View {
             databaseFileURL: libraryService.databaseFile
         )
 
-        try libraryService.reloadTracksOnly()
+        // Off-main re-parse; the failure summary below doesn't depend on it.
+        Task { await libraryService.reloadTracksOnlyAsync() }
 
         guard result.failures.isEmpty else {
             throw BulkMetadataUpdateError(

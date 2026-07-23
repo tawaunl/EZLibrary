@@ -54,6 +54,12 @@ public final class LibraryService: ObservableObject {
         case failed(String)
     }
 
+    /// Sendable outcome for a tracks-only off-main parse.
+    private enum TracksOutcome: Sendable {
+        case loaded([Track])
+        case failed(String)
+    }
+
     public init(libraryDirectory: URL = SeratoLibraryLocator.defaultLibraryDirectory) {
         self.libraryDirectory = libraryDirectory
     }
@@ -150,6 +156,42 @@ public final class LibraryService: ObservableObject {
             tracks = []
             reloadErrorMessage = error.localizedDescription
             throw error
+        }
+    }
+
+    /// Off-main equivalent of `reloadTracksOnly()`: re-parses only the track
+    /// database on a background task and publishes it on the main actor, so a
+    /// single inline metadata edit doesn't freeze the UI on large libraries.
+    /// Crates are left untouched.
+    public func reloadTracksOnlyAsync() async {
+        reloadGeneration += 1
+        let generation = reloadGeneration
+        let libraryDirectory = self.libraryDirectory
+
+        let outcome = await Task.detached(priority: .userInitiated) { () -> TracksOutcome in
+            let rootDirectory = SeratoLibraryLocator.rootDirectory(for: libraryDirectory)
+            let databaseFile = SeratoLibraryLocator.databaseFile(in: libraryDirectory)
+            do {
+                let tracks = try SeratoDatabaseParser.parseTracks(at: databaseFile, rootDirectory: rootDirectory)
+                return .loaded(tracks)
+            } catch {
+                return .failed(error.localizedDescription)
+            }
+        }.value
+
+        // A newer reload superseded this one while it was parsing.
+        guard generation == reloadGeneration else { return }
+
+        switch outcome {
+        case let .loaded(tracks):
+            self.tracks = tracks
+            reloadErrorMessage = nil
+            refreshDerivedTrackStats()
+            loadPlayCounts(for: tracks)
+        case let .failed(message):
+            tracks = []
+            reloadErrorMessage = message
+            refreshDerivedTrackStats()
         }
     }
 

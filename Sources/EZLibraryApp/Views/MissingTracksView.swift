@@ -126,7 +126,7 @@ struct MissingTracksView: View {
         do {
             let url = try missingTracksService.gatherIntoReviewCrate(subcratesDirectory: libraryService.subcratesDirectory)
             resultMessage = "Created \(url.lastPathComponent). Reload the library in Serato to see it."
-            try? libraryService.reload()
+            Task { await libraryService.reloadAsync() }
         } catch {
             resultMessage = "Couldn't create the review crate: \(error.localizedDescription)"
         }
@@ -204,7 +204,7 @@ struct MissingTracksView: View {
             } else {
                 resultMessage = "Deleted \(deletedCount) unmatched track references from the library."
             }
-            try? libraryService.reload()
+            Task { await libraryService.reloadAsync() }
         } catch {
             resultMessage = "Couldn't bulk delete unmatched tracks: \(error.localizedDescription)"
         }
@@ -330,7 +330,7 @@ private struct MissingTrackRow: View {
     private func deleteFromLibrary() {
         do {
             _ = try missingTracksService.deleteFromLibrary(candidate, in: libraryService.crates)
-            try? libraryService.reload()
+            Task { await libraryService.reloadAsync() }
         } catch {
             errorMessage = error.localizedDescription
         }
