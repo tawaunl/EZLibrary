@@ -249,6 +249,111 @@ struct PlaylistMatchView: View {
         .background(RoundedRectangle(cornerRadius: 12).fill(Color(nsColor: .controlBackgroundColor).opacity(0.55)))
     }
 
+    @ViewBuilder
+    private func matchedSummaryRow(for item: PlaylistMatchService.MatchedEntry) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            let artist = item.entry.artist.isEmpty ? "Unknown Artist" : item.entry.artist
+            Text("• \(artist) - \(item.entry.title)")
+                .font(.callout.weight(.semibold))
+                .lineLimit(1)
+
+            Text("Versions in library: \(item.versions.count)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 8) {
+                Text("\(item.confidence.displayName) Confidence")
+                    .font(.caption2.weight(.semibold))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(
+                        Capsule().fill(confidenceColor(item.confidence).opacity(0.18))
+                    )
+                    .foregroundStyle(confidenceColor(item.confidence))
+
+                Text(item.reason.displayName)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Spacer(minLength: 0)
+
+                Toggle("Include", isOn: includeBinding(for: item))
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+            }
+
+            Picker(
+                "Selected Version",
+                selection: selectedVersionBinding(for: item)
+            ) {
+                ForEach(item.versions, id: \.id) { version in
+                    Text(versionPickerTitle(for: version))
+                        .tag(version.id.uuidString)
+                }
+            }
+            .pickerStyle(.menu)
+            .frame(maxWidth: 440, alignment: .leading)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Other versions to buy:")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                purchaseLinksSection(
+                    links: purchaseLinksByEntryID[item.entry.id],
+                    isLoading: loadingPurchaseLinkEntryIDs.contains(item.entry.id)
+                )
+                .onAppear { findPurchaseLinks(forEntry: item.entry) }
+
+                HStack(spacing: 8) {
+                    Button {
+                        importPurchasedFileForMatched(item.entry)
+                    } label: {
+                        Label(
+                            importingEntryIDs.contains(item.entry.id) ? "Importing…" : "I Bought It — Import File…",
+                            systemImage: "square.and.arrow.down"
+                        )
+                    }
+                    .controlSize(.small)
+                    .disabled(importingEntryIDs.contains(item.entry.id))
+                    .help("Pick a version you bought to add it to \(targetCrateName).")
+
+                    Spacer(minLength: 0)
+                }
+
+                if let status = matchedStatusByEntryID[item.entry.id] {
+                    Text(status)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(Array(item.versions.prefix(6)), id: \.id) { version in
+                    HStack(spacing: 6) {
+                        Text(versionLabel(for: version))
+                            .font(.caption)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(
+                                Capsule().fill(Color.accentColor.opacity(0.14))
+                            )
+                        Text(version.title.isEmpty ? version.fileURL.lastPathComponent : version.title)
+                            .font(.caption)
+                            .lineLimit(1)
+                    }
+                }
+
+                if item.versions.count > 6 {
+                    Text("+ \(item.versions.count - 6) more versions")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
     private var summaryCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Match Summary")
@@ -312,107 +417,7 @@ struct PlaylistMatchView: View {
                 } else {
                     LazyVStack(alignment: .leading, spacing: 4) {
                         ForEach(Array(visibleEntries.prefix(20))) { item in
-                        VStack(alignment: .leading, spacing: 4) {
-                            let artist = item.entry.artist.isEmpty ? "Unknown Artist" : item.entry.artist
-                            Text("• \(artist) - \(item.entry.title)")
-                                .font(.callout.weight(.semibold))
-                                .lineLimit(1)
-
-                            Text("Versions in library: \(item.versions.count)")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-
-                            HStack(spacing: 8) {
-                                Text("\(item.confidence.displayName) Confidence")
-                                    .font(.caption2.weight(.semibold))
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 3)
-                                    .background(
-                                        Capsule().fill(confidenceColor(item.confidence).opacity(0.18))
-                                    )
-                                    .foregroundStyle(confidenceColor(item.confidence))
-
-                                Text(item.reason.displayName)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-
-                                Spacer(minLength: 0)
-
-                                Toggle("Include", isOn: includeBinding(for: item))
-                                    .toggleStyle(.switch)
-                                    .controlSize(.small)
-                            }
-
-                            Picker(
-                                "Selected Version",
-                                selection: selectedVersionBinding(for: item)
-                            ) {
-                                ForEach(item.versions, id: \.id) { version in
-                                    Text(versionPickerTitle(for: version))
-                                        .tag(version.id.uuidString)
-                                }
-                            }
-                            .pickerStyle(.menu)
-                            .frame(maxWidth: 440, alignment: .leading)
-
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Other versions to buy:")
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.secondary)
-
-                                purchaseLinksSection(
-                                    links: purchaseLinksByEntryID[item.entry.id],
-                                    isLoading: loadingPurchaseLinkEntryIDs.contains(item.entry.id)
-                                )
-                                .onAppear { findPurchaseLinks(forEntry: item.entry) }
-
-                                HStack(spacing: 8) {
-                                    Button {
-                                        importPurchasedFileForMatched(item.entry)
-                                    } label: {
-                                        Label(
-                                            importingEntryIDs.contains(item.entry.id) ? "Importing…" : "I Bought It — Import File…",
-                                            systemImage: "square.and.arrow.down"
-                                        )
-                                    }
-                                    .controlSize(.small)
-                                    .disabled(importingEntryIDs.contains(item.entry.id))
-                                    .help("Pick a version you bought to add it to \(targetCrateName).")
-
-                                    Spacer(minLength: 0)
-                                }
-
-                                if let status = matchedStatusByEntryID[item.entry.id] {
-                                    Text(status)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-
-                            VStack(alignment: .leading, spacing: 2) {
-                                ForEach(Array(item.versions.prefix(6)), id: \.id) { version in
-                                    HStack(spacing: 6) {
-                                        Text(versionLabel(for: version))
-                                            .font(.caption)
-                                            .padding(.horizontal, 6)
-                                            .padding(.vertical, 2)
-                                            .background(
-                                                Capsule().fill(Color.accentColor.opacity(0.14))
-                                            )
-                                        Text(version.title.isEmpty ? version.fileURL.lastPathComponent : version.title)
-                                            .font(.caption)
-                                            .lineLimit(1)
-                                    }
-                                }
-
-                                if item.versions.count > 6 {
-                                    Text("+ \(item.versions.count - 6) more versions")
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                        }
-                        .padding(.vertical, 4)
+                            matchedSummaryRow(for: item)
                         }
 
                         if visibleEntries.count > 20 {
