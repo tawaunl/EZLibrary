@@ -59,8 +59,8 @@ holds itself to around safe data mutation, error handling, and review.
 library — import, tag edit, consolidation, missing-track repair — runs through
 backup-first and atomic-write patterns with read-back verification, so a failed
 operation doesn't leave your crates half-written or corrupted. See
-[docs/SECURITY_AND_DATA_HANDLING.md](docs/SECURITY_AND_DATA_HANDLING.md) and
-[docs/DATA_SAFETY.md](docs/DATA_SAFETY.md) for specifics.
+[docs/SECURITY_AND_DATA_HANDLING.md](docs/SECURITY_AND_DATA_HANDLING.md) for
+specifics.
 
 **Actively maintained.** 7 releases so far, with updates landing roughly monthly
 (more often for fixes). Check the
@@ -213,7 +213,7 @@ EZLibrary is built to reduce risk during library mutation.
 
 For a detailed, code-referenced explanation of what gets backed up, what is
 atomic, and what happens if a write fails midway, see
-**[docs/DATA_SAFETY.md](docs/DATA_SAFETY.md)**.
+**[docs/SECURITY_AND_DATA_HANDLING.md](docs/SECURITY_AND_DATA_HANDLING.md)**.
 
 ## Requirements
 
@@ -278,7 +278,6 @@ Installer note:
 
 - [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
 - [docs/SECURITY_AND_DATA_HANDLING.md](docs/SECURITY_AND_DATA_HANDLING.md)
-- [docs/DATA_SAFETY.md](docs/DATA_SAFETY.md)
 - [docs/CHANGELOG.md](docs/CHANGELOG.md)
 - [docs/ROADMAP.md](docs/ROADMAP.md)
 - [docs/PACKAGING_STANDALONE.md](docs/PACKAGING_STANDALONE.md)

@@ -41,7 +41,7 @@ In scope:
 
 - Data loss or corruption of `database V2`, `.crate` files, or audio files.
 - Failures in the backup / atomic-write / verification pipeline described in
-  [docs/DATA_SAFETY.md](docs/DATA_SAFETY.md).
+  [docs/SECURITY_AND_DATA_HANDLING.md](docs/SECURITY_AND_DATA_HANDLING.md).
 - Unexpected network exfiltration of library data.
 - Privilege-escalation or arbitrary-code-execution issues in the app, installer,
   or Finder Quick Action.
@@ -57,7 +57,7 @@ Out of scope:
 
 For a detailed, code-referenced explanation of what is backed up before writes,
 what is atomic, and what happens if a write fails midway, see
-[docs/DATA_SAFETY.md](docs/DATA_SAFETY.md).
+[docs/SECURITY_AND_DATA_HANDLING.md](docs/SECURITY_AND_DATA_HANDLING.md).
 
 ## Supported versions
 
