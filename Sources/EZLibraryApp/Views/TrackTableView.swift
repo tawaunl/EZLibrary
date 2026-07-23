@@ -568,6 +568,13 @@ private struct TrackNSTableView: NSViewRepresentable {
                   let textField = cell.textField as? EditableTextField
             else { return }
 
+            // The title cell shows the filename as a display-only fallback when a
+            // track has no ID3 title. Start editing from the real (possibly empty)
+            // value so pressing return without typing doesn't persist the filename.
+            if textField.columnID == "title" {
+                textField.stringValue = parent.tracks[row].title
+            }
+
             textField.isEditable = true
             table.window?.makeFirstResponder(textField)
             textField.currentEditor()?.selectAll(nil)
@@ -678,6 +685,13 @@ private struct TrackNSTableView: NSViewRepresentable {
             case "number":
                 return track.trackNumber.map(String.init) ?? "—"
             case "title":
+                // Fall back to the filename (without extension) when a track has
+                // no ID3 title, so rows aren't blank. This is display-only; the
+                // underlying empty title is used when editing (see beginInlineEdit).
+                let trimmedTitle = track.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmedTitle.isEmpty {
+                    return track.fileURL.deletingPathExtension().lastPathComponent
+                }
                 return track.title
             case "artist":
                 return track.artist
