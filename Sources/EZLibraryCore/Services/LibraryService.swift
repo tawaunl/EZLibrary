@@ -209,21 +209,31 @@ public final class LibraryService: ObservableObject {
         guard !snapshot.isEmpty else { return }
         let snapshotIDs = snapshot.map(\.id)
 
-        playCountLoadTask = Task.detached(priority: .utility) { [weak self] in
+        // Run the expensive per-file play-count scan off the main actor and
+        // return only Sendable data, then apply it back here. The outer `Task`
+        // inherits this type's `@MainActor` isolation, so `self` is never sent
+        // into a nonisolated context (which older Swift toolchains reject).
+        playCountLoadTask = Task { [weak self] in
+            guard let resolved = await Self.readPlayCounts(for: snapshot) else { return }
+            guard !Task.isCancelled else { return }
+            self?.applyPlayCounts(resolved, forSnapshotIDs: snapshotIDs)
+        }
+    }
+
+    /// Reads Serato play counts per file on a detached background task.
+    /// `nonisolated` and returns only Sendable values, so it never touches
+    /// actor-isolated state.
+    nonisolated private static func readPlayCounts(for snapshot: [Track]) async -> [UUID: Int]? {
+        await Task.detached(priority: .utility) {
             var counts: [UUID: Int] = [:]
             for track in snapshot {
-                if Task.isCancelled { return }
+                if Task.isCancelled { return nil }
                 if let count = SeratoPlayCountReader.playCount(forFileAt: track.fileURL) {
                     counts[track.id] = count
                 }
             }
-
-            if Task.isCancelled || counts.isEmpty { return }
-            let resolved = counts
-            await MainActor.run {
-                self?.applyPlayCounts(resolved, forSnapshotIDs: snapshotIDs)
-            }
-        }
+            return counts.isEmpty ? nil : counts
+        }.value
     }
 
     private func applyPlayCounts(_ counts: [UUID: Int], forSnapshotIDs snapshotIDs: [UUID]) {

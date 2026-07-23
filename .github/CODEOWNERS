@@ -1,0 +1,8 @@
+# Code owners for EZLibrary.
+#
+# The owner listed here is automatically requested for review on any pull
+# request that changes matching files. Combined with branch protection on
+# `main`, this keeps every contribution reviewable by the maintainer.
+
+# Default owner for everything in the repo.
+* @tawaunl

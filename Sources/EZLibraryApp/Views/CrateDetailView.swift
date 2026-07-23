@@ -80,77 +80,11 @@ struct CrateDetailView: View {
 
                 VStack(alignment: .leading, spacing: 0) {
                     if isEditableCrate {
-                        HStack {
-                            Button("Manage Tracks") {
-                                isManagingTracks = true
-                            }
-                            .help("Add or remove tracks in this crate.")
-                            Button("Lookup ID3 Online") {
-                                metadataLookupTrack = selectedTracksForActions.first
-                            }
-                            .disabled(selectedTracksForActions.count != 1)
-                            .help("Search online sources for metadata for the selected track. Select exactly one track.")
-
-                            Button("Delete From Crate") {
-                                pendingDeleteTracks = selectedTracksForActions
-                                pendingDeleteCrate = crate
-                                performOrConfirmQuickDelete(.fromCrate)
-                            }
-                            .disabled(selectedTracksForActions.isEmpty)
-                            .help("Remove the selected tracks from this crate only. They stay in the library.")
-
-                            Button("Delete From Library") {
-                                pendingDeleteTracks = selectedTracksForActions
-                                pendingDeleteCrate = crate
-                                performOrConfirmQuickDelete(.fromLibrary)
-                            }
-                            .disabled(selectedTracksForActions.isEmpty)
-                            .help("Remove the selected tracks from the Serato library. Files stay on disk.")
-
-                            Button("Delete From Computer") {
-                                pendingDeleteTracks = selectedTracksForActions
-                                pendingDeleteCrate = crate
-                                performOrConfirmQuickDelete(.fromComputer)
-                            }
-                            .disabled(selectedTracksForActions.isEmpty)
-                            .help("Remove the selected tracks from the library and move their files to the Trash.")
-
-                            Toggle("Confirm Deletes", isOn: $confirmDeleteActions)
-                                .toggleStyle(.switch)
-                                .controlSize(.small)
-                                .help("When off, top delete buttons execute immediately.")
-                            Spacer()
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.top, 8)
+                        crateToolbar(crate: crate)
                     }
 
                     if genreTags.count > 1 {
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack(spacing: 10) {
-                                statTag(title: "Tracks", value: matchedTracks.count, isActive: selectedGenreFilter == nil) {
-                                    selectedGenreFilter = nil
-                                }
-                                statTag(title: "Artists", value: content.artistCount)
-                                statTag(title: "Genres", value: genreTags.count)
-                                Spacer(minLength: 0)
-                            }
-
-                            ScrollView(.horizontal, showsIndicators: false) {
-                                HStack(spacing: 6) {
-                                    genreTag("All", isActive: selectedGenreFilter == nil) {
-                                        selectedGenreFilter = nil
-                                    }
-                                    ForEach(genreTags, id: \.self) { genre in
-                                        genreTag(genre, isActive: selectedGenreFilter == genre) {
-                                            selectedGenreFilter = selectedGenreFilter == genre ? nil : genre
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 8)
+                        genreFilterSection(matchedTracks: matchedTracks, genreTags: genreTags)
                     }
 
                     TrackTableView(
@@ -216,7 +150,7 @@ struct CrateDetailView: View {
         .onChange(of: filterMode) {
             rebuildContent()
         }
-        .onChange(of: libraryService.tracks) {
+        .onChange(of: libraryService.revision) {
             rebuildContent()
         }
         .onChange(of: libraryService.crates) {
@@ -431,6 +365,81 @@ struct CrateDetailView: View {
                 metadataSaveMessageTask = nil
             }
         }
+    }
+
+    @ViewBuilder
+    private func crateToolbar(crate: Crate) -> some View {
+        HStack {
+            Button("Manage Tracks") {
+                isManagingTracks = true
+            }
+            .help("Add or remove tracks in this crate.")
+            Button("Lookup ID3 Online") {
+                metadataLookupTrack = selectedTracksForActions.first
+            }
+            .disabled(selectedTracksForActions.count != 1)
+            .help("Search online sources for metadata for the selected track. Select exactly one track.")
+
+            Button("Delete From Crate") {
+                pendingDeleteTracks = selectedTracksForActions
+                pendingDeleteCrate = crate
+                performOrConfirmQuickDelete(.fromCrate)
+            }
+            .disabled(selectedTracksForActions.isEmpty)
+            .help("Remove the selected tracks from this crate only. They stay in the library.")
+
+            Button("Delete From Library") {
+                pendingDeleteTracks = selectedTracksForActions
+                pendingDeleteCrate = crate
+                performOrConfirmQuickDelete(.fromLibrary)
+            }
+            .disabled(selectedTracksForActions.isEmpty)
+            .help("Remove the selected tracks from the Serato library. Files stay on disk.")
+
+            Button("Delete From Computer") {
+                pendingDeleteTracks = selectedTracksForActions
+                pendingDeleteCrate = crate
+                performOrConfirmQuickDelete(.fromComputer)
+            }
+            .disabled(selectedTracksForActions.isEmpty)
+            .help("Remove the selected tracks from the library and move their files to the Trash.")
+
+            Toggle("Confirm Deletes", isOn: $confirmDeleteActions)
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .help("When off, top delete buttons execute immediately.")
+            Spacer()
+        }
+        .padding(.horizontal, 8)
+        .padding(.top, 8)
+    }
+
+    private func genreFilterSection(matchedTracks: [Track], genreTags: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                statTag(title: "Tracks", value: matchedTracks.count, isActive: selectedGenreFilter == nil) {
+                    selectedGenreFilter = nil
+                }
+                statTag(title: "Artists", value: content.artistCount)
+                statTag(title: "Genres", value: genreTags.count)
+                Spacer(minLength: 0)
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    genreTag("All", isActive: selectedGenreFilter == nil) {
+                        selectedGenreFilter = nil
+                    }
+                    ForEach(genreTags, id: \.self) { genre in
+                        genreTag(genre, isActive: selectedGenreFilter == genre) {
+                            selectedGenreFilter = selectedGenreFilter == genre ? nil : genre
+                        }
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 8)
     }
 
     private func statTag(title: String, value: Int, isActive: Bool = false, action: (() -> Void)? = nil) -> some View {

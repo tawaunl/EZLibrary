@@ -118,51 +118,60 @@ struct ContentView: View {
         Set((crateHierarchy.hiddenNodes + smartCrateHierarchy.hiddenNodes).map(\.id)).count
     }
 
-    var body: some View {
-        Group {
-            VStack(spacing: 0) {
-                DependencyReadinessBanner(model: dependencyReadiness)
-                HSplitView {
-                    sidebar
-                    middleContent
-                        .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
-                }
+    private var mainStack: some View {
+        VStack(spacing: 0) {
+            DependencyReadinessBanner(model: dependencyReadiness)
+            HSplitView {
+                sidebar
+                middleContent
+                    .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
+            }
 
-                if let activeAudioTrack {
-                    Divider()
-                    HStack {
-                        TrackAudioPlayerPanel(
-                            track: activeAudioTrack,
-                            activationToken: audioActivationToken,
-                            onPrevious: canPlayPreviousAudioTrack ? { playAdjacentAudioTrack(offset: -1) } : nil,
-                            onNext: canPlayNextAudioTrack ? { playAdjacentAudioTrack(offset: 1) } : nil
-                        )
-                        Spacer(minLength: 0)
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 8)
-                    .background(Color(nsColor: .controlBackgroundColor).opacity(0.35))
+            if let activeAudioTrack {
+                Divider()
+                HStack {
+                    TrackAudioPlayerPanel(
+                        track: activeAudioTrack,
+                        activationToken: audioActivationToken,
+                        onPrevious: canPlayPreviousAudioTrack ? { playAdjacentAudioTrack(offset: -1) } : nil,
+                        onNext: canPlayNextAudioTrack ? { playAdjacentAudioTrack(offset: 1) } : nil
+                    )
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 8)
+                .background(Color(nsColor: .controlBackgroundColor).opacity(0.35))
+            }
+        }
+    }
+
+    /// The main stack plus its lifecycle/reactive modifiers, split off from
+    /// `body` so the type-checker handles this chain and the sheet/dialog
+    /// chain as two smaller expressions instead of one very slow one.
+    private var mainStackWithLifecycle: some View {
+        mainStack
+            .task {
+                libraryPathDraft = libraryService.libraryDirectory.path
+                await reloadLibraryAsync()
+            }
+            .onChange(of: selectedSection) {
+                resetTransientFilters()
+            }
+            .onChange(of: selectedCrateNode?.id) {
+                if selectedSection == .crates {
+                    crateListFilterMode = .all
                 }
             }
-        }
-        .task {
-            libraryPathDraft = libraryService.libraryDirectory.path
-            await reloadLibraryAsync()
-        }
-        .onChange(of: selectedSection) {
-            resetTransientFilters()
-        }
-        .onChange(of: selectedCrateNode?.id) {
-            if selectedSection == .crates {
-                crateListFilterMode = .all
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.willResignActiveNotification)) { _ in
+                resetTransientFilters()
             }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willResignActiveNotification)) { _ in
-            resetTransientFilters()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .openEZLibrarySettings)) { _ in
-            showSettingsSheet = true
-        }
+            .onReceive(NotificationCenter.default.publisher(for: .openEZLibrarySettings)) { _ in
+                showSettingsSheet = true
+            }
+    }
+
+    var body: some View {
+        mainStackWithLifecycle
         .sheet(isPresented: $showSettingsSheet) {
             AppSettingsSheet()
         }

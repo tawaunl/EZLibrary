@@ -16,7 +16,7 @@ import EZLibraryCore
 /// top-level Tracks section and crate detail views, so both look and
 /// behave consistently.
 struct TrackTableView: View {
-    enum NumberingMode {
+    enum NumberingMode: Equatable {
         case metadata
         case listOrder
     }
@@ -75,6 +75,24 @@ struct TrackTableView: View {
     }
 
     var body: some View {
+        tableStack
+            .onAppear { scheduleRecompute() }
+            .onChange(of: recomputeKey) { scheduleRecompute() }
+            .onChange(of: searchText) { scheduleRecompute(debounce: true) }
+            .onChange(of: selectedTrackKeys) { notifySelectionChanged() }
+            .onDeleteCommand {
+                guard let onDeleteRequested else { return }
+                let selected = selectedDisplayedTracks()
+                guard !selected.isEmpty else { return }
+                onDeleteRequested(selected)
+            }
+            .onDisappear {
+                recomputeTask?.cancel()
+                recomputeTask = nil
+            }
+    }
+
+    private var tableStack: some View {
         VStack(spacing: 8) {
             TextField("Search title, artist, genre...", text: $searchText)
                 .textFieldStyle(.roundedBorder)
@@ -88,12 +106,7 @@ struct TrackTableView: View {
                 tracks: displayedTracks,
                 trackKeys: displayedKeys,
                 selectedTrackKeys: $selectedTrackKeys,
-                sortColumn: Binding(
-                    get: { sortColumn.rawValue },
-                    set: { newValue in
-                        sortColumn = SortColumn(rawValue: newValue) ?? .number
-                    }
-                ),
+                sortColumn: sortColumnBinding,
                 sortAscending: $sortAscending,
                 dragPayloadForRow: { rowIndex, selectedKeys in
                     dragPayload(for: rowIndex, selectedKeys: selectedKeys)
@@ -103,49 +116,38 @@ struct TrackTableView: View {
                 onTrackActivated: onTrackActivated
             )
         }
-        .onAppear {
-            scheduleRecompute()
-        }
-        .onChange(of: searchText) {
-            scheduleRecompute(debounce: true)
-        }
-        .onChange(of: sortColumn) {
-            scheduleRecompute()
-        }
-        .onChange(of: sortAscending) {
-            scheduleRecompute()
-        }
-        .onChange(of: numberingMode) {
-            scheduleRecompute()
-        }
-        .onChange(of: tracks.count) {
-            scheduleRecompute()
-        }
-        .onChange(of: tracks.first?.id) {
-            scheduleRecompute()
-        }
-        .onChange(of: tracks.last?.id) {
-            scheduleRecompute()
-        }
-        .onChange(of: playCountSignature) {
-            scheduleRecompute()
-        }
-        .onDisappear {
-            recomputeTask?.cancel()
-            recomputeTask = nil
-        }
-        .onDeleteCommand {
-            guard let onDeleteRequested else { return }
-            let selected = selectedDisplayedTracks()
-            guard !selected.isEmpty else { return }
-            onDeleteRequested(selected)
-        }
-        .onChange(of: selectedTrackKeys) {
-            notifySelectionChanged()
-        }
-        .onChange(of: displayedTracks) {
-            notifySelectionChanged()
-        }
+    }
+
+    private var sortColumnBinding: Binding<String> {
+        Binding(
+            get: { sortColumn.rawValue },
+            set: { newValue in sortColumn = SortColumn(rawValue: newValue) ?? .number }
+        )
+    }
+
+    /// One `Equatable` value combining every recompute trigger except the
+    /// debounced search text, so `body` needs a single `onChange` instead of a
+    /// long modifier chain the type-checker spends seconds on.
+    private struct RecomputeKey: Equatable {
+        let count: Int
+        let firstID: UUID?
+        let lastID: UUID?
+        let sortColumn: SortColumn
+        let sortAscending: Bool
+        let numberingMode: NumberingMode
+        let playCountSignature: Int
+    }
+
+    private var recomputeKey: RecomputeKey {
+        RecomputeKey(
+            count: tracks.count,
+            firstID: tracks.first?.id,
+            lastID: tracks.last?.id,
+            sortColumn: sortColumn,
+            sortAscending: sortAscending,
+            numberingMode: numberingMode,
+            playCountSignature: playCountSignature
+        )
     }
 
     private func notifySelectionChanged() {
@@ -199,6 +201,10 @@ struct TrackTableView: View {
                 displayedTracks = result.tracks
                 displayedKeys = result.keys
                 selectedTrackKeys = selectedTrackKeys.intersection(Set(result.keys))
+                // Displayed set changed; tell the parent so it can re-derive
+                // its selection (replaces the old onChange(of: displayedTracks)
+                // which diffed the whole array on every body pass).
+                notifySelectionChanged()
             }
         }
     }
