@@ -423,30 +423,42 @@ struct DuplicateTracksView: View {
     }
 
     private var bulkActionsBar: some View {
-        let totalDeletable = filteredGroups.reduce(0) { $0 + deletableTracks(for: $1).count }
-        return HStack(spacing: 8) {
-            Button("Pick Best (All)") {
-                pickBestForAll()
+        let totalDeletable = bulkDeletableGroups.reduce(0) { $0 + deletableTracks(for: $1).count }
+        let excluded = groupsExcludedFromBulk
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Button("Pick Best (All)") {
+                    pickBestForAll()
+                }
+                .help("Select the most complete copy (oldest on ties) to keep in every group.")
+
+                Button("Delete All Others → Library") {
+                    requestMassDeletion(fromComputer: false)
+                }
+                .disabled(totalDeletable == 0)
+                .help("Across every group, remove all copies except the kept one from the Serato library. Files stay on disk.")
+
+                Button("Delete All Others → Computer") {
+                    requestMassDeletion(fromComputer: true)
+                }
+                .disabled(totalDeletable == 0)
+                .help("Across every group, remove all copies except the kept one and move their files to the Trash.")
+
+                Text("\(totalDeletable) removable")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Spacer(minLength: 0)
             }
-            .help("Select the most complete copy (oldest on ties) to keep in every group.")
 
-            Button("Delete All Others → Library") {
-                requestMassDeletion(fromComputer: false)
+            if excluded > 0 {
+                Label(
+                    "\(excluded) group\(excluded == 1 ? "" : "s") held back from bulk actions — the copies sound alike but aren't identical. Review \(excluded == 1 ? "it" : "them") on the card.",
+                    systemImage: "hand.raised"
+                )
+                .font(.caption2)
+                .foregroundStyle(.orange)
             }
-            .disabled(totalDeletable == 0)
-            .help("Across every group, remove all copies except the kept one from the Serato library. Files stay on disk.")
-
-            Button("Delete All Others → Computer") {
-                requestMassDeletion(fromComputer: true)
-            }
-            .disabled(totalDeletable == 0)
-            .help("Across every group, remove all copies except the kept one and move their files to the Trash.")
-
-            Text("\(totalDeletable) removable")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            Spacer(minLength: 0)
         }
     }
 
@@ -1087,18 +1099,33 @@ struct DuplicateTracksView: View {
         )
     }
 
+    /// Groups the bulk actions are allowed to touch.
+    ///
+    /// Groups flagged "listen before deleting" are excluded: that flag means
+    /// the audio was close but not identical, which is exactly the case that
+    /// shouldn't be swept up by a one-click delete-everything. They remain
+    /// deletable from their own card, after a listen.
+    private var bulkDeletableGroups: [DuplicateTrackGroup] {
+        filteredGroups.filter { needsListenByGroupID[$0.id] != true }
+    }
+
+    private var groupsExcludedFromBulk: Int {
+        filteredGroups.count - bulkDeletableGroups.count
+    }
+
     private func requestMassDeletion(fromComputer: Bool) {
-        let tracks = filteredGroups.flatMap { deletableTracks(for: $0) }
+        let groups = bulkDeletableGroups
+        let tracks = groups.flatMap { deletableTracks(for: $0) }
         guard !tracks.isEmpty else { return }
 
         var mapping: [String: String] = [:]
-        for group in filteredGroups {
+        for group in groups {
             mapping.merge(keptPathMapping(for: group, deleting: deletableTracks(for: group))) { current, _ in current }
         }
 
         confirmOrPerform(
             PendingDeletion(
-                groupLabel: "\(filteredGroups.count) groups",
+                groupLabel: "\(groups.count) groups",
                 keepLabel: "the best copy in each group",
                 tracks: tracks,
                 fromComputer: fromComputer,
@@ -1131,32 +1158,48 @@ struct DuplicateTracksView: View {
         // holds an open handle on whatever it loaded.
         stopAudition()
 
+        // Checked up front, before anything destructive.
+        if let blocker = DuplicateDeletionPlanner.blocker() {
+            errorMessage = blocker.localizedDescription
+            return
+        }
+
         let deletePaths = Set(pending.tracks.map(\.seratoStoredPath))
 
-        do {
-            var trashedCount = 0
-            if pending.fromComputer {
-                // Never trash a physical file that a surviving library entry
-                // still references (e.g. two DB entries pointing at one file).
-                let retainedFilePaths = Set(
-                    libraryService.tracks
-                        .filter { !deletePaths.contains($0.seratoStoredPath) }
-                        .map { $0.fileURL.standardizedFileURL.path }
+        // Resolved before the library is rewritten underneath us.
+        let filesToTrash = pending.fromComputer
+            ? DuplicateDeletionPlanner.filesToTrash(
+                deletedTracks: pending.tracks,
+                survivingTracks: DuplicateDeletionPlanner.survivingTracks(
+                    in: libraryService.tracks,
+                    deletedPaths: deletePaths
                 )
+            )
+            : []
 
-                for track in pending.tracks {
-                    let filePath = track.fileURL.standardizedFileURL.path
-                    guard FileManager.default.fileExists(atPath: filePath) else { continue }
-                    if retainedFilePaths.contains(filePath) { continue }
-                    _ = try FileManager.default.trashItem(at: track.fileURL, resultingItemURL: nil)
-                    trashedCount += 1
-                }
-            }
-
+        do {
+            // Library and crates are updated first. If this throws, no file has
+            // been touched and the user is exactly where they started. Doing it
+            // the other way round can strand files in the Trash with the
+            // library still referencing them.
             let cratePlan = try removeFromLibraryMetadata(
                 paths: deletePaths,
                 keptPathByDeletedPath: pending.keptPathByDeletedPath
             )
+
+            var trashedCount = 0
+            var failedToTrash: [String] = []
+            for fileURL in filesToTrash {
+                do {
+                    _ = try FileManager.default.trashItem(at: fileURL, resultingItemURL: nil)
+                    trashedCount += 1
+                } catch {
+                    // One unwritable file shouldn't abort the rest; the library
+                    // edit already succeeded either way.
+                    failedToTrash.append(fileURL.lastPathComponent)
+                }
+            }
+
             onLibraryChanged()
             rebuildDuplicateGroups()
 
@@ -1166,6 +1209,9 @@ struct DuplicateTracksView: View {
                 : "Removed \(count) duplicate\(count == 1 ? "" : "s") from the library."
             if let crateSummary = CrateReconciliationService.summary(for: cratePlan) {
                 message += " \(crateSummary)"
+            }
+            if !failedToTrash.isEmpty {
+                message += " \(failedToTrash.count) file\(failedToTrash.count == 1 ? "" : "s") could not be moved to the Trash and are still on disk: \(failedToTrash.prefix(3).joined(separator: ", "))."
             }
             successMessage = message
         } catch {

@@ -244,6 +244,46 @@ Within a branch, the lowest pairwise score decides confidence. At or above
 auto-select. Below it they are `similar` — still shown, but flagged "listen
 before deleting" and never pre-selected.
 
+## What deleting actually does
+
+"Delete → Computer" runs in this order:
+
+1. **Refuse if Serato is running**, before anything is touched. The crate
+   writer already refused in this case, but it refused *after* the files were
+   trashed, leaving the library and crates pointing into the Trash.
+2. Work out which files may be trashed — see below.
+3. Snapshot and rewrite `database.db`.
+4. Snapshot and reconcile every affected crate.
+5. **Only then** move files to the Trash, one at a time.
+
+Library and crates are written *before* any file is trashed, so a failure
+there leaves the user exactly where they started. The reverse order can strand
+files in the Trash with the library still referencing them. A file that can't
+be trashed is reported by name rather than aborting the rest — the library
+edit has already succeeded either way.
+
+Files go to the Trash via `trashItem`, never unlinked, so everything is
+recoverable from Finder.
+
+`DuplicateDeletionPlanner` decides what may be trashed, and lives in the core
+rather than the view so these rules are testable:
+
+- A file a **surviving** library entry still points at is never trashed. A
+  library can hold two entries for one file, and trashing it would break the
+  entry the user chose to keep.
+- Files already gone are skipped.
+- One file is never trashed twice, even when several deleted entries point at
+  it.
+- Paths are compared after standardizing, so `a/../b.mp3` and `b.mp3` are
+  recognized as the same file.
+
+### Bulk actions are more conservative than the cards
+
+"Delete All Others" skips any group flagged *listen before deleting* — the
+copies there sound alike but aren't bit-identical, which is exactly the case
+that shouldn't be swept up by one click. The bar says how many groups were
+held back, and they stay deletable from their own card after a listen.
+
 ## Crates are reconciled, not just stripped
 
 Deleting a duplicate used to remove its path from every crate. If a crate
