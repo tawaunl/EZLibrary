@@ -184,6 +184,22 @@ tab. Metadata grouping still runs on its own and is unchanged; pressing
 Tracks the audio proves distinct are dropped from their group and counted in
 the scan summary, so they are no longer offered for deletion.
 
+### Listening before deleting
+
+Every copy in a group has a play button, backed by the existing
+`TrackAudioPlayerViewModel` rather than a second player. One player is shared
+across the view, so starting a copy stops whatever was playing.
+
+Switching between copies in the same group **keeps the playhead** — the whole
+point of auditioning duplicates is hearing the same moment in both, not
+restarting from the top each time. `audition(track:startingAt:)` exists for
+that: unlike `load(track:)` it reloads even when the path is unchanged, which
+`load` deliberately skips.
+
+Playback stops before any delete, so the player isn't holding an open handle
+on a file being moved to the Trash, and it stops when a playing copy is
+ignored or scrolled out of the results by a rescan.
+
 Group IDs gain a suffix when audio splits a group, which deliberately resets
 any "ignore indefinitely" entry for the original group — the new groups are not
 the group the user chose to ignore.

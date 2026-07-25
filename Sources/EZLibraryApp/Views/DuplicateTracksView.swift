@@ -61,6 +61,14 @@ struct DuplicateTracksView: View {
     @State private var successMessage: String?
     @AppStorage(Self.confirmDeletesDefaultsKey) private var confirmDeletes = true
 
+    /// Shared player for auditioning copies. One player, not one per row, so
+    /// starting a copy stops whatever was playing.
+    @StateObject private var auditionPlayer = TrackAudioPlayerViewModel()
+    /// Stored path of the copy currently loaded for audition, if any.
+    @State private var auditioningPath: String?
+    /// Group the audition belongs to, so only that card shows the transport.
+    @State private var auditioningGroupID: String?
+
     /// Ignored indefinitely (persisted). Cleared only from the manage section.
     @StateObject private var ignoreStore = DuplicateIgnoreStore()
     /// Ignored just for this session ("ignore this time"); cleared on relaunch.
@@ -98,6 +106,18 @@ struct DuplicateTracksView: View {
         .onAppear {
             rebuildDuplicateGroups()
         }
+        .onDisappear {
+            stopAudition()
+        }
+        .onReceive(Timer.publish(every: 0.12, on: .main, in: .common).autoconnect()) { _ in
+            guard auditioningPath != nil else { return }
+            auditionPlayer.refreshProgress()
+        }
+        // Ignoring a copy (or its group) hides the row, so stop playing it.
+        .onChange(of: sessionIgnoredTrackPaths) { stopAuditionIfTrackVanished() }
+        .onChange(of: sessionIgnoredGroupIDs) { stopAuditionIfTrackVanished() }
+        .onChange(of: ignoreStore.ignoredTrackPaths) { stopAuditionIfTrackVanished() }
+        .onChange(of: ignoreStore.ignoredGroupIDs) { stopAuditionIfTrackVanished() }
         .onChange(of: libraryService.tracks.count) {
             rebuildDuplicateGroups()
         }
@@ -460,6 +480,10 @@ struct DuplicateTracksView: View {
 
             groupActionBar(group: group, bestPath: bestPath, deletable: deletable)
 
+            if auditioningGroupID == group.id {
+                auditionTransport(for: group)
+            }
+
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(group.tracks) { track in
                     trackRow(track: track, group: group, keptPath: kept, bestPath: bestPath)
@@ -542,8 +566,25 @@ struct DuplicateTracksView: View {
         let isBest = track.seratoStoredPath == bestPath
         let tagCount = DuplicateTracksService.completenessScore(for: track)
 
+        let isAuditioningThis = isAuditioning(track)
+
         return VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 6) {
+                Button {
+                    toggleAudition(of: track, in: group)
+                } label: {
+                    Image(systemName: isAuditioningThis && auditionPlayer.isPlaying
+                          ? "pause.circle.fill"
+                          : "play.circle")
+                        .foregroundStyle(isAuditioningThis ? Color.accentColor : Color.secondary)
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .disabled(track.isMissing)
+                .help(track.isMissing
+                      ? "This file is missing on disk."
+                      : "Listen to this copy. Switching copies keeps your place, so you can compare the same moment.")
+
                 Text(track.title.isEmpty ? track.fileURL.deletingPathExtension().lastPathComponent : track.title)
                     .font(.subheadline)
                 Text(DuplicateTracksService.versionLabel(for: track))
@@ -868,6 +909,103 @@ struct DuplicateTracksView: View {
         return parts.joined(separator: " · ") + "."
     }
 
+    // MARK: - Auditioning
+
+    private func isAuditioning(_ track: Track) -> Bool {
+        auditioningPath == track.seratoStoredPath
+    }
+
+    /// Plays a copy, or pauses it if it's already the one playing.
+    ///
+    /// Switching to a different copy carries the playhead across, so two
+    /// copies can be compared at the same moment in the music — the point of
+    /// auditioning duplicates at all.
+    private func toggleAudition(of track: Track, in group: DuplicateTrackGroup) {
+        if isAuditioning(track) {
+            auditionPlayer.togglePlayPause()
+            return
+        }
+
+        let carriedPosition = auditioningGroupID == group.id ? auditionPlayer.currentTime : 0
+        auditioningPath = track.seratoStoredPath
+        auditioningGroupID = group.id
+        auditionPlayer.audition(track: track, startingAt: carriedPosition)
+
+        if auditionPlayer.errorMessage != nil {
+            // Nothing is playing, so don't leave the row showing as active.
+            auditioningPath = nil
+            auditioningGroupID = nil
+        }
+    }
+
+    private func stopAudition() {
+        auditionPlayer.stopPlayback()
+        auditioningPath = nil
+        auditioningGroupID = nil
+    }
+
+    /// Stops playback if the loaded copy is no longer on screen — after a
+    /// delete, a rescan, or an ignore.
+    private func stopAuditionIfTrackVanished() {
+        guard let auditioningPath else { return }
+        let stillVisible = visibleGroups.contains { group in
+            group.tracks.contains { $0.seratoStoredPath == auditioningPath }
+        }
+        if !stillVisible {
+            stopAudition()
+        }
+    }
+
+    private func auditionTransport(for group: DuplicateTrackGroup) -> some View {
+        HStack(spacing: 8) {
+            Button {
+                auditionPlayer.togglePlayPause()
+            } label: {
+                Image(systemName: auditionPlayer.isPlaying ? "pause.fill" : "play.fill")
+            }
+            .controlSize(.small)
+            .help(auditionPlayer.isPlaying ? "Pause" : "Play")
+
+            Button {
+                auditionPlayer.skip(by: -10)
+            } label: {
+                Image(systemName: "gobackward.10")
+            }
+            .controlSize(.small)
+            .help("Back 10 seconds")
+
+            Slider(
+                value: Binding(
+                    get: { auditionPlayer.currentTime },
+                    set: { auditionPlayer.seek(to: $0) }
+                ),
+                in: 0...max(auditionPlayer.duration, 0.01)
+            )
+            .controlSize(.small)
+
+            Text("\(timeLabel(auditionPlayer.currentTime)) / \(timeLabel(auditionPlayer.duration))")
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.secondary)
+
+            Button {
+                stopAudition()
+            } label: {
+                Image(systemName: "stop.fill")
+            }
+            .controlSize(.small)
+            .help("Stop auditioning")
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.accentColor.opacity(0.08)))
+    }
+
+    private func timeLabel(_ seconds: Double) -> String {
+        guard seconds.isFinite, seconds >= 0 else { return "0:00" }
+        let total = Int(seconds.rounded())
+        return String(format: "%d:%02d", total / 60, total % 60)
+    }
+
     private func keptPath(for group: DuplicateTrackGroup) -> String? {
         let selected = keepSelectionByGroupID[group.id] ?? bestPathByGroupID[group.id]
         if let selected, group.tracks.contains(where: { $0.seratoStoredPath == selected }) {
@@ -932,6 +1070,10 @@ struct DuplicateTracksView: View {
         pendingDeletion = nil
         successMessage = nil
         errorMessage = nil
+
+        // Release the audio file before anything gets trashed — the player
+        // holds an open handle on whatever it loaded.
+        stopAudition()
 
         let deletePaths = Set(pending.tracks.map(\.seratoStoredPath))
 
