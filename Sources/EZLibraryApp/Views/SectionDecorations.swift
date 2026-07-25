@@ -10,6 +10,79 @@
 
 import SwiftUI
 
+/// An info button that shows its explanation on hover almost immediately, and
+/// stays open when clicked.
+///
+/// `.help()` can't be used for this: its tooltip delay is a system setting the
+/// app can't shorten, and the tooltip can't be pinned open long enough to read
+/// a couple of sentences. This shows a popover after a short hover, or
+/// immediately on click — and a clicked popover stays put until dismissed, so
+/// the pointer can leave without it vanishing mid-sentence.
+struct InfoHint: View {
+    let text: String
+    var systemImage: String = "info.circle"
+    /// Kept well under the system tooltip delay so it feels immediate, but not
+    /// zero — otherwise it fires while the pointer is just passing over.
+    var hoverDelay: Duration = .milliseconds(200)
+
+    @State private var isPresented = false
+    /// Opened by a click, so moving the pointer away shouldn't close it.
+    @State private var isPinned = false
+    @State private var hoverTask: Task<Void, Never>?
+
+    var body: some View {
+        Image(systemName: systemImage)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                hoverTask?.cancel()
+                if isPresented && isPinned {
+                    dismiss()
+                } else {
+                    isPresented = true
+                    isPinned = true
+                }
+            }
+            .onHover { isHovering in
+                hoverTask?.cancel()
+                guard !isPinned else { return }
+
+                if isHovering {
+                    hoverTask = Task {
+                        try? await Task.sleep(for: hoverDelay)
+                        guard !Task.isCancelled else { return }
+                        isPresented = true
+                    }
+                } else {
+                    isPresented = false
+                }
+            }
+            .onDisappear {
+                hoverTask?.cancel()
+            }
+            .popover(
+                isPresented: Binding(
+                    get: { isPresented },
+                    // Covers dismissal from outside, e.g. clicking elsewhere.
+                    set: { if !$0 { dismiss() } else { isPresented = true } }
+                ),
+                arrowEdge: .bottom
+            ) {
+                Text(text)
+                    .font(.callout)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: 280, alignment: .leading)
+                    .padding(12)
+            }
+            .accessibilityLabel("More information")
+            .accessibilityHint(text)
+    }
+
+    private func dismiss() {
+        isPresented = false
+        isPinned = false
+    }
+}
+
 struct SectionHeaderCard: View {
     let title: String
     let description: String

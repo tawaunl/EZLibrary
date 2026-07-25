@@ -1094,15 +1094,13 @@ struct DuplicateTracksView: View {
                     .controlSize(.mini)
                     .font(.caption2)
 
-                Image(systemName: "info.circle")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .help(
-                        keepAuditionPosition
-                            ? "On: playing another copy in this group picks up at the same timestamp, so you compare the same moment in both. Switching to a different group still starts from the beginning."
-                            : "Off: every copy starts from the beginning. Turn this on to A/B two copies at the same point in the music."
-                    )
-                    .accessibilityLabel("About keeping playback position")
+                InfoHint(
+                    text: keepAuditionPosition
+                        ? "On: playing another copy in this group picks up at the same timestamp, so you compare the same moment in both. Switching to a different group still starts from the beginning."
+                        : "Off: every copy starts from the beginning. Turn this on to A/B two copies at the same point in the music."
+                )
+                .font(.caption2)
+                .foregroundStyle(.secondary)
 
                 Spacer(minLength: 0)
             }
