@@ -13,6 +13,8 @@ import AppKit
 import EZLibraryCore
 
 struct LibraryConsolidationView: View {
+    private static let recentConsolidationLibraryFoldersDefaultsKey = "SeratoToolsRecentConsolidationLibraryFolders"
+
     @EnvironmentObject private var libraryService: LibraryService
 
     let onLibraryChanged: () -> Void
@@ -32,7 +34,7 @@ struct LibraryConsolidationView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 12) {
                 libraryLocationCard
                 heroCard
                 summaryRow
@@ -40,7 +42,7 @@ struct LibraryConsolidationView: View {
                 sourceGroupsCard
                 destinationSpaceCard
             }
-            .padding(16)
+            .padding(12)
         }
         .task {
             if libraryPathDraft.isEmpty {
@@ -122,11 +124,11 @@ struct LibraryConsolidationView: View {
     }
 
     private var heroCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             Text("Library Consolidation")
-                .font(.system(size: 32, weight: .semibold, design: .default))
+                .font(.system(size: 26, weight: .semibold, design: .default))
             Text("Map where your music is scattered, then copy or move everything into one central folder while rewriting Serato paths so crates and library references stay intact.")
-                .font(.body)
+                .font(.callout)
                 .foregroundStyle(.secondary)
 
             if let successMessage {
@@ -146,9 +148,9 @@ struct LibraryConsolidationView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .animation(.spring(response: 0.4, dampingFraction: 0.85), value: successMessage)
-        .padding(18)
+        .padding(14)
         .background(
-            RoundedRectangle(cornerRadius: 14)
+            RoundedRectangle(cornerRadius: 12)
                 .fill(
                     LinearGradient(
                         colors: [Color.accentColor.opacity(0.18), Color(nsColor: .windowBackgroundColor)],
@@ -158,36 +160,34 @@ struct LibraryConsolidationView: View {
                 )
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 14)
+            RoundedRectangle(cornerRadius: 12)
                 .stroke(Color.accentColor.opacity(0.22), lineWidth: 1)
         )
-        .glowCardStyle(radius: 10, opacity: 0.08)
+        .glowCardStyle(radius: 8, opacity: 0.06)
     }
 
     private var libraryLocationCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Main Serato Library")
-                .font(.title.weight(.semibold))
-
-            HStack(spacing: 10) {
-                TextField("Library folder", text: $libraryPathDraft)
-                    .textFieldStyle(.roundedBorder)
-                Button("Browse…") {
-                    chooseLibraryDirectory()
-                }
-                .help("Choose the main Serato library folder.")
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                FolderDropdownControl(
+                    label: "Library directory",
+                    path: $libraryPathDraft,
+                    recentsKey: Self.recentConsolidationLibraryFoldersDefaultsKey,
+                    browsePrompt: "Use Library",
+                    browseStartURL: URL(fileURLWithPath: libraryPathDraft.isEmpty ? libraryService.libraryDirectory.path : libraryPathDraft),
+                    suggestedPaths: [libraryService.libraryDirectory.path],
+                    onPathChanged: applyLibraryDirectory
+                )
                 Button("Apply") {
                     applyLibraryDirectory()
                 }
                 .help("Load the library from the entered folder path.")
+                Spacer(minLength: 0)
             }
-            .controlSize(.large)
-
-            Text("Using: \(libraryService.libraryDirectory.path)")
-                .font(.callout)
-                .foregroundStyle(.secondary)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 4)
         }
-        .padding(20)
+        .padding(6)
         .background(RoundedRectangle(cornerRadius: 12).fill(Color(nsColor: .controlBackgroundColor).opacity(0.55)))
         .glowCardStyle(radius: 8, opacity: 0.05)
     }
@@ -394,20 +394,6 @@ struct LibraryConsolidationView: View {
                 .stroke(accent ? Color.accentColor : Color.secondary.opacity(0.25), lineWidth: 1)
         )
         .glowCardStyle(radius: 8, opacity: 0.05)
-    }
-
-    private func chooseLibraryDirectory() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.prompt = "Use Library"
-        panel.directoryURL = URL(fileURLWithPath: libraryPathDraft.trimmingCharacters(in: .whitespacesAndNewlines))
-
-        if panel.runModal() == .OK, let url = panel.url {
-            libraryPathDraft = url.path
-            applyLibraryDirectory()
-        }
     }
 
     private func applyLibraryDirectory() {
