@@ -55,11 +55,29 @@ public struct VerifiedDuplicateGroup: Identifiable, Sendable {
     public let group: DuplicateTrackGroup
     public let status: FingerprintStatus
 
+    /// Other versions of this same recording that exist in the library —
+    /// "Intro", "Quick Hit", "Acapella".
+    ///
+    /// Present so the UI can say out loud that deleting here won't touch those
+    /// versions, and so a DJ can see the version set they own at a glance.
+    public let relatedVersions: [String]
+
+    /// Copies here are close but not bit-identical, so they are shown but not
+    /// pre-selected for deletion.
+    public let needsListenBeforeDeleting: Bool
+
     public var id: String { group.id }
 
-    public init(group: DuplicateTrackGroup, status: FingerprintStatus) {
+    public init(
+        group: DuplicateTrackGroup,
+        status: FingerprintStatus,
+        relatedVersions: [String] = [],
+        needsListenBeforeDeleting: Bool = false
+    ) {
         self.group = group
         self.status = status
+        self.relatedVersions = relatedVersions
+        self.needsListenBeforeDeleting = needsListenBeforeDeleting
     }
 }
 

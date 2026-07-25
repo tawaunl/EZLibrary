@@ -184,6 +184,78 @@ tab. Metadata grouping still runs on its own and is unchanged; pressing
 Tracks the audio proves distinct are dropped from their group and counted in
 the scan summary, so they are no longer offered for deletion.
 
+## Versions are not duplicates
+
+A DJ edit really is mostly the same audio as the track it came from, so
+fingerprinting alone groups versions a DJ needs to keep apart. Measured on
+real files:
+
+| Pair | Score | |
+| --- | --- | --- |
+| Quick Hit vs Quick Hit (copy) | 1.000 | true duplicate |
+| **Dirty vs Intro Dirty** | **0.880** | above threshold — different versions |
+| **Intro Dirty vs Quick Hit** | **0.898** | 281s vs 131s, still matched |
+| **Intro Clean vs Original** | **0.908** | different edits |
+| Dirty vs Acapella | 0.526 | correctly separate |
+
+Raising the threshold does not fix this. A Clean and Dirty pair differing only
+by a few censored words scores higher than any re-encode, so the two
+populations genuinely overlap.
+
+So versions are separated **structurally**, by the version descriptors parsed
+from the title, and an acoustic cluster becomes a `TrackVersionTree`:
+
+```
+No Diggity                      ← acoustic cluster (one recording)
+├── Dirty                       ← 1 copy, never offered for deletion
+├── Intro · Dirty               ← 1 copy, never offered for deletion
+└── Quick Hit · Dirty           ← 2 copies, these are the duplicates
+```
+
+Only copies inside one branch are ever treated as duplicates. Each resulting
+group also reports its sibling versions, so the UI can state which versions the
+scan deliberately kept out.
+
+On a 600-file slice this moved the audio scan from 144 groups/299 tracks to
+139/280 — 19 tracks that are version variants are no longer offered for
+deletion.
+
+### Version labels are compound
+
+`versionCategory` previously returned the first match only, so
+"No Diggity (Dirty Acapella)" was labelled plain "Dirty" — which put the
+acapella in the **same metadata duplicate group as the full dirty mix**, and
+offered it for deletion. That was a pre-existing hole in the ID3 path, not just
+the audio one.
+
+Labels now carry every descriptor found — `Quick Hit · Dirty`,
+`Dirty · Acapella` — because version is really several independent dimensions:
+the edit, the stem, and the lyric cut.
+
+`Mix` and `Original` are treated as generic modifiers and dropped when a real
+descriptor is present, since "Extended Mix" and "Extended" are the same version.
+Everything else is kept: over-splitting only costs a missed duplicate, while
+over-merging can cost a version the DJ needed.
+
+### Copies that are close but not identical
+
+Within a branch, the lowest pairwise score decides confidence. At or above
+0.95 (re-encodes measure 0.976-1.000) copies are `identical` and safe to
+auto-select. Below it they are `similar` — still shown, but flagged "listen
+before deleting" and never pre-selected.
+
+## Crates are reconciled, not just stripped
+
+Deleting a duplicate used to remove its path from every crate. If a crate
+referenced the copy being deleted and *not* the copy being kept, that silently
+dropped the song from the crate, and a crate built entirely from now-deleted
+copies emptied completely.
+
+`CrateReconciliationService` re-points instead: the kept copy takes the deleted
+copy's slot, in the same position, so the crate still plays the same music. If
+the kept copy is already in that crate the redundant entry is simply dropped,
+and any crate that would still end up empty is named in the result.
+
 ### Listening before deleting
 
 Every copy in a group has a play button, backed by the existing

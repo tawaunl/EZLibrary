@@ -51,6 +51,11 @@ struct DuplicateTracksView: View {
     /// Fingerprint verdicts from the last audio scan, keyed by group ID.
     /// Empty until the user runs one — groups are metadata matches by default.
     @State private var audioStatusByGroupID: [String: FingerprintStatus] = [:]
+    /// Sibling version labels per group, so a card can say which versions the
+    /// scan deliberately kept out of this group.
+    @State private var relatedVersionsByGroupID: [String: [String]] = [:]
+    /// Groups whose copies are similar but not bit-identical.
+    @State private var needsListenByGroupID: [String: Bool] = [:]
     @State private var isVerifyingAudio = false
     @State private var verifyTask: Task<Void, Never>?
     @State private var audioScanSummary: String?
@@ -83,6 +88,9 @@ struct DuplicateTracksView: View {
         let keepLabel: String
         let tracks: [Track]
         let fromComputer: Bool
+        /// Deleted stored path → the copy that survives it, so crate entries
+        /// can be re-pointed instead of dropped.
+        let keptPathByDeletedPath: [String: String]
     }
 
     var body: some View {
@@ -470,6 +478,26 @@ struct DuplicateTracksView: View {
                             audioStatusBadge(status)
                         }
                     }
+
+                    if let versions = relatedVersionsByGroupID[group.id], !versions.isEmpty {
+                        Label(
+                            "Other versions kept safe: \(versions.joined(separator: ", "))",
+                            systemImage: "arrow.triangle.branch"
+                        )
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .help("This track also exists in these versions. They're never grouped with this one, so deleting here can't remove them.")
+                    }
+
+                    if needsListenByGroupID[group.id] == true {
+                        Label(
+                            "Close but not identical — listen before deleting",
+                            systemImage: "exclamationmark.triangle"
+                        )
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.orange)
+                        .help("These copies share a version label and sound alike, but aren't bit-identical. They aren't pre-selected for deletion.")
+                    }
                 }
 
                 Spacer(minLength: 0)
@@ -744,6 +772,8 @@ struct DuplicateTracksView: View {
             // A fresh metadata scan invalidates the previous audio verdicts —
             // never carry a stale "verified" badge onto a regrouped library.
             audioStatusByGroupID = [:]
+            relatedVersionsByGroupID = [:]
+            needsListenByGroupID = [:]
             audioScanSummary = nil
             isScanning = false
         }
@@ -783,6 +813,12 @@ struct DuplicateTracksView: View {
                 duplicateGroups = verifiedGroups
                 audioStatusByGroupID = Dictionary(
                     uniqueKeysWithValues: result.groups.map { ($0.id, $0.status) }
+                )
+                relatedVersionsByGroupID = Dictionary(
+                    uniqueKeysWithValues: result.groups.map { ($0.id, $0.relatedVersions) }
+                )
+                needsListenByGroupID = Dictionary(
+                    uniqueKeysWithValues: result.groups.map { ($0.id, $0.needsListenBeforeDeleting) }
                 )
                 summary = DuplicateTracksService.summary(
                     forGroups: verifiedGroups,
@@ -851,6 +887,12 @@ struct DuplicateTracksView: View {
                 duplicateGroups = scannedGroups
                 audioStatusByGroupID = Dictionary(
                     uniqueKeysWithValues: result.groups.map { ($0.id, $0.status) }
+                )
+                relatedVersionsByGroupID = Dictionary(
+                    uniqueKeysWithValues: result.groups.map { ($0.id, $0.relatedVersions) }
+                )
+                needsListenByGroupID = Dictionary(
+                    uniqueKeysWithValues: result.groups.map { ($0.id, $0.needsListenBeforeDeleting) }
                 )
                 summary = DuplicateTracksService.summary(
                     forGroups: scannedGroups,
@@ -1039,7 +1081,8 @@ struct DuplicateTracksView: View {
                 groupLabel: "\(group.artist) - \(group.title)",
                 keepLabel: keepLabel,
                 tracks: tracks,
-                fromComputer: fromComputer
+                fromComputer: fromComputer,
+                keptPathByDeletedPath: keptPathMapping(for: group, deleting: tracks)
             )
         )
     }
@@ -1048,14 +1091,27 @@ struct DuplicateTracksView: View {
         let tracks = filteredGroups.flatMap { deletableTracks(for: $0) }
         guard !tracks.isEmpty else { return }
 
+        var mapping: [String: String] = [:]
+        for group in filteredGroups {
+            mapping.merge(keptPathMapping(for: group, deleting: deletableTracks(for: group))) { current, _ in current }
+        }
+
         confirmOrPerform(
             PendingDeletion(
                 groupLabel: "\(filteredGroups.count) groups",
                 keepLabel: "the best copy in each group",
                 tracks: tracks,
-                fromComputer: fromComputer
+                fromComputer: fromComputer,
+                keptPathByDeletedPath: mapping
             )
         )
+    }
+
+    /// Maps each copy being deleted to the copy that replaces it, so crates
+    /// keep playing the same music afterward.
+    private func keptPathMapping(for group: DuplicateTrackGroup, deleting tracks: [Track]) -> [String: String] {
+        guard let kept = keptPath(for: group) else { return [:] }
+        return Dictionary(uniqueKeysWithValues: tracks.map { ($0.seratoStoredPath, kept) })
     }
 
     private func confirmOrPerform(_ pending: PendingDeletion) {
@@ -1097,21 +1153,34 @@ struct DuplicateTracksView: View {
                 }
             }
 
-            try removeFromLibraryMetadata(paths: deletePaths)
+            let cratePlan = try removeFromLibraryMetadata(
+                paths: deletePaths,
+                keptPathByDeletedPath: pending.keptPathByDeletedPath
+            )
             onLibraryChanged()
             rebuildDuplicateGroups()
 
             let count = pending.tracks.count
-            successMessage = pending.fromComputer
+            var message = pending.fromComputer
                 ? "Moved \(trashedCount) file\(trashedCount == 1 ? "" : "s") to Trash and removed \(count) duplicate\(count == 1 ? "" : "s") from the library."
                 : "Removed \(count) duplicate\(count == 1 ? "" : "s") from the library."
+            if let crateSummary = CrateReconciliationService.summary(for: cratePlan) {
+                message += " \(crateSummary)"
+            }
+            successMessage = message
         } catch {
             errorMessage = error.localizedDescription
         }
     }
 
-    private func removeFromLibraryMetadata(paths: Set<String>) throws {
-        guard !paths.isEmpty else { return }
+    @discardableResult
+    private func removeFromLibraryMetadata(
+        paths: Set<String>,
+        keptPathByDeletedPath: [String: String]
+    ) throws -> CrateReconciliationPlan {
+        guard !paths.isEmpty else {
+            return CrateReconciliationPlan(changes: [:], emptiedCrateNames: [])
+        }
 
         let databaseURL = libraryService.databaseFile
         if FileManager.default.fileExists(atPath: databaseURL.path) {
@@ -1124,13 +1193,16 @@ struct DuplicateTracksView: View {
             try AtomicFileWriter.write(rewritten.data, to: databaseURL)
         }
 
-        for crate in libraryService.crates {
-            guard crate.fileURL?.pathExtension.lowercased() == "crate" else { continue }
-            if crate.trackPaths.contains(where: { paths.contains($0) }) {
-                let rewrittenPaths = crate.trackPaths.filter { !paths.contains($0) }
-                _ = try SeratoCrateEditor.rewriteTrackPaths(in: crate, to: rewrittenPaths)
-            }
-        }
+        // Crates get the surviving copy in the deleted copy's slot. Simply
+        // dropping the path would shorten every crate that referenced the
+        // deleted copy but not the kept one.
+        let plan = CrateReconciliationService.plan(
+            crates: libraryService.crates,
+            deletedPaths: paths,
+            keptPathForDeleted: keptPathByDeletedPath
+        )
+        try CrateReconciliationService.apply(plan, to: libraryService.crates)
+        return plan
     }
 
     private func statTag(title: String, value: String, accent: Bool = false) -> some View {

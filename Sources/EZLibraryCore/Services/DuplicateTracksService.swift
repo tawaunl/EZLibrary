@@ -111,7 +111,7 @@ public enum DuplicateTracksService {
                 id: representative.groupKey,
                 artist: representative.artistDisplay,
                 title: representative.titleDisplay,
-                versionLabel: representative.version.displayName,
+                versionLabel: versionDisplayName(for: representative.versions),
                 tracks: sortedTracks
             )
         }
@@ -135,7 +135,7 @@ public enum DuplicateTracksService {
     }
 
     public static func versionLabel(for track: Track) -> String {
-        versionCategory(for: titleSource(for: track)).displayName
+        versionDisplayName(for: versionCategories(for: titleSource(for: track)))
     }
 
     /// Counts how many meaningful ID3/metadata fields a track has populated.
@@ -204,7 +204,7 @@ public enum DuplicateTracksService {
         let track: Track
         let artistDisplay: String
         let titleDisplay: String
-        let version: VersionCategory
+        let versions: [VersionCategory]
         let groupKey: String
     }
 
@@ -282,14 +282,14 @@ public enum DuplicateTracksService {
         let artistKey = normalizedArtist(track.artist)
         guard !titleKey.isEmpty || !artistKey.isEmpty else { return nil }
 
-        let version = versionCategory(for: title)
-        let groupKey = "\(artistKey)|\(titleKey)|\(version.rawValue)"
+        let versions = versionCategories(for: title)
+        let groupKey = "\(artistKey)|\(titleKey)|\(versionKey(for: versions))"
 
         return Candidate(
             track: track,
             artistDisplay: displayArtist(for: track),
             titleDisplay: displayTitle(for: track),
-            version: version,
+            versions: versions,
             groupKey: groupKey
         )
     }
@@ -340,17 +340,50 @@ public enum DuplicateTracksService {
         (category, patterns.map { try! NSRegularExpression(pattern: $0) })
     }
 
-    private static func versionCategory(for title: String) -> VersionCategory {
+    /// Every version descriptor present in a title, not just the first match.
+    ///
+    /// A title carries independent dimensions — the edit ("Quick Hit",
+    /// "Intro"), the stem ("Acapella", "Instrumental") and the lyric cut
+    /// ("Clean", "Dirty") — and collapsing them to one label merges versions a
+    /// DJ needs apart. First-match-wins labelled "No Diggity (Dirty Acapella)"
+    /// as plain "Dirty", which put the acapella in the same duplicate group as
+    /// the full dirty mix and offered it for deletion.
+    private static func versionCategories(for title: String) -> [VersionCategory] {
         let normalizedTitle = normalized(title)
         let fullRange = NSRange(normalizedTitle.startIndex..., in: normalizedTitle)
 
+        var matched: [VersionCategory] = []
         for (category, matchers) in versionCategoryMatchers {
             if matchers.contains(where: { $0.firstMatch(in: normalizedTitle, options: [], range: fullRange) != nil }) {
-                return category
+                matched.append(category)
             }
         }
 
-        return titleContainsVersionHint(normalizedTitle) ? .other : .original
+        // "Mix" and "Original" are generic modifiers rather than descriptors:
+        // "Extended Mix" is the same version as "Extended", so combining them
+        // would split one version in two. Everything else is kept, because
+        // over-splitting only costs a missed duplicate while over-merging can
+        // cost a version the DJ needed.
+        let descriptors = matched.filter { $0 != .original && $0 != .mix }
+        if !descriptors.isEmpty {
+            return descriptors
+        }
+        if matched.contains(.mix) {
+            return [.mix]
+        }
+        if matched.contains(.original) {
+            return [.original]
+        }
+        return [titleContainsVersionHint(normalizedTitle) ? .other : .original]
+    }
+
+    /// Stable key for a version combination, e.g. `quickHit+dirty`.
+    private static func versionKey(for categories: [VersionCategory]) -> String {
+        categories.map(\.rawValue).joined(separator: "+")
+    }
+
+    private static func versionDisplayName(for categories: [VersionCategory]) -> String {
+        categories.map(\.displayName).joined(separator: " · ")
     }
 
     private static func titleContainsVersionHint(_ normalizedTitle: String) -> Bool {

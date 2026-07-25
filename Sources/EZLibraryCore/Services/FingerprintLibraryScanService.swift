@@ -199,11 +199,20 @@ public enum FingerprintLibraryScanService {
             }
         }
 
+        // An acoustic cluster is a *recording*, not a set of duplicates. A DJ
+        // edit scores 0.88-0.91 against the full version — above the match
+        // threshold — so clusters routinely mix Intro, Quick Hit and Acapella
+        // cuts a DJ needs to keep. Split each cluster into version branches and
+        // only offer copies inside one branch for deletion.
         var groups: [VerifiedDuplicateGroup] = []
         for (_, indices) in members where indices.count > 1 {
-            let tracks = indices.map { scannable[$0].track }
-                .sorted { $0.seratoStoredPath.localizedStandardCompare($1.seratoStoredPath) == .orderedAscending }
-            groups.append(makeGroup(from: tracks))
+            let cluster = indices.map { scannable[$0] }
+            guard let tree = TrackVersionTree.build(from: cluster) else { continue }
+
+            for branch in tree.branchesWithDuplicates {
+                let siblings = tree.versionLabels.filter { $0 != branch.versionLabel }
+                groups.append(makeGroup(from: branch, tree: tree, relatedVersions: siblings))
+            }
         }
 
         return groups.sorted { lhs, rhs in
@@ -214,23 +223,26 @@ public enum FingerprintLibraryScanService {
         }
     }
 
-    private static func makeGroup(from tracks: [Track]) -> VerifiedDuplicateGroup {
-        let best = DuplicateTracksService.bestTrack(in: tracks) ?? tracks[0]
-        let title = best.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let artist = best.artist.trimmingCharacters(in: .whitespacesAndNewlines)
-
+    private static func makeGroup(
+        from branch: TrackVersionBranch,
+        tree: TrackVersionTree,
+        relatedVersions: [String]
+    ) -> VerifiedDuplicateGroup {
+        let tracks = branch.copies
         let group = DuplicateTrackGroup(
             // Derived from membership so the ID is stable across rescans.
             id: "audio|" + (tracks.first?.seratoStoredPath ?? UUID().uuidString),
-            artist: artist.isEmpty ? "Unknown Artist" : artist,
-            title: title.isEmpty ? best.fileURL.deletingPathExtension().lastPathComponent : title,
-            versionLabel: DuplicateTracksService.versionLabel(for: best),
+            artist: tree.artist,
+            title: tree.title,
+            versionLabel: branch.versionLabel,
             tracks: tracks
         )
 
         return VerifiedDuplicateGroup(
             group: group,
-            status: tagsAgree(across: tracks) ? .audioConfirmed : .audioOnlyMatch
+            status: tagsAgree(across: tracks) ? .audioConfirmed : .audioOnlyMatch,
+            relatedVersions: relatedVersions,
+            needsListenBeforeDeleting: !branch.confidence.isSafeToAutoSelect
         )
     }
 
