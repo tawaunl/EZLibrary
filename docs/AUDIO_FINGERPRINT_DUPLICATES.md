@@ -104,19 +104,48 @@ MB rather than the ~190 MB a whole 50k library would.
 `-length` trades accuracy for speed roughly linearly (120s ≈ 0.14s/file, 60s ≈
 0.09s, 30s ≈ 0.04s) and is the tuning knob if scans need to be faster.
 
+## How a scan reads
+
+Verification is opt-in, from the **Verify by Audio** card in the Duplicates
+tab. Metadata grouping still runs on its own and is unchanged; pressing
+*Verify Groups* then re-derives the groups from the audio and badges each one:
+
+| Badge | Meaning |
+| --- | --- |
+| Audio verified | Every track was fingerprinted; they are the same recording. |
+| Audio verified (split) | Fingerprinting carved up a larger tag-matched group. |
+| Tags only | Could not fingerprint every track — reported, never upgraded. |
+
+Tracks the audio proves distinct are dropped from their group and counted in
+the scan summary, so they are no longer offered for deletion.
+
+Group IDs gain a suffix when audio splits a group, which deliberately resets
+any "ignore indefinitely" entry for the original group — the new groups are not
+the group the user chose to ignore.
+
 ## Status
 
-Implemented:
+Implemented end-to-end:
 
 - `AudioFingerprintMatcher` — fingerprint model, alignment/BER scoring, clustering.
 - `AudioFingerprintExtractor` — parallel `fpcalc -raw` extraction with the
   safe-attribution fallback and per-file failure isolation.
+- `AudioFingerprintCache` — binary on-disk cache keyed by path + size + mtime.
+- `FingerprintDuplicateService` — duration gating, verification, group splitting.
+- `DuplicateTracksView` — verify card, progress, per-group badges.
 
-Not yet built:
+Verified on real audio: six identically-tagged files reduce to the four that
+are genuinely one recording — one decoy rejected by the duration gate without
+being decoded, and a second, padded to a matching duration, rejected by audio.
+A rescan off the cache was 11x faster.
 
-- The on-disk fingerprint cache described above.
-- Wiring into `DuplicateTracksService` to confirm or split metadata groups.
-- `DuplicateTracksView` surfacing (confidence badge, scan progress).
+Possible follow-ups:
+
+- Reuse cached fingerprints for the AcoustID metadata lookup, which currently
+  re-runs `fpcalc` for its own compressed fingerprint.
+- A standalone whole-library acoustic scan that ignores tags entirely, for
+  duplicates whose metadata has nothing in common. This needs an index over
+  sub-fingerprints rather than the O(group²) compare used here.
 
 ## Requirements
 

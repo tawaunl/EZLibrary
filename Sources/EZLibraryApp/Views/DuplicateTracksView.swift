@@ -12,6 +12,26 @@ import SwiftUI
 import Foundation
 import EZLibraryCore
 
+/// Carries fingerprint scan progress back to the UI.
+///
+/// `AudioFingerprintExtractor` reports from its worker tasks, so the callback
+/// needs a `Sendable` destination — a `@MainActor` object is implicitly one,
+/// and republishes on the main actor for SwiftUI.
+@MainActor
+final class FingerprintScanProgress: ObservableObject {
+    @Published var completed = 0
+    @Published var total = 0
+
+    var fraction: Double {
+        total > 0 ? Double(completed) / Double(total) : 0
+    }
+
+    func reset(total: Int) {
+        completed = 0
+        self.total = total
+    }
+}
+
 struct DuplicateTracksView: View {
     @EnvironmentObject private var libraryService: LibraryService
 
@@ -27,6 +47,14 @@ struct DuplicateTracksView: View {
     @State private var bestPathByGroupID: [String: String] = [:]
     @State private var isScanning = false
     @State private var rebuildTask: Task<Void, Never>?
+
+    /// Fingerprint verdicts from the last audio scan, keyed by group ID.
+    /// Empty until the user runs one — groups are metadata matches by default.
+    @State private var audioStatusByGroupID: [String: FingerprintStatus] = [:]
+    @State private var isVerifyingAudio = false
+    @State private var verifyTask: Task<Void, Never>?
+    @State private var audioScanSummary: String?
+    @StateObject private var audioProgress = FingerprintScanProgress()
     @State private var pendingDeletion: PendingDeletion?
     @State private var errorMessage: String?
     @State private var successMessage: String?
@@ -58,6 +86,7 @@ struct DuplicateTracksView: View {
                 )
 
                 summaryCard
+                audioVerificationCard
                 searchCard
                 messagesBanner
                 resultsCard
@@ -230,6 +259,64 @@ struct DuplicateTracksView: View {
         .background(RoundedRectangle(cornerRadius: 12).fill(Color(nsColor: .controlBackgroundColor).opacity(0.55)))
     }
 
+    private var isFingerprintingAvailable: Bool {
+        AudioFingerprintService.fpcalcExecutablePath() != nil
+    }
+
+    private var audioVerificationCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Text("Verify by Audio")
+                    .font(.title3.weight(.semibold))
+                Spacer(minLength: 0)
+
+                if isVerifyingAudio {
+                    Button("Cancel") {
+                        verifyTask?.cancel()
+                        isVerifyingAudio = false
+                    }
+                    .controlSize(.small)
+                } else {
+                    Button("Verify Groups") {
+                        verifyWithAudio()
+                    }
+                    .controlSize(.small)
+                    .disabled(duplicateGroups.isEmpty || isScanning || !isFingerprintingAvailable)
+                    .help("Fingerprint the audio to confirm each group, splitting tracks that only share tags.")
+                }
+            }
+
+            Text("Compares how tracks actually sound, so copies with different filenames or wrong tags still group together — and tracks that merely share a title get separated.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if !isFingerprintingAvailable {
+                Text("Requires the fpcalc scanner. Install it with: brew install chromaprint")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.orange)
+            }
+
+            if isVerifyingAudio {
+                VStack(alignment: .leading, spacing: 4) {
+                    ProgressView(value: audioProgress.fraction)
+                    Text(audioProgress.total > 0
+                         ? "Fingerprinting \(audioProgress.completed) of \(audioProgress.total)…"
+                         : "Preparing…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if let audioScanSummary {
+                Text(audioScanSummary)
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(.green)
+            }
+        }
+        .padding(16)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Color(nsColor: .controlBackgroundColor).opacity(0.55)))
+    }
+
     private var searchCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             TextField("Search title, artist, version, or path", text: $searchText)
@@ -341,6 +428,10 @@ struct DuplicateTracksView: View {
                                 Capsule().fill((group.hasDifferentFilenames ? Color.orange : Color.green).opacity(0.16))
                             )
                             .foregroundStyle(group.hasDifferentFilenames ? Color.orange : Color.green)
+
+                        if let status = audioStatusByGroupID[group.id] {
+                            audioStatusBadge(status)
+                        }
                     }
                 }
 
@@ -367,6 +458,28 @@ struct DuplicateTracksView: View {
             RoundedRectangle(cornerRadius: 12)
                 .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
         )
+    }
+
+    private func audioStatusBadge(_ status: FingerprintStatus) -> some View {
+        let color: Color = status.isConfirmed ? .blue : .secondary
+        return Text(status.badgeText)
+            .font(.caption2.weight(.semibold))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(color.opacity(0.16)))
+            .foregroundStyle(color)
+            .help(audioStatusHelp(status))
+    }
+
+    private func audioStatusHelp(_ status: FingerprintStatus) -> String {
+        switch status {
+        case .audioConfirmed:
+            return "Every track in this group was fingerprinted and they are the same recording."
+        case let .audioConfirmedSubset(originalTrackCount):
+            return "Audio fingerprinting split a group of \(originalTrackCount) tracks. These are the same recording as each other."
+        case let .unverified(reason):
+            return "Matched on tags only — \(reason)"
+        }
     }
 
     private func groupActionBar(group: DuplicateTrackGroup, bestPath: String?, deletable: [Track]) -> some View {
@@ -568,8 +681,90 @@ struct DuplicateTracksView: View {
             keepSelectionByGroupID = keepSelectionByGroupID.filter { key, _ in
                 groupIDs.contains(key)
             }
+            // A fresh metadata scan invalidates the previous audio verdicts —
+            // never carry a stale "verified" badge onto a regrouped library.
+            audioStatusByGroupID = [:]
+            audioScanSummary = nil
             isScanning = false
         }
+    }
+
+    /// Confirms the metadata groups against the actual audio, splitting groups
+    /// whose tracks only share tags and dropping tracks that aren't duplicates.
+    private func verifyWithAudio() {
+        guard !duplicateGroups.isEmpty else { return }
+
+        verifyTask?.cancel()
+        isVerifyingAudio = true
+        audioScanSummary = nil
+        errorMessage = nil
+
+        let groups = duplicateGroups
+        let progress = audioProgress
+        // Only duration-compatible tracks get fingerprinted, so the bar is
+        // seeded with the upper bound and corrected on the first callback.
+        progress.reset(total: groups.reduce(0) { $0 + $1.tracks.count })
+
+        verifyTask = Task {
+            do {
+                let result = try await FingerprintDuplicateService.verify(
+                    groups: groups,
+                    progress: { completed, total in
+                        Task { @MainActor in
+                            progress.completed = completed
+                            progress.total = total
+                        }
+                    }
+                )
+
+                guard !Task.isCancelled else { return }
+
+                let verifiedGroups = result.groups.map(\.group)
+                duplicateGroups = verifiedGroups
+                audioStatusByGroupID = Dictionary(
+                    uniqueKeysWithValues: result.groups.map { ($0.id, $0.status) }
+                )
+                summary = DuplicateTracksService.summary(
+                    forGroups: verifiedGroups,
+                    totalTracks: summary.totalTracks
+                )
+                bestPathByGroupID = Dictionary(
+                    uniqueKeysWithValues: verifiedGroups.compactMap { group in
+                        DuplicateTracksService.bestTrack(in: group.tracks)
+                            .map { (group.id, $0.seratoStoredPath) }
+                    }
+                )
+                // Group IDs change when audio splits a group, so stale keep
+                // selections would point at groups that no longer exist.
+                let ids = Set(verifiedGroups.map(\.id))
+                keepSelectionByGroupID = keepSelectionByGroupID.filter { ids.contains($0.key) }
+
+                audioScanSummary = summaryText(for: result)
+                isVerifyingAudio = false
+            } catch is CancellationError {
+                isVerifyingAudio = false
+            } catch {
+                errorMessage = error.localizedDescription
+                isVerifyingAudio = false
+            }
+        }
+    }
+
+    private func summaryText(for result: FingerprintVerificationResult) -> String {
+        var parts: [String] = []
+        parts.append("Checked \(result.fingerprintedFileCount) file\(result.fingerprintedFileCount == 1 ? "" : "s")")
+
+        if result.falsePositiveTrackCount > 0 {
+            parts.append("ruled out \(result.falsePositiveTrackCount) track\(result.falsePositiveTrackCount == 1 ? "" : "s") that only shared tags")
+        } else {
+            parts.append("every group matched by audio")
+        }
+
+        if !result.failures.isEmpty {
+            parts.append("\(result.failures.count) could not be read")
+        }
+
+        return parts.joined(separator: " · ") + "."
     }
 
     private func keptPath(for group: DuplicateTrackGroup) -> String? {
