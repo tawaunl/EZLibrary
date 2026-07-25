@@ -54,6 +54,7 @@ struct DuplicateTracksView: View {
     @State private var isVerifyingAudio = false
     @State private var verifyTask: Task<Void, Never>?
     @State private var audioScanSummary: String?
+    @State private var audioScanPhase: FingerprintLibraryScanService.ScanPhase = .fingerprinting
     @StateObject private var audioProgress = FingerprintScanProgress()
     @State private var pendingDeletion: PendingDeletion?
     @State private var errorMessage: String?
@@ -282,11 +283,19 @@ struct DuplicateTracksView: View {
                     }
                     .controlSize(.small)
                     .disabled(duplicateGroups.isEmpty || isScanning || !isFingerprintingAvailable)
-                    .help("Fingerprint the audio to confirm each group, splitting tracks that only share tags.")
+                    .help("Fingerprint the groups found above to confirm each one, splitting tracks that only share tags.")
+
+                    Button("Scan Whole Library") {
+                        scanLibraryByAudio()
+                    }
+                    .controlSize(.small)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(libraryService.tracks.count < 2 || isScanning || !isFingerprintingAvailable)
+                    .help("Fingerprint every track and group by sound alone. Finds duplicates whose tags don't match at all. The first run reads every file; later scans reuse saved fingerprints.")
                 }
             }
 
-            Text("Compares how tracks actually sound, so copies with different filenames or wrong tags still group together — and tracks that merely share a title get separated.")
+            Text("Compares how tracks actually sound. \"Verify Groups\" checks the groups found above; \"Scan Whole Library\" ignores tags entirely, so it also finds copies whose artist and title don't match.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -298,12 +307,20 @@ struct DuplicateTracksView: View {
 
             if isVerifyingAudio {
                 VStack(alignment: .leading, spacing: 4) {
-                    ProgressView(value: audioProgress.fraction)
-                    Text(audioProgress.total > 0
-                         ? "Fingerprinting \(audioProgress.completed) of \(audioProgress.total)…"
-                         : "Preparing…")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    if audioScanPhase == .matching {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Comparing fingerprints…")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ProgressView(value: audioProgress.fraction)
+                        Text(audioProgress.total > 0
+                             ? "Reading audio \(audioProgress.completed) of \(audioProgress.total)…"
+                             : "Preparing…")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
 
@@ -477,6 +494,8 @@ struct DuplicateTracksView: View {
             return "Every track in this group was fingerprinted and they are the same recording."
         case let .audioConfirmedSubset(originalTrackCount):
             return "Audio fingerprinting split a group of \(originalTrackCount) tracks. These are the same recording as each other."
+        case .audioOnlyMatch:
+            return "Same recording, but the tags disagree — matching on artist and title alone would never have found this group."
         case let .unverified(reason):
             return "Matched on tags only — \(reason)"
         }
@@ -748,6 +767,88 @@ struct DuplicateTracksView: View {
                 isVerifyingAudio = false
             }
         }
+    }
+
+    /// Scans every track's audio, ignoring tags entirely.
+    ///
+    /// This is the only pass that can find copies whose tags disagree, since
+    /// metadata grouping never puts those tracks together in the first place.
+    private func scanLibraryByAudio() {
+        let tracks = libraryService.tracks
+        guard tracks.count > 1 else { return }
+
+        verifyTask?.cancel()
+        isVerifyingAudio = true
+        audioScanSummary = nil
+        errorMessage = nil
+        audioScanPhase = .fingerprinting
+
+        let progress = audioProgress
+        progress.reset(total: tracks.count)
+
+        verifyTask = Task {
+            do {
+                let result = try await FingerprintLibraryScanService.scan(
+                    tracks: tracks,
+                    // The whole library is in scope here, so trimming cached
+                    // fingerprints for files that are gone is safe.
+                    pruneCacheToTracks: true,
+                    progress: { phase, done, total in
+                        Task { @MainActor in
+                            audioScanPhase = phase
+                            if total > 0 {
+                                progress.completed = done
+                                progress.total = total
+                            }
+                        }
+                    }
+                )
+
+                guard !Task.isCancelled else { return }
+
+                let scannedGroups = result.groups.map(\.group)
+                duplicateGroups = scannedGroups
+                audioStatusByGroupID = Dictionary(
+                    uniqueKeysWithValues: result.groups.map { ($0.id, $0.status) }
+                )
+                summary = DuplicateTracksService.summary(
+                    forGroups: scannedGroups,
+                    totalTracks: tracks.count
+                )
+                bestPathByGroupID = Dictionary(
+                    uniqueKeysWithValues: scannedGroups.compactMap { group in
+                        DuplicateTracksService.bestTrack(in: group.tracks)
+                            .map { (group.id, $0.seratoStoredPath) }
+                    }
+                )
+                keepSelectionByGroupID = [:]
+                audioScanSummary = scanSummaryText(for: result)
+                isVerifyingAudio = false
+            } catch is CancellationError {
+                // Fingerprints computed before cancelling are already saved,
+                // so resuming later picks up where this left off.
+                audioScanSummary = "Scan cancelled. Progress so far was saved."
+                isVerifyingAudio = false
+            } catch {
+                errorMessage = error.localizedDescription
+                isVerifyingAudio = false
+            }
+        }
+    }
+
+    private func scanSummaryText(for result: LibraryFingerprintScanResult) -> String {
+        guard !result.groups.isEmpty else {
+            return "Scanned \(result.scannedTrackCount) tracks — no duplicate audio found."
+        }
+
+        var text = "Found \(result.groups.count) group\(result.groups.count == 1 ? "" : "s") across \(result.scannedTrackCount) tracks"
+        if result.tagMismatchGroupCount > 0 {
+            text += " · \(result.tagMismatchGroupCount) that tag matching would have missed"
+        }
+        if !result.failures.isEmpty {
+            text += " · \(result.failures.count) could not be read"
+        }
+        return text + "."
     }
 
     private func summaryText(for result: FingerprintVerificationResult) -> String {

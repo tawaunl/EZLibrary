@@ -104,6 +104,70 @@ MB rather than the ~190 MB a whole 50k library would.
 `-length` trades accuracy for speed roughly linearly (120s ≈ 0.14s/file, 60s ≈
 0.09s, 30s ≈ 0.04s) and is the tuning knob if scans need to be faster.
 
+## When the tags are wrong
+
+Verifying metadata groups can only ever *narrow* what tag matching already
+found. If two copies have different artists and titles, they never land in the
+same metadata group, so nothing downstream compares them.
+
+**Scan Whole Library** starts from the audio instead and ignores tags entirely.
+Measured on a 600-file slice of a real library:
+
+| Pass | Groups | Tracks involved |
+| --- | --- | --- |
+| ID3/metadata | 38 | 78 |
+| Audio scan | **144** | **299** |
+
+110 of those groups had disagreeing tags, so metadata matching could not have
+found them. Real examples:
+
+```
+112 - Anywhere [lEWSkYM5aqA].mp3
+112 ft Lil' Zane - Anywhere (Intro Dirty).mp3
+
+Choppa Style ft. Master P 1-Choppa-Choppa Style - Single-2018.mp3
+Choppa-Choppa Style-Choppa Style-2001.mp3
+Chopper City-Choppa Style ft. Master P-...-2002.mp3
+```
+
+### Making it scale
+
+A whole-library scan cannot compare every pair — 50k tracks is 1.25 billion
+pairs at ~115k operations each. `AudioFingerprintIndex` narrows the field
+first:
+
+1. Each track gets a 64-value MinHash signature: its sub-fingerprints are run
+   through a 32-bit finalizer and the 64 smallest kept. Values are chosen by
+   rank, not position, so a trimmed or padded lead-in barely changes the
+   signature.
+2. Signatures go into an inverted index — a flat sorted `(value, track)` array
+   rather than a dictionary of arrays, keeping 50k tracks near 25 MB.
+3. Values held by more than 100 tracks are skipped. Digital silence says
+   nothing about any pair and would otherwise generate enormous posting lists.
+4. Pairs sharing ≥4 signature values get a full comparison.
+
+Measured separation, versus a re-encoded copy of the same track:
+
+| Pair | Shared of 64 |
+| --- | --- |
+| 320k → 128k re-encode | 48 |
+| mp3 → m4a/AAC | 51 |
+| 2s silent lead-in | 34 |
+| Unrelated track | **0** |
+
+On 400 real tracks this cut 79,800 possible pairs to 137 candidates — a 582x
+reduction — with no true duplicate lost. Random collisions are negligible
+(~64²/2³² per pair), so the candidates are almost entirely real.
+
+The full-library decode is still the cost: ~15 minutes for 50k on the first
+run. It is checkpointed every 500 files, so cancelling or quitting costs at
+most that much rework, and a rescan off the cache was 11x faster on the
+600-file slice.
+
+Peak memory holds every fingerprint for the comparison stage — roughly 190 MB
+at 50k tracks. Acceptable for a one-time scan, and the first thing to revisit
+if libraries get much larger.
+
 ## How a scan reads
 
 Verification is opt-in, from the **Verify by Audio** card in the Duplicates
@@ -114,6 +178,7 @@ tab. Metadata grouping still runs on its own and is unchanged; pressing
 | --- | --- |
 | Audio verified | Every track was fingerprinted; they are the same recording. |
 | Audio verified (split) | Fingerprinting carved up a larger tag-matched group. |
+| Audio match · tags differ | Same recording, disagreeing tags — only the whole-library scan finds these. |
 | Tags only | Could not fingerprint every track — reported, never upgraded. |
 
 Tracks the audio proves distinct are dropped from their group and counted in
@@ -132,7 +197,9 @@ Implemented end-to-end:
   safe-attribution fallback and per-file failure isolation.
 - `AudioFingerprintCache` — binary on-disk cache keyed by path + size + mtime.
 - `FingerprintDuplicateService` — duration gating, verification, group splitting.
-- `DuplicateTracksView` — verify card, progress, per-group badges.
+- `AudioFingerprintIndex` — MinHash signatures and candidate-pair generation.
+- `FingerprintLibraryScanService` — whole-library scan, checkpointed and cancellable.
+- `DuplicateTracksView` — verify card, whole-library scan, progress, per-group badges.
 
 Verified on real audio: six identically-tagged files reduce to the four that
 are genuinely one recording — one decoy rejected by the duration gate without
@@ -143,9 +210,10 @@ Possible follow-ups:
 
 - Reuse cached fingerprints for the AcoustID metadata lookup, which currently
   re-runs `fpcalc` for its own compressed fingerprint.
-- A standalone whole-library acoustic scan that ignores tags entirely, for
-  duplicates whose metadata has nothing in common. This needs an index over
-  sub-fingerprints rather than the O(group²) compare used here.
+- Stream fingerprints from the cache during comparison instead of holding them
+  all in memory, if libraries grow well past 50k.
+- Offer to repair tags on an "Audio match · tags differ" group by copying the
+  most complete copy's metadata onto the rest, rather than only deleting.
 
 ## Requirements
 

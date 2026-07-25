@@ -19,13 +19,17 @@ public enum FingerprintStatus: Sendable, Equatable {
     /// The tracks here are the same recording as each other.
     case audioConfirmedSubset(originalTrackCount: Int)
 
+    /// Found by a whole-library audio scan, and the tracks' tags disagree —
+    /// metadata matching could never have grouped these.
+    case audioOnlyMatch
+
     /// Could not verify — reported as a metadata match only, never silently
     /// upgraded to "confirmed".
     case unverified(reason: String)
 
     public var isConfirmed: Bool {
         switch self {
-        case .audioConfirmed, .audioConfirmedSubset:
+        case .audioConfirmed, .audioConfirmedSubset, .audioOnlyMatch:
             return true
         case .unverified:
             return false
@@ -39,6 +43,8 @@ public enum FingerprintStatus: Sendable, Equatable {
             return "Audio verified"
         case .audioConfirmedSubset:
             return "Audio verified (split)"
+        case .audioOnlyMatch:
+            return "Audio match · tags differ"
         case .unverified:
             return "Tags only"
         }
