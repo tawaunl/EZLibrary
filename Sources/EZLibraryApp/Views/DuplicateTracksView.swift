@@ -48,6 +48,18 @@ struct DuplicateTracksView: View {
     @State private var isScanning = false
     @State private var rebuildTask: Task<Void, Never>?
 
+    /// Where the results on screen came from.
+    ///
+    /// A library change used to re-run the metadata scan unconditionally,
+    /// which threw away an audio scan the moment anything was deleted and left
+    /// the user rescanning. Audio results are pruned in place instead.
+    private enum ResultsSource {
+        case metadata
+        case audio
+    }
+
+    @State private var resultsSource: ResultsSource = .metadata
+
     /// Fingerprint verdicts from the last audio scan, keyed by group ID.
     /// Empty until the user runs one — groups are metadata matches by default.
     @State private var audioStatusByGroupID: [String: FingerprintStatus] = [:]
@@ -127,13 +139,13 @@ struct DuplicateTracksView: View {
         .onChange(of: ignoreStore.ignoredTrackPaths) { stopAuditionIfTrackVanished() }
         .onChange(of: ignoreStore.ignoredGroupIDs) { stopAuditionIfTrackVanished() }
         .onChange(of: libraryService.tracks.count) {
-            rebuildDuplicateGroups()
+            handleLibraryChange()
         }
         .onChange(of: libraryService.tracks.first?.id) {
-            rebuildDuplicateGroups()
+            handleLibraryChange()
         }
         .onChange(of: libraryService.tracks.last?.id) {
-            rebuildDuplicateGroups()
+            handleLibraryChange()
         }
         .confirmationDialog(
             "Delete Duplicates",
@@ -787,8 +799,58 @@ struct DuplicateTracksView: View {
             relatedVersionsByGroupID = [:]
             needsListenByGroupID = [:]
             audioScanSummary = nil
+            resultsSource = .metadata
             isScanning = false
         }
+    }
+
+    /// Reacts to the library changing under the view.
+    ///
+    /// Metadata results are cheap to recompute, so they're rebuilt. Audio
+    /// results represent a scan the user may have waited minutes for and is
+    /// working through — those are pruned in place so a delete doesn't send
+    /// them back to square one.
+    private func handleLibraryChange() {
+        switch resultsSource {
+        case .metadata:
+            rebuildDuplicateGroups()
+        case .audio:
+            let livePaths = Set(libraryService.tracks.map(\.seratoStoredPath))
+            removeTracksFromResults { !livePaths.contains($0.seratoStoredPath) }
+        }
+    }
+
+    /// Drops tracks from the results on screen without rescanning.
+    ///
+    /// A group that falls below two copies is no longer a duplicate and goes
+    /// away; everything else keeps its audio verdict, version siblings and
+    /// keep selection.
+    private func removeTracksFromResults(where shouldRemove: (Track) -> Bool) {
+        let updated = DuplicateTracksService.removingTracks(from: duplicateGroups, where: shouldRemove)
+
+        // Nothing on screen changed — don't churn state or the scan summary.
+        guard updated.count != duplicateGroups.count
+            || zip(updated, duplicateGroups).contains(where: { $0.tracks.count != $1.tracks.count })
+        else {
+            return
+        }
+
+        let survivingIDs = Set(updated.map(\.id))
+        duplicateGroups = updated
+        audioStatusByGroupID = audioStatusByGroupID.filter { survivingIDs.contains($0.key) }
+        relatedVersionsByGroupID = relatedVersionsByGroupID.filter { survivingIDs.contains($0.key) }
+        needsListenByGroupID = needsListenByGroupID.filter { survivingIDs.contains($0.key) }
+        keepSelectionByGroupID = keepSelectionByGroupID.filter { survivingIDs.contains($0.key) }
+        bestPathByGroupID = Dictionary(
+            uniqueKeysWithValues: updated.compactMap { group in
+                DuplicateTracksService.bestTrack(in: group.tracks)
+                    .map { (group.id, $0.seratoStoredPath) }
+            }
+        )
+        summary = DuplicateTracksService.summary(
+            forGroups: updated,
+            totalTracks: libraryService.tracks.count
+        )
     }
 
     /// Confirms the metadata groups against the actual audio, splitting groups
@@ -848,6 +910,7 @@ struct DuplicateTracksView: View {
                 keepSelectionByGroupID = keepSelectionByGroupID.filter { ids.contains($0.key) }
 
                 audioScanSummary = summaryText(for: result)
+                resultsSource = .audio
                 isVerifyingAudio = false
             } catch is CancellationError {
                 isVerifyingAudio = false
@@ -918,6 +981,7 @@ struct DuplicateTracksView: View {
                 )
                 keepSelectionByGroupID = [:]
                 audioScanSummary = scanSummaryText(for: result)
+                resultsSource = .audio
                 isVerifyingAudio = false
             } catch is CancellationError {
                 // Fingerprints computed before cancelling are already saved,
@@ -1201,7 +1265,10 @@ struct DuplicateTracksView: View {
             }
 
             onLibraryChanged()
-            rebuildDuplicateGroups()
+            // Prune the results the user is looking at rather than rescanning,
+            // so an audio scan survives a delete. Driven by the paths we just
+            // removed, so it doesn't depend on the library reload landing first.
+            removeTracksFromResults { deletePaths.contains($0.seratoStoredPath) }
 
             let count = pending.tracks.count
             var message = pending.fromComputer

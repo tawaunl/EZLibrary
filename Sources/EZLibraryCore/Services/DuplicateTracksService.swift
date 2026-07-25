@@ -134,6 +134,33 @@ public enum DuplicateTracksService {
         }
     }
 
+    /// Removes tracks from already-computed groups, without rescanning.
+    ///
+    /// Lets a deletion update results in place. Rebuilding instead would throw
+    /// away an audio scan the user may have waited minutes for, and drop it
+    /// back to plain metadata grouping.
+    ///
+    /// A group that falls below two copies is no longer a duplicate and is
+    /// dropped. Groups that lose nothing are returned unchanged, so identity
+    /// and any per-group state keyed by id survive.
+    public static func removingTracks(
+        from groups: [DuplicateTrackGroup],
+        where shouldRemove: (Track) -> Bool
+    ) -> [DuplicateTrackGroup] {
+        groups.compactMap { group in
+            let remaining = group.tracks.filter { !shouldRemove($0) }
+            guard remaining.count > 1 else { return nil }
+            guard remaining.count != group.tracks.count else { return group }
+            return DuplicateTrackGroup(
+                id: group.id,
+                artist: group.artist,
+                title: group.title,
+                versionLabel: group.versionLabel,
+                tracks: remaining
+            )
+        }
+    }
+
     public static func versionLabel(for track: Track) -> String {
         versionDisplayName(for: versionCategories(for: titleSource(for: track)))
     }

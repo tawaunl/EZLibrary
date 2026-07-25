@@ -277,6 +277,24 @@ rather than the view so these rules are testable:
 - Paths are compared after standardizing, so `a/../b.mp3` and `b.mp3` are
   recognized as the same file.
 
+### Results survive a delete
+
+Deleting used to call `rebuildDuplicateGroups()`, which re-ran the *metadata*
+scan and cleared every audio verdict. After deleting one group, the rest
+vanished and the scan had to be run again — and because the library reload
+also fires the view's `onChange` handlers, fixing the delete path alone would
+not have been enough.
+
+Results now carry their source. Metadata results are cheap, so a library
+change rebuilds them. Audio results are pruned in place instead:
+`removingTracks(from:where:)` drops the deleted copies, removes any group that
+falls below two copies, and returns every untouched group *unchanged* so its
+identity survives. That matters because audio verdicts, version siblings and
+keep selections are all keyed by group id.
+
+The prune after a delete is driven by the paths just removed rather than by
+the reloaded library, so it doesn't depend on the reload landing first.
+
 ### Bulk actions are more conservative than the cards
 
 "Delete All Others" skips any group flagged *listen before deleting* — the
