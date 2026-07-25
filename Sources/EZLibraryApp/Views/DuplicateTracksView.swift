@@ -12,6 +12,26 @@ import SwiftUI
 import Foundation
 import EZLibraryCore
 
+/// Carries fingerprint scan progress back to the UI.
+///
+/// `AudioFingerprintExtractor` reports from its worker tasks, so the callback
+/// needs a `Sendable` destination — a `@MainActor` object is implicitly one,
+/// and republishes on the main actor for SwiftUI.
+@MainActor
+final class FingerprintScanProgress: ObservableObject {
+    @Published var completed = 0
+    @Published var total = 0
+
+    var fraction: Double {
+        total > 0 ? Double(completed) / Double(total) : 0
+    }
+
+    func reset(total: Int) {
+        completed = 0
+        self.total = total
+    }
+}
+
 struct DuplicateTracksView: View {
     @EnvironmentObject private var libraryService: LibraryService
 
@@ -27,10 +47,49 @@ struct DuplicateTracksView: View {
     @State private var bestPathByGroupID: [String: String] = [:]
     @State private var isScanning = false
     @State private var rebuildTask: Task<Void, Never>?
+
+    /// Where the results on screen came from.
+    ///
+    /// A library change used to re-run the metadata scan unconditionally,
+    /// which threw away an audio scan the moment anything was deleted and left
+    /// the user rescanning. Audio results are pruned in place instead.
+    private enum ResultsSource {
+        case metadata
+        case audio
+    }
+
+    @State private var resultsSource: ResultsSource = .metadata
+
+    /// Fingerprint verdicts from the last audio scan, keyed by group ID.
+    /// Empty until the user runs one — groups are metadata matches by default.
+    @State private var audioStatusByGroupID: [String: FingerprintStatus] = [:]
+    /// Sibling version labels per group, so a card can say which versions the
+    /// scan deliberately kept out of this group.
+    @State private var relatedVersionsByGroupID: [String: [String]] = [:]
+    /// Groups whose copies are similar but not bit-identical.
+    @State private var needsListenByGroupID: [String: Bool] = [:]
+    @State private var isVerifyingAudio = false
+    @State private var verifyTask: Task<Void, Never>?
+    @State private var audioScanSummary: String?
+    @State private var audioScanPhase: FingerprintLibraryScanService.ScanPhase = .fingerprinting
+    @StateObject private var audioProgress = FingerprintScanProgress()
     @State private var pendingDeletion: PendingDeletion?
     @State private var errorMessage: String?
     @State private var successMessage: String?
     @AppStorage(Self.confirmDeletesDefaultsKey) private var confirmDeletes = true
+    /// Carry the playhead when switching between copies in a group.
+    ///
+    /// On by default: copies in a group are the same recording, so comparing
+    /// them is only useful at the same moment in the music.
+    @AppStorage(Self.keepAuditionPositionDefaultsKey) private var keepAuditionPosition = true
+
+    /// Shared player for auditioning copies. One player, not one per row, so
+    /// starting a copy stops whatever was playing.
+    @StateObject private var auditionPlayer = TrackAudioPlayerViewModel()
+    /// Stored path of the copy currently loaded for audition, if any.
+    @State private var auditioningPath: String?
+    /// Group the audition belongs to, so only that card shows the transport.
+    @State private var auditioningGroupID: String?
 
     /// Ignored indefinitely (persisted). Cleared only from the manage section.
     @StateObject private var ignoreStore = DuplicateIgnoreStore()
@@ -39,6 +98,7 @@ struct DuplicateTracksView: View {
     @State private var sessionIgnoredTrackPaths: Set<String> = []
 
     private static let confirmDeletesDefaultsKey = "SeratoToolsConfirmDuplicateDeletes"
+    private static let keepAuditionPositionDefaultsKey = "SeratoToolsKeepAuditionPosition"
 
     private struct PendingDeletion: Identifiable {
         let id = UUID()
@@ -46,6 +106,9 @@ struct DuplicateTracksView: View {
         let keepLabel: String
         let tracks: [Track]
         let fromComputer: Bool
+        /// Deleted stored path → the copy that survives it, so crate entries
+        /// can be re-pointed instead of dropped.
+        let keptPathByDeletedPath: [String: String]
     }
 
     var body: some View {
@@ -58,6 +121,7 @@ struct DuplicateTracksView: View {
                 )
 
                 summaryCard
+                audioVerificationCard
                 searchCard
                 messagesBanner
                 resultsCard
@@ -68,14 +132,26 @@ struct DuplicateTracksView: View {
         .onAppear {
             rebuildDuplicateGroups()
         }
+        .onDisappear {
+            stopAudition()
+        }
+        .onReceive(Timer.publish(every: 0.12, on: .main, in: .common).autoconnect()) { _ in
+            guard auditioningPath != nil else { return }
+            auditionPlayer.refreshProgress()
+        }
+        // Ignoring a copy (or its group) hides the row, so stop playing it.
+        .onChange(of: sessionIgnoredTrackPaths) { stopAuditionIfTrackVanished() }
+        .onChange(of: sessionIgnoredGroupIDs) { stopAuditionIfTrackVanished() }
+        .onChange(of: ignoreStore.ignoredTrackPaths) { stopAuditionIfTrackVanished() }
+        .onChange(of: ignoreStore.ignoredGroupIDs) { stopAuditionIfTrackVanished() }
         .onChange(of: libraryService.tracks.count) {
-            rebuildDuplicateGroups()
+            handleLibraryChange()
         }
         .onChange(of: libraryService.tracks.first?.id) {
-            rebuildDuplicateGroups()
+            handleLibraryChange()
         }
         .onChange(of: libraryService.tracks.last?.id) {
-            rebuildDuplicateGroups()
+            handleLibraryChange()
         }
         .confirmationDialog(
             "Delete Duplicates",
@@ -230,6 +306,80 @@ struct DuplicateTracksView: View {
         .background(RoundedRectangle(cornerRadius: 12).fill(Color(nsColor: .controlBackgroundColor).opacity(0.55)))
     }
 
+    private var isFingerprintingAvailable: Bool {
+        AudioFingerprintService.fpcalcExecutablePath() != nil
+    }
+
+    private var audioVerificationCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Text("Verify by Audio")
+                    .font(.title3.weight(.semibold))
+                Spacer(minLength: 0)
+
+                if isVerifyingAudio {
+                    Button("Cancel") {
+                        verifyTask?.cancel()
+                        isVerifyingAudio = false
+                    }
+                    .controlSize(.small)
+                } else {
+                    Button("Verify Groups") {
+                        verifyWithAudio()
+                    }
+                    .controlSize(.small)
+                    .disabled(duplicateGroups.isEmpty || isScanning || !isFingerprintingAvailable)
+                    .help("Fingerprint the groups found above to confirm each one, splitting tracks that only share tags.")
+
+                    Button("Scan Whole Library") {
+                        scanLibraryByAudio()
+                    }
+                    .controlSize(.small)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(libraryService.tracks.count < 2 || isScanning || !isFingerprintingAvailable)
+                    .help("Fingerprint every track and group by sound alone. Finds duplicates whose tags don't match at all. The first run reads every file; later scans reuse saved fingerprints.")
+                }
+            }
+
+            Text("Compares how tracks actually sound. \"Verify Groups\" checks the groups found above; \"Scan Whole Library\" ignores tags entirely, so it also finds copies whose artist and title don't match.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if !isFingerprintingAvailable {
+                Text("Requires the fpcalc scanner. Install it with: brew install chromaprint")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.orange)
+            }
+
+            if isVerifyingAudio {
+                VStack(alignment: .leading, spacing: 4) {
+                    if audioScanPhase == .matching {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Comparing fingerprints…")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ProgressView(value: audioProgress.fraction)
+                        Text(audioProgress.total > 0
+                             ? "Reading audio \(audioProgress.completed) of \(audioProgress.total)…"
+                             : "Preparing…")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            if let audioScanSummary {
+                Text(audioScanSummary)
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(.green)
+            }
+        }
+        .padding(16)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Color(nsColor: .controlBackgroundColor).opacity(0.55)))
+    }
+
     private var searchCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             TextField("Search title, artist, version, or path", text: $searchText)
@@ -291,30 +441,42 @@ struct DuplicateTracksView: View {
     }
 
     private var bulkActionsBar: some View {
-        let totalDeletable = filteredGroups.reduce(0) { $0 + deletableTracks(for: $1).count }
-        return HStack(spacing: 8) {
-            Button("Pick Best (All)") {
-                pickBestForAll()
+        let totalDeletable = bulkDeletableGroups.reduce(0) { $0 + deletableTracks(for: $1).count }
+        let excluded = groupsExcludedFromBulk
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Button("Pick Best (All)") {
+                    pickBestForAll()
+                }
+                .help("Select the most complete copy (oldest on ties) to keep in every group.")
+
+                Button("Delete All Others → Library") {
+                    requestMassDeletion(fromComputer: false)
+                }
+                .disabled(totalDeletable == 0)
+                .help("Across every group, remove all copies except the kept one from the Serato library. Files stay on disk.")
+
+                Button("Delete All Others → Computer") {
+                    requestMassDeletion(fromComputer: true)
+                }
+                .disabled(totalDeletable == 0)
+                .help("Across every group, remove all copies except the kept one and move their files to the Trash.")
+
+                Text("\(totalDeletable) removable")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Spacer(minLength: 0)
             }
-            .help("Select the most complete copy (oldest on ties) to keep in every group.")
 
-            Button("Delete All Others → Library") {
-                requestMassDeletion(fromComputer: false)
+            if excluded > 0 {
+                Label(
+                    "\(excluded) group\(excluded == 1 ? "" : "s") held back from bulk actions — the copies sound alike but aren't identical. Review \(excluded == 1 ? "it" : "them") on the card.",
+                    systemImage: "hand.raised"
+                )
+                .font(.caption2)
+                .foregroundStyle(.orange)
             }
-            .disabled(totalDeletable == 0)
-            .help("Across every group, remove all copies except the kept one from the Serato library. Files stay on disk.")
-
-            Button("Delete All Others → Computer") {
-                requestMassDeletion(fromComputer: true)
-            }
-            .disabled(totalDeletable == 0)
-            .help("Across every group, remove all copies except the kept one and move their files to the Trash.")
-
-            Text("\(totalDeletable) removable")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            Spacer(minLength: 0)
         }
     }
 
@@ -341,6 +503,30 @@ struct DuplicateTracksView: View {
                                 Capsule().fill((group.hasDifferentFilenames ? Color.orange : Color.green).opacity(0.16))
                             )
                             .foregroundStyle(group.hasDifferentFilenames ? Color.orange : Color.green)
+
+                        if let status = audioStatusByGroupID[group.id] {
+                            audioStatusBadge(status)
+                        }
+                    }
+
+                    if let versions = relatedVersionsByGroupID[group.id], !versions.isEmpty {
+                        Label(
+                            "Other versions kept safe: \(versions.joined(separator: ", "))",
+                            systemImage: "arrow.triangle.branch"
+                        )
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .help("This track also exists in these versions. They're never grouped with this one, so deleting here can't remove them.")
+                    }
+
+                    if needsListenByGroupID[group.id] == true {
+                        Label(
+                            "Close but not identical — listen before deleting",
+                            systemImage: "exclamationmark.triangle"
+                        )
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.orange)
+                        .help("These copies share a version label and sound alike, but aren't bit-identical. They aren't pre-selected for deletion.")
                     }
                 }
 
@@ -351,6 +537,10 @@ struct DuplicateTracksView: View {
             }
 
             groupActionBar(group: group, bestPath: bestPath, deletable: deletable)
+
+            if auditioningGroupID == group.id {
+                auditionTransport
+            }
 
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(group.tracks) { track in
@@ -367,6 +557,30 @@ struct DuplicateTracksView: View {
             RoundedRectangle(cornerRadius: 12)
                 .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
         )
+    }
+
+    private func audioStatusBadge(_ status: FingerprintStatus) -> some View {
+        let color: Color = status.isConfirmed ? .blue : .secondary
+        return Text(status.badgeText)
+            .font(.caption2.weight(.semibold))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(color.opacity(0.16)))
+            .foregroundStyle(color)
+            .help(audioStatusHelp(status))
+    }
+
+    private func audioStatusHelp(_ status: FingerprintStatus) -> String {
+        switch status {
+        case .audioConfirmed:
+            return "Every track in this group was fingerprinted and they are the same recording."
+        case let .audioConfirmedSubset(originalTrackCount):
+            return "Audio fingerprinting split a group of \(originalTrackCount) tracks. These are the same recording as each other."
+        case .audioOnlyMatch:
+            return "Same recording, but the tags disagree — matching on artist and title alone would never have found this group."
+        case let .unverified(reason):
+            return "Matched on tags only — \(reason)"
+        }
     }
 
     private func groupActionBar(group: DuplicateTrackGroup, bestPath: String?, deletable: [Track]) -> some View {
@@ -410,8 +624,25 @@ struct DuplicateTracksView: View {
         let isBest = track.seratoStoredPath == bestPath
         let tagCount = DuplicateTracksService.completenessScore(for: track)
 
+        let isAuditioningThis = isAuditioning(track)
+
         return VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 6) {
+                Button {
+                    toggleAudition(of: track, in: group)
+                } label: {
+                    Image(systemName: isAuditioningThis && auditionPlayer.isPlaying
+                          ? "pause.circle.fill"
+                          : "play.circle")
+                        .foregroundStyle(isAuditioningThis ? Color.accentColor : Color.secondary)
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .disabled(track.isMissing)
+                .help(track.isMissing
+                      ? "This file is missing on disk."
+                      : "Listen to this copy. Switching copies keeps your place, so you can compare the same moment.")
+
                 Text(track.title.isEmpty ? track.fileURL.deletingPathExtension().lastPathComponent : track.title)
                     .font(.subheadline)
                 Text(DuplicateTracksService.versionLabel(for: track))
@@ -568,8 +799,362 @@ struct DuplicateTracksView: View {
             keepSelectionByGroupID = keepSelectionByGroupID.filter { key, _ in
                 groupIDs.contains(key)
             }
+            // A fresh metadata scan invalidates the previous audio verdicts —
+            // never carry a stale "verified" badge onto a regrouped library.
+            audioStatusByGroupID = [:]
+            relatedVersionsByGroupID = [:]
+            needsListenByGroupID = [:]
+            audioScanSummary = nil
+            resultsSource = .metadata
             isScanning = false
         }
+    }
+
+    /// Reacts to the library changing under the view.
+    ///
+    /// Metadata results are cheap to recompute, so they're rebuilt. Audio
+    /// results represent a scan the user may have waited minutes for and is
+    /// working through — those are pruned in place so a delete doesn't send
+    /// them back to square one.
+    private func handleLibraryChange() {
+        switch resultsSource {
+        case .metadata:
+            rebuildDuplicateGroups()
+        case .audio:
+            let livePaths = Set(libraryService.tracks.map(\.seratoStoredPath))
+            removeTracksFromResults { !livePaths.contains($0.seratoStoredPath) }
+        }
+    }
+
+    /// Drops tracks from the results on screen without rescanning.
+    ///
+    /// A group that falls below two copies is no longer a duplicate and goes
+    /// away; everything else keeps its audio verdict, version siblings and
+    /// keep selection.
+    private func removeTracksFromResults(where shouldRemove: (Track) -> Bool) {
+        let updated = DuplicateTracksService.removingTracks(from: duplicateGroups, where: shouldRemove)
+
+        // Nothing on screen changed — don't churn state or the scan summary.
+        guard updated.count != duplicateGroups.count
+            || zip(updated, duplicateGroups).contains(where: { $0.tracks.count != $1.tracks.count })
+        else {
+            return
+        }
+
+        let survivingIDs = Set(updated.map(\.id))
+        duplicateGroups = updated
+        audioStatusByGroupID = audioStatusByGroupID.filter { survivingIDs.contains($0.key) }
+        relatedVersionsByGroupID = relatedVersionsByGroupID.filter { survivingIDs.contains($0.key) }
+        needsListenByGroupID = needsListenByGroupID.filter { survivingIDs.contains($0.key) }
+        keepSelectionByGroupID = keepSelectionByGroupID.filter { survivingIDs.contains($0.key) }
+        bestPathByGroupID = Dictionary(
+            uniqueKeysWithValues: updated.compactMap { group in
+                DuplicateTracksService.bestTrack(in: group.tracks)
+                    .map { (group.id, $0.seratoStoredPath) }
+            }
+        )
+        summary = DuplicateTracksService.summary(
+            forGroups: updated,
+            totalTracks: libraryService.tracks.count
+        )
+    }
+
+    /// Confirms the metadata groups against the actual audio, splitting groups
+    /// whose tracks only share tags and dropping tracks that aren't duplicates.
+    private func verifyWithAudio() {
+        guard !duplicateGroups.isEmpty else { return }
+
+        verifyTask?.cancel()
+        isVerifyingAudio = true
+        audioScanSummary = nil
+        errorMessage = nil
+
+        let groups = duplicateGroups
+        let progress = audioProgress
+        // Only duration-compatible tracks get fingerprinted, so the bar is
+        // seeded with the upper bound and corrected on the first callback.
+        progress.reset(total: groups.reduce(0) { $0 + $1.tracks.count })
+
+        verifyTask = Task {
+            do {
+                let result = try await FingerprintDuplicateService.verify(
+                    groups: groups,
+                    progress: { completed, total in
+                        Task { @MainActor in
+                            progress.completed = completed
+                            progress.total = total
+                        }
+                    }
+                )
+
+                guard !Task.isCancelled else { return }
+
+                let verifiedGroups = result.groups.map(\.group)
+                duplicateGroups = verifiedGroups
+                audioStatusByGroupID = Dictionary(
+                    uniqueKeysWithValues: result.groups.map { ($0.id, $0.status) }
+                )
+                relatedVersionsByGroupID = Dictionary(
+                    uniqueKeysWithValues: result.groups.map { ($0.id, $0.relatedVersions) }
+                )
+                needsListenByGroupID = Dictionary(
+                    uniqueKeysWithValues: result.groups.map { ($0.id, $0.needsListenBeforeDeleting) }
+                )
+                summary = DuplicateTracksService.summary(
+                    forGroups: verifiedGroups,
+                    totalTracks: summary.totalTracks
+                )
+                bestPathByGroupID = Dictionary(
+                    uniqueKeysWithValues: verifiedGroups.compactMap { group in
+                        DuplicateTracksService.bestTrack(in: group.tracks)
+                            .map { (group.id, $0.seratoStoredPath) }
+                    }
+                )
+                // Group IDs change when audio splits a group, so stale keep
+                // selections would point at groups that no longer exist.
+                let ids = Set(verifiedGroups.map(\.id))
+                keepSelectionByGroupID = keepSelectionByGroupID.filter { ids.contains($0.key) }
+
+                audioScanSummary = summaryText(for: result)
+                resultsSource = .audio
+                isVerifyingAudio = false
+            } catch is CancellationError {
+                isVerifyingAudio = false
+            } catch {
+                errorMessage = error.localizedDescription
+                isVerifyingAudio = false
+            }
+        }
+    }
+
+    /// Scans every track's audio, ignoring tags entirely.
+    ///
+    /// This is the only pass that can find copies whose tags disagree, since
+    /// metadata grouping never puts those tracks together in the first place.
+    private func scanLibraryByAudio() {
+        let tracks = libraryService.tracks
+        guard tracks.count > 1 else { return }
+
+        verifyTask?.cancel()
+        isVerifyingAudio = true
+        audioScanSummary = nil
+        errorMessage = nil
+        audioScanPhase = .fingerprinting
+
+        let progress = audioProgress
+        progress.reset(total: tracks.count)
+
+        verifyTask = Task {
+            do {
+                let result = try await FingerprintLibraryScanService.scan(
+                    tracks: tracks,
+                    // The whole library is in scope here, so trimming cached
+                    // fingerprints for files that are gone is safe.
+                    pruneCacheToTracks: true,
+                    progress: { phase, done, total in
+                        Task { @MainActor in
+                            audioScanPhase = phase
+                            if total > 0 {
+                                progress.completed = done
+                                progress.total = total
+                            }
+                        }
+                    }
+                )
+
+                guard !Task.isCancelled else { return }
+
+                let scannedGroups = result.groups.map(\.group)
+                duplicateGroups = scannedGroups
+                audioStatusByGroupID = Dictionary(
+                    uniqueKeysWithValues: result.groups.map { ($0.id, $0.status) }
+                )
+                relatedVersionsByGroupID = Dictionary(
+                    uniqueKeysWithValues: result.groups.map { ($0.id, $0.relatedVersions) }
+                )
+                needsListenByGroupID = Dictionary(
+                    uniqueKeysWithValues: result.groups.map { ($0.id, $0.needsListenBeforeDeleting) }
+                )
+                summary = DuplicateTracksService.summary(
+                    forGroups: scannedGroups,
+                    totalTracks: tracks.count
+                )
+                bestPathByGroupID = Dictionary(
+                    uniqueKeysWithValues: scannedGroups.compactMap { group in
+                        DuplicateTracksService.bestTrack(in: group.tracks)
+                            .map { (group.id, $0.seratoStoredPath) }
+                    }
+                )
+                keepSelectionByGroupID = [:]
+                audioScanSummary = scanSummaryText(for: result)
+                resultsSource = .audio
+                isVerifyingAudio = false
+            } catch is CancellationError {
+                // Fingerprints computed before cancelling are already saved,
+                // so resuming later picks up where this left off.
+                audioScanSummary = "Scan cancelled. Progress so far was saved."
+                isVerifyingAudio = false
+            } catch {
+                errorMessage = error.localizedDescription
+                isVerifyingAudio = false
+            }
+        }
+    }
+
+    private func scanSummaryText(for result: LibraryFingerprintScanResult) -> String {
+        guard !result.groups.isEmpty else {
+            return "Scanned \(result.scannedTrackCount) tracks — no duplicate audio found."
+        }
+
+        var text = "Found \(result.groups.count) group\(result.groups.count == 1 ? "" : "s") across \(result.scannedTrackCount) tracks"
+        if result.tagMismatchGroupCount > 0 {
+            text += " · \(result.tagMismatchGroupCount) that tag matching would have missed"
+        }
+        if !result.failures.isEmpty {
+            text += " · \(result.failures.count) could not be read"
+        }
+        return text + "."
+    }
+
+    private func summaryText(for result: FingerprintVerificationResult) -> String {
+        var parts: [String] = []
+        parts.append("Checked \(result.fingerprintedFileCount) file\(result.fingerprintedFileCount == 1 ? "" : "s")")
+
+        if result.falsePositiveTrackCount > 0 {
+            parts.append("ruled out \(result.falsePositiveTrackCount) track\(result.falsePositiveTrackCount == 1 ? "" : "s") that only shared tags")
+        } else {
+            parts.append("every group matched by audio")
+        }
+
+        if !result.failures.isEmpty {
+            parts.append("\(result.failures.count) could not be read")
+        }
+
+        return parts.joined(separator: " · ") + "."
+    }
+
+    // MARK: - Auditioning
+
+    private func isAuditioning(_ track: Track) -> Bool {
+        auditioningPath == track.seratoStoredPath
+    }
+
+    /// Plays a copy, or pauses it if it's already the one playing.
+    ///
+    /// Switching to a different copy carries the playhead across, so two
+    /// copies can be compared at the same moment in the music — the point of
+    /// auditioning duplicates at all.
+    private func toggleAudition(of track: Track, in group: DuplicateTrackGroup) {
+        if isAuditioning(track) {
+            auditionPlayer.togglePlayPause()
+            return
+        }
+
+        // Only carry within a group: a different group is a different
+        // recording, where another track's timestamp means nothing.
+        let carriedPosition = (keepAuditionPosition && auditioningGroupID == group.id)
+            ? auditionPlayer.currentTime
+            : 0
+        auditioningPath = track.seratoStoredPath
+        auditioningGroupID = group.id
+        auditionPlayer.audition(track: track, startingAt: carriedPosition)
+
+        if auditionPlayer.errorMessage != nil {
+            // Nothing is playing, so don't leave the row showing as active.
+            auditioningPath = nil
+            auditioningGroupID = nil
+        }
+    }
+
+    private func stopAudition() {
+        auditionPlayer.stopPlayback()
+        auditioningPath = nil
+        auditioningGroupID = nil
+    }
+
+    /// Stops playback if the loaded copy is no longer on screen — after a
+    /// delete, a rescan, or an ignore.
+    private func stopAuditionIfTrackVanished() {
+        guard let auditioningPath else { return }
+        let stillVisible = visibleGroups.contains { group in
+            group.tracks.contains { $0.seratoStoredPath == auditioningPath }
+        }
+        if !stillVisible {
+            stopAudition()
+        }
+    }
+
+    private var auditionTransport: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            auditionControls
+
+            HStack(spacing: 5) {
+                Toggle("Keep position when switching copies", isOn: $keepAuditionPosition)
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                    .font(.caption2)
+
+                InfoHint(
+                    text: keepAuditionPosition
+                        ? "On: playing another copy in this group picks up at the same timestamp, so you compare the same moment in both. Switching to a different group still starts from the beginning."
+                        : "Off: every copy starts from the beginning. Turn this on to A/B two copies at the same point in the music."
+                )
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.accentColor.opacity(0.08)))
+    }
+
+    private var auditionControls: some View {
+        HStack(spacing: 8) {
+            Button {
+                auditionPlayer.togglePlayPause()
+            } label: {
+                Image(systemName: auditionPlayer.isPlaying ? "pause.fill" : "play.fill")
+            }
+            .controlSize(.small)
+            .help(auditionPlayer.isPlaying ? "Pause" : "Play")
+
+            Button {
+                auditionPlayer.skip(by: -10)
+            } label: {
+                Image(systemName: "gobackward.10")
+            }
+            .controlSize(.small)
+            .help("Back 10 seconds")
+
+            Slider(
+                value: Binding(
+                    get: { auditionPlayer.currentTime },
+                    set: { auditionPlayer.seek(to: $0) }
+                ),
+                in: 0...max(auditionPlayer.duration, 0.01)
+            )
+            .controlSize(.small)
+
+            Text("\(timeLabel(auditionPlayer.currentTime)) / \(timeLabel(auditionPlayer.duration))")
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.secondary)
+
+            Button {
+                stopAudition()
+            } label: {
+                Image(systemName: "stop.fill")
+            }
+            .controlSize(.small)
+            .help("Stop auditioning")
+        }
+    }
+
+    private func timeLabel(_ seconds: Double) -> String {
+        guard seconds.isFinite, seconds >= 0 else { return "0:00" }
+        let total = Int(seconds.rounded())
+        return String(format: "%d:%02d", total / 60, total % 60)
     }
 
     private func keptPath(for group: DuplicateTrackGroup) -> String? {
@@ -605,23 +1190,52 @@ struct DuplicateTracksView: View {
                 groupLabel: "\(group.artist) - \(group.title)",
                 keepLabel: keepLabel,
                 tracks: tracks,
-                fromComputer: fromComputer
+                fromComputer: fromComputer,
+                keptPathByDeletedPath: keptPathMapping(for: group, deleting: tracks)
             )
         )
     }
 
+    /// Groups the bulk actions are allowed to touch.
+    ///
+    /// Groups flagged "listen before deleting" are excluded: that flag means
+    /// the audio was close but not identical, which is exactly the case that
+    /// shouldn't be swept up by a one-click delete-everything. They remain
+    /// deletable from their own card, after a listen.
+    private var bulkDeletableGroups: [DuplicateTrackGroup] {
+        filteredGroups.filter { needsListenByGroupID[$0.id] != true }
+    }
+
+    private var groupsExcludedFromBulk: Int {
+        filteredGroups.count - bulkDeletableGroups.count
+    }
+
     private func requestMassDeletion(fromComputer: Bool) {
-        let tracks = filteredGroups.flatMap { deletableTracks(for: $0) }
+        let groups = bulkDeletableGroups
+        let tracks = groups.flatMap { deletableTracks(for: $0) }
         guard !tracks.isEmpty else { return }
+
+        var mapping: [String: String] = [:]
+        for group in groups {
+            mapping.merge(keptPathMapping(for: group, deleting: deletableTracks(for: group))) { current, _ in current }
+        }
 
         confirmOrPerform(
             PendingDeletion(
-                groupLabel: "\(filteredGroups.count) groups",
+                groupLabel: "\(groups.count) groups",
                 keepLabel: "the best copy in each group",
                 tracks: tracks,
-                fromComputer: fromComputer
+                fromComputer: fromComputer,
+                keptPathByDeletedPath: mapping
             )
         )
+    }
+
+    /// Maps each copy being deleted to the copy that replaces it, so crates
+    /// keep playing the same music afterward.
+    private func keptPathMapping(for group: DuplicateTrackGroup, deleting tracks: [Track]) -> [String: String] {
+        guard let kept = keptPath(for: group) else { return [:] }
+        return Dictionary(uniqueKeysWithValues: tracks.map { ($0.seratoStoredPath, kept) })
     }
 
     private func confirmOrPerform(_ pending: PendingDeletion) {
@@ -637,43 +1251,82 @@ struct DuplicateTracksView: View {
         successMessage = nil
         errorMessage = nil
 
+        // Release the audio file before anything gets trashed — the player
+        // holds an open handle on whatever it loaded.
+        stopAudition()
+
+        // Checked up front, before anything destructive.
+        if let blocker = DuplicateDeletionPlanner.blocker() {
+            errorMessage = blocker.localizedDescription
+            return
+        }
+
         let deletePaths = Set(pending.tracks.map(\.seratoStoredPath))
 
-        do {
-            var trashedCount = 0
-            if pending.fromComputer {
-                // Never trash a physical file that a surviving library entry
-                // still references (e.g. two DB entries pointing at one file).
-                let retainedFilePaths = Set(
-                    libraryService.tracks
-                        .filter { !deletePaths.contains($0.seratoStoredPath) }
-                        .map { $0.fileURL.standardizedFileURL.path }
+        // Resolved before the library is rewritten underneath us.
+        let filesToTrash = pending.fromComputer
+            ? DuplicateDeletionPlanner.filesToTrash(
+                deletedTracks: pending.tracks,
+                survivingTracks: DuplicateDeletionPlanner.survivingTracks(
+                    in: libraryService.tracks,
+                    deletedPaths: deletePaths
                 )
+            )
+            : []
 
-                for track in pending.tracks {
-                    let filePath = track.fileURL.standardizedFileURL.path
-                    guard FileManager.default.fileExists(atPath: filePath) else { continue }
-                    if retainedFilePaths.contains(filePath) { continue }
-                    _ = try FileManager.default.trashItem(at: track.fileURL, resultingItemURL: nil)
+        do {
+            // Library and crates are updated first. If this throws, no file has
+            // been touched and the user is exactly where they started. Doing it
+            // the other way round can strand files in the Trash with the
+            // library still referencing them.
+            let cratePlan = try removeFromLibraryMetadata(
+                paths: deletePaths,
+                keptPathByDeletedPath: pending.keptPathByDeletedPath
+            )
+
+            var trashedCount = 0
+            var failedToTrash: [String] = []
+            for fileURL in filesToTrash {
+                do {
+                    _ = try FileManager.default.trashItem(at: fileURL, resultingItemURL: nil)
                     trashedCount += 1
+                } catch {
+                    // One unwritable file shouldn't abort the rest; the library
+                    // edit already succeeded either way.
+                    failedToTrash.append(fileURL.lastPathComponent)
                 }
             }
 
-            try removeFromLibraryMetadata(paths: deletePaths)
             onLibraryChanged()
-            rebuildDuplicateGroups()
+            // Prune the results the user is looking at rather than rescanning,
+            // so an audio scan survives a delete. Driven by the paths we just
+            // removed, so it doesn't depend on the library reload landing first.
+            removeTracksFromResults { deletePaths.contains($0.seratoStoredPath) }
 
             let count = pending.tracks.count
-            successMessage = pending.fromComputer
+            var message = pending.fromComputer
                 ? "Moved \(trashedCount) file\(trashedCount == 1 ? "" : "s") to Trash and removed \(count) duplicate\(count == 1 ? "" : "s") from the library."
                 : "Removed \(count) duplicate\(count == 1 ? "" : "s") from the library."
+            if let crateSummary = CrateReconciliationService.summary(for: cratePlan) {
+                message += " \(crateSummary)"
+            }
+            if !failedToTrash.isEmpty {
+                message += " \(failedToTrash.count) file\(failedToTrash.count == 1 ? "" : "s") could not be moved to the Trash and are still on disk: \(failedToTrash.prefix(3).joined(separator: ", "))."
+            }
+            successMessage = message
         } catch {
             errorMessage = error.localizedDescription
         }
     }
 
-    private func removeFromLibraryMetadata(paths: Set<String>) throws {
-        guard !paths.isEmpty else { return }
+    @discardableResult
+    private func removeFromLibraryMetadata(
+        paths: Set<String>,
+        keptPathByDeletedPath: [String: String]
+    ) throws -> CrateReconciliationPlan {
+        guard !paths.isEmpty else {
+            return CrateReconciliationPlan(changes: [:], emptiedCrateNames: [])
+        }
 
         let databaseURL = libraryService.databaseFile
         if FileManager.default.fileExists(atPath: databaseURL.path) {
@@ -686,13 +1339,16 @@ struct DuplicateTracksView: View {
             try AtomicFileWriter.write(rewritten.data, to: databaseURL)
         }
 
-        for crate in libraryService.crates {
-            guard crate.fileURL?.pathExtension.lowercased() == "crate" else { continue }
-            if crate.trackPaths.contains(where: { paths.contains($0) }) {
-                let rewrittenPaths = crate.trackPaths.filter { !paths.contains($0) }
-                _ = try SeratoCrateEditor.rewriteTrackPaths(in: crate, to: rewrittenPaths)
-            }
-        }
+        // Crates get the surviving copy in the deleted copy's slot. Simply
+        // dropping the path would shorten every crate that referenced the
+        // deleted copy but not the kept one.
+        let plan = CrateReconciliationService.plan(
+            crates: libraryService.crates,
+            deletedPaths: paths,
+            keptPathForDeleted: keptPathByDeletedPath
+        )
+        try CrateReconciliationService.apply(plan, to: libraryService.crates)
+        return plan
     }
 
     private func statTag(title: String, value: String, accent: Bool = false) -> some View {

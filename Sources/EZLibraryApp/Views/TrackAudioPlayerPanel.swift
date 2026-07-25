@@ -53,6 +53,27 @@ final class TrackAudioPlayerViewModel: NSObject, ObservableObject {
         }
     }
 
+    /// Loads `track` and resumes at `position`, reloading even if the same
+    /// track is already loaded.
+    ///
+    /// Built for comparing duplicates: switching between two copies of one
+    /// recording keeps the playhead where it was, so you hear the same moment
+    /// in both instead of restarting from the top each time.
+    func audition(track: Track, startingAt position: Double, autoplay: Bool = true) {
+        // `load(track:)` no-ops when the path is unchanged, which would make
+        // replaying the current copy do nothing.
+        loadedTrackPath = nil
+        load(track: track)
+
+        guard player != nil else { return }
+        if position > 0 {
+            seek(to: min(position, duration))
+        }
+        if autoplay {
+            startPlayback()
+        }
+    }
+
     func startPlayback() {
         guard let player else { return }
         player.play()
