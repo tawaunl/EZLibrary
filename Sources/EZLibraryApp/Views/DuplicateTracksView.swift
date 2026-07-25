@@ -77,6 +77,11 @@ struct DuplicateTracksView: View {
     @State private var errorMessage: String?
     @State private var successMessage: String?
     @AppStorage(Self.confirmDeletesDefaultsKey) private var confirmDeletes = true
+    /// Carry the playhead when switching between copies in a group.
+    ///
+    /// On by default: copies in a group are the same recording, so comparing
+    /// them is only useful at the same moment in the music.
+    @AppStorage(Self.keepAuditionPositionDefaultsKey) private var keepAuditionPosition = true
 
     /// Shared player for auditioning copies. One player, not one per row, so
     /// starting a copy stops whatever was playing.
@@ -93,6 +98,7 @@ struct DuplicateTracksView: View {
     @State private var sessionIgnoredTrackPaths: Set<String> = []
 
     private static let confirmDeletesDefaultsKey = "SeratoToolsConfirmDuplicateDeletes"
+    private static let keepAuditionPositionDefaultsKey = "SeratoToolsKeepAuditionPosition"
 
     private struct PendingDeletion: Identifiable {
         let id = UUID()
@@ -533,7 +539,7 @@ struct DuplicateTracksView: View {
             groupActionBar(group: group, bestPath: bestPath, deletable: deletable)
 
             if auditioningGroupID == group.id {
-                auditionTransport(for: group)
+                auditionTransport
             }
 
             VStack(alignment: .leading, spacing: 6) {
@@ -1044,7 +1050,11 @@ struct DuplicateTracksView: View {
             return
         }
 
-        let carriedPosition = auditioningGroupID == group.id ? auditionPlayer.currentTime : 0
+        // Only carry within a group: a different group is a different
+        // recording, where another track's timestamp means nothing.
+        let carriedPosition = (keepAuditionPosition && auditioningGroupID == group.id)
+            ? auditionPlayer.currentTime
+            : 0
         auditioningPath = track.seratoStoredPath
         auditioningGroupID = group.id
         auditionPlayer.audition(track: track, startingAt: carriedPosition)
@@ -1074,7 +1084,35 @@ struct DuplicateTracksView: View {
         }
     }
 
-    private func auditionTransport(for group: DuplicateTrackGroup) -> some View {
+    private var auditionTransport: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            auditionControls
+
+            HStack(spacing: 5) {
+                Toggle("Keep position when switching copies", isOn: $keepAuditionPosition)
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                    .font(.caption2)
+
+                Image(systemName: "info.circle")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .help(
+                        keepAuditionPosition
+                            ? "On: playing another copy in this group picks up at the same timestamp, so you compare the same moment in both. Switching to a different group still starts from the beginning."
+                            : "Off: every copy starts from the beginning. Turn this on to A/B two copies at the same point in the music."
+                    )
+                    .accessibilityLabel("About keeping playback position")
+
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.accentColor.opacity(0.08)))
+    }
+
+    private var auditionControls: some View {
         HStack(spacing: 8) {
             Button {
                 auditionPlayer.togglePlayPause()
@@ -1113,9 +1151,6 @@ struct DuplicateTracksView: View {
             .controlSize(.small)
             .help("Stop auditioning")
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color.accentColor.opacity(0.08)))
     }
 
     private func timeLabel(_ seconds: Double) -> String {

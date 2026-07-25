@@ -326,6 +326,12 @@ restarting from the top each time. `audition(track:startingAt:)` exists for
 that: unlike `load(track:)` it reloads even when the path is unchanged, which
 `load` deliberately skips.
 
+A *Keep position when switching copies* toggle in the transport controls this,
+with an info button explaining what each state does. It's on by default and
+persists in `UserDefaults`. Carrying the playhead is always scoped to one
+group — a different group is a different recording, where another track's
+timestamp means nothing — so switching groups restarts at zero either way.
+
 Playback stops before any delete, so the player isn't holding an open handle
 on a file being moved to the Trash, and it stops when a playing copy is
 ignored or scrolled out of the results by a rescan.
