@@ -34,7 +34,7 @@ struct LibraryConsolidationView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 8) {
                 libraryLocationCard
                 heroCard
                 summaryRow
@@ -42,7 +42,7 @@ struct LibraryConsolidationView: View {
                 sourceGroupsCard
                 destinationSpaceCard
             }
-            .padding(12)
+            .padding(8)
         }
         .task {
             if libraryPathDraft.isEmpty {
@@ -167,8 +167,8 @@ struct LibraryConsolidationView: View {
     }
 
     private var libraryLocationCard: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
                 FolderDropdownControl(
                     label: "Library directory",
                     path: $libraryPathDraft,
@@ -184,10 +184,10 @@ struct LibraryConsolidationView: View {
                 .help("Load the library from the entered folder path.")
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 4)
-            .padding(.vertical, 4)
+            .padding(.horizontal, 2)
+            .padding(.vertical, 2)
         }
-        .padding(6)
+        .padding(4)
         .background(RoundedRectangle(cornerRadius: 12).fill(Color(nsColor: .controlBackgroundColor).opacity(0.55)))
         .glowCardStyle(radius: 8, opacity: 0.05)
     }
