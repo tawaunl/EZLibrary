@@ -26,11 +26,14 @@ jobs:
       - name: Show Swift version
         run: swift --version
 
+      # Building the products and the test bundle in one invocation lets
+      # SwiftPM schedule them as a single dependency graph, instead of two
+      # sequential passes that each wait on the shared EZLibraryCore module.
       - name: Build
-        run: swift build
+        run: swift build --build-tests
 
       - name: Run tests
-        run: swift test
+        run: swift test --skip-build
 
   lint:
     name: SwiftLint

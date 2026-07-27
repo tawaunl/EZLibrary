@@ -27,7 +27,7 @@ public enum SeratoLibraryLocator {
     /// against a real library. `directoryComponents` only captures the
     /// first kind; combine with `Crate.pathComponents(forCrateFileNamed:)`
     /// for the second.
-    public struct CrateFileEntry {
+    public struct CrateFileEntry: Sendable {
         public let url: URL
         public let directoryComponents: [String]
     }
@@ -195,51 +195,36 @@ public enum SeratoLibraryLocator {
     /// like filesystem-root-relative (`Users/...`) even when the active
     /// profile root is an external volume. In that case prefer whichever
     /// candidate exists on disk.
+    ///
+    /// Runs once per track on library load, so it is written to avoid
+    /// per-track allocations: the candidates are compared as plain paths
+    /// rather than by standardizing both URLs, which was by far the most
+    /// expensive step of parsing a library kept on an external volume.
+    /// Standardizing only ever collapsed two candidates that name the same
+    /// file, and those resolve identically here anyway.
     public static func resolve(
         seratoStoredPath: String,
         rootDirectory: URL,
         fileManager: FileManager = .default
     ) -> URL {
-        let candidates = resolvedPathCandidates(
-            seratoStoredPath: seratoStoredPath,
-            rootDirectory: rootDirectory
-        )
-
-        // With a single candidate the disk check can't change the result, so
-        // skip it — this runs once per track on library load, and a stat()
-        // per track froze the UI for the whole parse on big libraries.
-        if candidates.count == 1 {
-            return candidates[0]
-        }
-
-        if let existing = candidates.first(where: { fileManager.fileExists(atPath: $0.path) }) {
-            return existing
-        }
-
-        return candidates[0]
-    }
-
-    private static func resolvedPathCandidates(seratoStoredPath: String, rootDirectory: URL) -> [URL] {
         let primary = rootDirectory.appendingPathComponent(seratoStoredPath)
-        // Boot-volume libraries resolve against "/" — the absolute fallback
-        // is identical, so don't build and standardize a second URL per track.
-        guard rootDirectory.path != "/" else {
-            return [primary]
-        }
 
-        let absoluteRoot = URL(fileURLWithPath: "/", isDirectory: true)
-        let absoluteFallback = absoluteRoot.appendingPathComponent(seratoStoredPath)
+        // Boot-volume libraries resolve against "/", so the absolute fallback
+        // is the same URL and the disk check can't change the result — and a
+        // stat() per track froze the UI for the whole parse on big libraries.
+        guard rootDirectory.path != "/" else { return primary }
 
-        var seen = Set<String>()
-        var output: [URL] = []
-        for candidate in [primary, absoluteFallback] {
-            let key = candidate.standardizedFileURL.path
-            if seen.insert(key).inserted {
-                output.append(candidate)
-            }
-        }
-        return output
+        let fallback = filesystemRoot.appendingPathComponent(seratoStoredPath)
+        let primaryPath = primary.path
+        let fallbackPath = fallback.path
+        guard primaryPath != fallbackPath else { return primary }
+
+        if fileManager.fileExists(atPath: primaryPath) { return primary }
+        if fileManager.fileExists(atPath: fallbackPath) { return fallback }
+        return primary
     }
+
+    private static let filesystemRoot = URL(fileURLWithPath: "/", isDirectory: true)
 
     /// Converts an absolute file URL back into the Serato-stored path
     /// convention (relative to `rootDirectory`), for writing.

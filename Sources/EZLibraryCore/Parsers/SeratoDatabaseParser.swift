@@ -176,32 +176,9 @@ public enum SeratoDatabaseParser {
         range.map { decodeUTF16BE(raw, $0) } ?? ""
     }
 
+    @inline(__always)
     private static func decodeUTF16BE(_ raw: UnsafeRawBufferPointer, _ range: Range<Int>) -> String {
-        let start = range.lowerBound
-        let unitCount = range.count / 2
-        guard unitCount > 0 else { return "" }
-
-        // Fast path: pure ASCII (high byte 0, low byte < 0x80) is by far the
-        // most common case for paths/titles and decodes without a UTF-16
-        // intermediate buffer.
-        var isASCII = true
-        for i in 0..<unitCount where raw[start + i * 2] != 0 || raw[start + i * 2 + 1] >= 0x80 {
-            isASCII = false
-            break
-        }
-        if isASCII {
-            var bytes = [UInt8](repeating: 0, count: unitCount)
-            for i in 0..<unitCount {
-                bytes[i] = raw[start + i * 2 + 1]
-            }
-            return String(decoding: bytes, as: UTF8.self)
-        }
-
-        var units = [UInt16](repeating: 0, count: unitCount)
-        for i in 0..<unitCount {
-            units[i] = (UInt16(raw[start + i * 2]) << 8) | UInt16(raw[start + i * 2 + 1])
-        }
-        return String(decoding: units, as: UTF16.self)
+        SeratoChunkCodec.decodeUTF16BE(raw, range)
     }
 
     private static func boolValue(_ raw: UnsafeRawBufferPointer, _ range: Range<Int>) -> Bool {
@@ -231,24 +208,18 @@ public enum SeratoDatabaseParser {
 
     @inline(__always)
     private static func readTag(_ raw: UnsafeRawBufferPointer, _ offset: Int) -> UInt32 {
-        (UInt32(raw[offset]) << 24) | (UInt32(raw[offset + 1]) << 16)
-            | (UInt32(raw[offset + 2]) << 8) | UInt32(raw[offset + 3])
+        SeratoChunkCodec.readTag(raw, offset)
     }
 
     @inline(__always)
     private static func readSize(_ raw: UnsafeRawBufferPointer, _ offset: Int) -> Int {
-        (Int(raw[offset]) << 24) | (Int(raw[offset + 1]) << 16)
-            | (Int(raw[offset + 2]) << 8) | Int(raw[offset + 3])
+        SeratoChunkCodec.readSize(raw, offset)
     }
 
     // MARK: - Four-character tag constants
 
     private static func fourCC(_ s: StaticString) -> UInt32 {
-        var result: UInt32 = 0
-        s.withUTF8Buffer { buffer in
-            for byte in buffer { result = (result << 8) | UInt32(byte) }
-        }
-        return result
+        SeratoChunkCodec.fourCC(s)
     }
 
     private static let tagOtrk = fourCC("otrk")

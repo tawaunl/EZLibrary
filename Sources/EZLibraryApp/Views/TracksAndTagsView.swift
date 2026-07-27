@@ -976,16 +976,7 @@ struct TracksAndTagsView: View {
     }
 
     private func isFilled(_ field: FillField, _ track: Track) -> Bool {
-        switch field {
-        case .artist:
-            return !track.artist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        case .album:
-            return !track.album.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        case .genre:
-            return !track.genre.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        case .year:
-            return track.year != nil
-        }
+        Self.isFilledStatic(field, track)
     }
 
     // MARK: - Off-main derived-data recompute
@@ -1073,30 +1064,68 @@ struct TracksAndTagsView: View {
         let scopeGenre = genre.map { value in scope.filter { $0.genre == value } } ?? scope
         let displayed = fill.map { field in scopeGenre.filter { !isFilledStatic(field, $0) } } ?? scopeGenre
 
+        let scopeCounts = fillCounts(in: scopeGenre)
+        let globalCounts = fillCounts(in: allTracks)
+
         var result = Derived()
         result.scopeTracks = scope
         result.scopeGenres = genres
         result.scopeGenreTracks = scopeGenre
         result.displayedTracks = displayed
-        result.artistFilledCount = scopeGenre.reduce(0) { isFilledStatic(.artist, $1) ? $0 + 1 : $0 }
-        result.albumFilledCount = scopeGenre.reduce(0) { isFilledStatic(.album, $1) ? $0 + 1 : $0 }
-        result.genreFilledCount = scopeGenre.reduce(0) { isFilledStatic(.genre, $1) ? $0 + 1 : $0 }
-        result.yearFilledCount = scopeGenre.reduce(0) { isFilledStatic(.year, $1) ? $0 + 1 : $0 }
-        result.globalArtistFilledCount = allTracks.reduce(0) { isFilledStatic(.artist, $1) ? $0 + 1 : $0 }
-        result.globalAlbumFilledCount = allTracks.reduce(0) { isFilledStatic(.album, $1) ? $0 + 1 : $0 }
-        result.globalGenreFilledCount = allTracks.reduce(0) { isFilledStatic(.genre, $1) ? $0 + 1 : $0 }
-        result.globalYearFilledCount = allTracks.reduce(0) { isFilledStatic(.year, $1) ? $0 + 1 : $0 }
+        result.artistFilledCount = scopeCounts.artist
+        result.albumFilledCount = scopeCounts.album
+        result.genreFilledCount = scopeCounts.genre
+        result.yearFilledCount = scopeCounts.year
+        result.globalArtistFilledCount = globalCounts.artist
+        result.globalAlbumFilledCount = globalCounts.album
+        result.globalGenreFilledCount = globalCounts.genre
+        result.globalYearFilledCount = globalCounts.year
         return result
+    }
+
+    /// Counts how many tracks have each fillable field populated, in a single
+    /// pass. This recomputes on every search keystroke, so it walks the array
+    /// once for all four fields rather than four times over.
+    nonisolated private static func fillCounts(
+        in tracks: [Track]
+    ) -> (artist: Int, album: Int, genre: Int, year: Int) {
+        var artist = 0, album = 0, genre = 0, year = 0
+        for track in tracks {
+            if hasContent(track.artist) { artist += 1 }
+            if hasContent(track.album) { album += 1 }
+            if hasContent(track.genre) { genre += 1 }
+            if track.year != nil { year += 1 }
+        }
+        return (artist, album, genre, year)
+    }
+
+    /// Whether `value` holds anything other than whitespace — equivalent to
+    /// `!value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty`, but
+    /// without allocating a trimmed copy of every field of every track.
+    @inline(__always)
+    nonisolated private static func hasContent(_ value: String) -> Bool {
+        for scalar in value.unicodeScalars {
+            switch scalar.value {
+            case 0x20, 0x09, 0x0A, 0x0B, 0x0C, 0x0D:
+                continue
+            default:
+                // Below U+0085 nothing else is whitespace, so the common case
+                // never has to consult the character set.
+                if scalar.value < 0x85 { return true }
+                if !CharacterSet.whitespacesAndNewlines.contains(scalar) { return true }
+            }
+        }
+        return false
     }
 
     nonisolated private static func isFilledStatic(_ field: FillField, _ track: Track) -> Bool {
         switch field {
         case .artist:
-            return !track.artist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            return hasContent(track.artist)
         case .album:
-            return !track.album.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            return hasContent(track.album)
         case .genre:
-            return !track.genre.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            return hasContent(track.genre)
         case .year:
             return track.year != nil
         }

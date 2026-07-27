@@ -12,12 +12,61 @@ RESOURCE_SCRIPT_DIR="$APP_BUNDLE/Contents/Resources/scripts"
 BUILD_ARTIFACT_DIR="$DIST_DIR/build-artifacts"
 BUILD_UNIVERSAL="${EZLIBRARY_BUILD_UNIVERSAL:-${SERATOTOOLS_BUILD_UNIVERSAL:-0}}"
 
-build_product_binary() {
+BUILD_ARCHS=(arm64 x86_64)
+
+arch_build_path() {
+	echo "$BUILD_ARTIFACT_DIR/.swift-build-$1"
+}
+
+build_all_arch_binaries() {
 	# The app and CLI binaries are ALWAYS built as universal2 (arm64 + x86_64)
 	# so the shipped app launches on both Apple Silicon and Intel Macs. An
 	# arm64-only app triggers macOS "This application is not supported on this
 	# Mac" on Intel. Cross-compiling the Swift binaries is cheap and does not
 	# require Intel Homebrew runtime tools (those are handled separately).
+	#
+	# One build per architecture produces every product, so the app and the
+	# CLI come out of the same compile. Building them one product at a time
+	# recompiled the whole of EZLibraryCore separately for each, which is the
+	# bulk of the work and identical both times. The two architectures are
+	# independent, so they also run concurrently — a single release build is
+	# dominated by whole-module optimization and leaves most cores idle.
+	local arch
+	local build_path
+	local log_path
+	local pids=()
+	local status=0
+	local index
+
+	for arch in "${BUILD_ARCHS[@]}"; do
+		build_path="$(arch_build_path "$arch")"
+		rm -rf "$build_path"
+		echo "  compiling $arch..."
+		# Each architecture logs to its own file; running concurrently, their
+		# output would otherwise interleave into an unreadable mess.
+		swift build -c release --arch "$arch" --build-path "$build_path" \
+			>"$BUILD_ARTIFACT_DIR/build-$arch.log" 2>&1 &
+		pids+=("$!")
+	done
+
+	for index in "${!BUILD_ARCHS[@]}"; do
+		arch="${BUILD_ARCHS[$index]}"
+		log_path="$BUILD_ARTIFACT_DIR/build-$arch.log"
+		if wait "${pids[$index]}"; then
+			echo "  $arch build complete"
+		else
+			echo "Error: release build failed for $arch:" >&2
+			cat "$log_path" >&2
+			status=1
+		fi
+	done
+
+	if [[ "$status" -ne 0 ]]; then
+		exit 1
+	fi
+}
+
+lipo_product_binary() {
 	local product="$1"
 	local output_path="$2"
 	local arch
@@ -26,11 +75,9 @@ build_product_binary() {
 	local arch_bin_path
 	local arch_bins=()
 
-	for arch in arm64 x86_64; do
-		build_path="$BUILD_ARTIFACT_DIR/.swift-build-$product-$arch"
-		rm -rf "$build_path"
-		swift build -c release --product "$product" --arch "$arch" --build-path "$build_path"
-		arch_bin_dir="$(swift build -c release --product "$product" --arch "$arch" --build-path "$build_path" --show-bin-path)"
+	for arch in "${BUILD_ARCHS[@]}"; do
+		build_path="$(arch_build_path "$arch")"
+		arch_bin_dir="$(swift build -c release --arch "$arch" --build-path "$build_path" --show-bin-path)"
 		arch_bin_path="$arch_bin_dir/$product"
 		if [[ ! -x "$arch_bin_path" ]]; then
 			echo "Error: expected built binary not found at $arch_bin_path" >&2
@@ -73,8 +120,9 @@ mkdir -p "$BUILD_ARTIFACT_DIR"
 APP_BIN_PATH="$BUILD_ARTIFACT_DIR/$APP_NAME"
 CLI_BIN_PATH="$BUILD_ARTIFACT_DIR/EZLibraryCLI"
 
-build_product_binary "$APP_NAME" "$APP_BIN_PATH"
-build_product_binary "EZLibraryCLI" "$CLI_BIN_PATH"
+build_all_arch_binaries
+lipo_product_binary "$APP_NAME" "$APP_BIN_PATH"
+lipo_product_binary "EZLibraryCLI" "$CLI_BIN_PATH"
 
 rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources" "$RESOURCE_BIN_DIR" "$RESOURCE_SCRIPT_DIR"

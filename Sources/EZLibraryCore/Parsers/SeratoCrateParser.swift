@@ -16,6 +16,12 @@ import Foundation
 ///
 /// Field tags cross-checked against Mixxx's open-source Serato crate
 /// reader (`src/library/serato/seratofeature.cpp`).
+///
+/// Performance: a full library load parses every crate file, so the hot path
+/// scans each file's chunks by byte offset rather than building
+/// `[SeratoChunk]` — the old path allocated a `Data` copy and a tag `String`
+/// per `otrk`, then a second array per record, which across a few hundred
+/// crates was the largest remaining cost in `LibraryService.reload`.
 public enum SeratoCrateParser {
     public enum ParserError: Error {
         case fileNotFound(URL)
@@ -25,7 +31,7 @@ public enum SeratoCrateParser {
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             throw ParserError.fileNotFound(fileURL)
         }
-        let data = try Data(contentsOf: fileURL)
+        let data = try Data(contentsOf: fileURL, options: .mappedIfSafe)
         let baseName = fileURL.deletingPathExtension().lastPathComponent
         return Crate(
             pathComponents: Crate.pathComponents(forCrateFileNamed: baseName),
@@ -35,14 +41,51 @@ public enum SeratoCrateParser {
     }
 
     public static func trackPaths(from data: Data) -> [String] {
-        SeratoChunkCodec.readChunks(from: data)
-            .filter { $0.tag == "otrk" }
-            .compactMap { trackPath(from: $0.payload) }
+        data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) -> [String] in
+            guard raw.baseAddress != nil else { return [] }
+            let count = raw.count
+            var paths: [String] = []
+            var offset = 0
+            while offset + 8 <= count {
+                let tag = SeratoChunkCodec.readTag(raw, offset)
+                let size = SeratoChunkCodec.readSize(raw, offset + 4)
+                let payloadStart = offset + 8
+                let payloadEnd = payloadStart + size
+                // Trailing bytes that don't form a complete chunk are ignored
+                // rather than treated as an error, matching `readChunks`.
+                guard payloadEnd <= count else { break }
+                if tag == tagOtrk,
+                   let path = trackPath(raw: raw, start: payloadStart, end: payloadEnd) {
+                    paths.append(path)
+                }
+                offset = payloadEnd
+            }
+            return paths
+        }
     }
 
-    private static func trackPath(from otrkPayload: Data) -> String? {
-        SeratoChunkCodec.readChunks(from: otrkPayload)
-            .first(where: { $0.tag == "ptrk" })
-            .map { SeratoChunkCodec.decodeUTF16BEString($0.payload) }
+    /// Returns the first `ptrk` field in one `otrk` payload, or `nil` for a
+    /// record that carries no track path (which the caller drops).
+    private static func trackPath(
+        raw: UnsafeRawBufferPointer,
+        start: Int,
+        end: Int
+    ) -> String? {
+        var offset = start
+        while offset + 8 <= end {
+            let tag = SeratoChunkCodec.readTag(raw, offset)
+            let size = SeratoChunkCodec.readSize(raw, offset + 4)
+            let payloadStart = offset + 8
+            let payloadEnd = payloadStart + size
+            guard payloadEnd <= end else { break }
+            if tag == tagPtrk {
+                return SeratoChunkCodec.decodeUTF16BE(raw, payloadStart..<payloadEnd)
+            }
+            offset = payloadEnd
+        }
+        return nil
     }
+
+    private static let tagOtrk = SeratoChunkCodec.fourCC("otrk")
+    private static let tagPtrk = SeratoChunkCodec.fourCC("ptrk")
 }

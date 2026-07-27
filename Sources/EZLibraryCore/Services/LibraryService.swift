@@ -225,12 +225,30 @@ public final class LibraryService: ObservableObject {
     /// actor-isolated state.
     nonisolated private static func readPlayCounts(for snapshot: [Track]) async -> [UUID: Int]? {
         await Task.detached(priority: .utility) {
-            var counts: [UUID: Int] = [:]
-            for track in snapshot {
-                if Task.isCancelled { return nil }
-                if let count = SeratoPlayCountReader.playCount(forFileAt: track.fileURL) {
-                    counts[track.id] = count
+            // One ID3 tag read per file, and they're independent, so the scan
+            // runs in parallel — read serially it took a file-open round trip
+            // per track and left the play-count column blank for a long time
+            // on a large library.
+            //
+            // Cancellation is checked per element rather than up front so a
+            // reload that lands mid-scan still stops it promptly; already
+            // in-flight iterations finish, then the result is discarded below.
+            var results = [Int?](repeating: nil, count: snapshot.count)
+            results.withUnsafeMutableBufferPointer { out in
+                // Written only at disjoint indices, one per iteration.
+                nonisolated(unsafe) let outBuffer = out
+                DispatchQueue.concurrentPerform(iterations: snapshot.count) { index in
+                    guard !Task.isCancelled else { return }
+                    outBuffer[index] = SeratoPlayCountReader.playCount(forFileAt: snapshot[index].fileURL)
                 }
+            }
+
+            if Task.isCancelled { return nil }
+
+            var counts: [UUID: Int] = [:]
+            for (index, result) in results.enumerated() {
+                guard let count = result else { continue }
+                counts[snapshot[index].id] = count
             }
             return counts.isEmpty ? nil : counts
         }.value
@@ -239,7 +257,9 @@ public final class LibraryService: ObservableObject {
     private func applyPlayCounts(_ counts: [UUID: Int], forSnapshotIDs snapshotIDs: [UUID]) {
         // Only apply when `tracks` hasn't been replaced since the scan started,
         // so a stale background result can't overwrite a newer library load.
-        guard tracks.map(\.id) == snapshotIDs else { return }
+        // Compared lazily so the check doesn't build a second array of every
+        // track's id just to throw it away.
+        guard tracks.lazy.map(\.id).elementsEqual(snapshotIDs) else { return }
 
         tracks = tracks.map { track in
             guard let count = counts[track.id] else { return track }
@@ -260,11 +280,34 @@ public final class LibraryService: ObservableObject {
     ///
     /// `nonisolated` so it can run on the background parse task alongside
     /// `SeratoDatabaseParser`.
+    ///
+    /// Each crate file is independent (its own open + parse), so they are
+    /// decoded in parallel and written back at disjoint indices to preserve
+    /// the on-disk ordering the caller expects. Parsing them one at a time
+    /// serialized several hundred file reads and was the slowest step of a
+    /// library load on a large collection.
     nonisolated private static func loadCrates(from entries: [SeratoLibraryLocator.CrateFileEntry]) -> [Crate] {
-        entries.compactMap { entry in
-            guard var crate = try? SeratoCrateParser.parseCrate(at: entry.url) else { return nil }
-            crate.pathComponents = entry.directoryComponents + crate.pathComponents
-            return crate
+        guard entries.count > 1 else {
+            return entries.compactMap(parseCrate(entry:))
         }
+
+        var parsed = [Crate?](repeating: nil, count: entries.count)
+        parsed.withUnsafeMutableBufferPointer { out in
+            // Only ever written at disjoint indices, one per iteration, so the
+            // unchecked-Sendable escape hatch is safe here.
+            nonisolated(unsafe) let outBuffer = out
+            DispatchQueue.concurrentPerform(iterations: entries.count) { index in
+                outBuffer[index] = parseCrate(entry: entries[index])
+            }
+        }
+        return parsed.compactMap { $0 }
+    }
+
+    /// Parses one crate file, folding any real-subdirectory nesting into the
+    /// crate's own `≫≫`-derived path components. Unreadable files are skipped.
+    nonisolated private static func parseCrate(entry: SeratoLibraryLocator.CrateFileEntry) -> Crate? {
+        guard var crate = try? SeratoCrateParser.parseCrate(at: entry.url) else { return nil }
+        crate.pathComponents = entry.directoryComponents + crate.pathComponents
+        return crate
     }
 }

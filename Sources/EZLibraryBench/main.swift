@@ -145,6 +145,48 @@ timeIt("derive trackGenres + artistCount") {
 }
 
 let crates = makeSyntheticCrates(storedPaths: storedPaths, crateCount: crateCount)
+
+// Crate files are written to disk and parsed back, because reading and
+// decoding them is a real part of every load — measuring only the in-memory
+// `[Crate]` steps below hid what was once the single most expensive stage of
+// a reload.
+let crateDir = tempDir.appendingPathComponent("Subcrates", isDirectory: true)
+try! FileManager.default.createDirectory(at: crateDir, withIntermediateDirectories: true)
+var crateFiles: [URL] = []
+for crate in crates {
+    var data = SeratoChunkCodec.writeChunk(
+        tag: "vrsn",
+        payload: SeratoChunkCodec.encodeUTF16BEString("1.0/Serato ScratchLive Crate"))
+    for path in crate.trackPaths {
+        data.append(SeratoChunkCodec.writeChunk(
+            tag: "otrk",
+            payload: SeratoChunkCodec.writeChunk(
+                tag: "ptrk", payload: SeratoChunkCodec.encodeUTF16BEString(path))))
+    }
+    let url = crateDir.appendingPathComponent(
+        "\(Crate.fileBaseName(forPathComponents: crate.pathComponents)).crate")
+    try! data.write(to: url)
+    crateFiles.append(url)
+}
+
+var serialCrates: [Crate] = []
+timeIt("load crates from disk — SERIAL") {
+    serialCrates = crateFiles.compactMap { try? SeratoCrateParser.parseCrate(at: $0) }
+}
+
+var parallelCrates = [Crate?](repeating: nil, count: crateFiles.count)
+timeIt("load crates from disk — PARALLEL (shipping)") {
+    parallelCrates.withUnsafeMutableBufferPointer { out in
+        nonisolated(unsafe) let outBuffer = out
+        DispatchQueue.concurrentPerform(iterations: crateFiles.count) { index in
+            outBuffer[index] = try? SeratoCrateParser.parseCrate(at: crateFiles[index])
+        }
+    }
+}
+precondition(serialCrates.map(\.trackPaths) == parallelCrates.map { $0?.trackPaths ?? [] },
+             "parallel crate load must match serial")
+print("    (\(serialCrates.count) crates, \(serialCrates.reduce(0) { $0 + $1.trackPaths.count }) track refs)")
+
 timeIt("tracksInCratesCount (Set flatMap)") {
     _ = Set(crates.lazy.flatMap(\.trackPaths)).count
 }
@@ -153,14 +195,23 @@ timeIt("CrateHierarchy.build") {
     _ = CrateHierarchy.build(from: crates)
 }
 
-// The full main-thread cost of one reload(): parse + both hierarchies +
-// derived stats + tracksInCratesCount (play-count scan is already async).
+// The full main-thread cost of one reload(): track parse + crate load from
+// disk + both hierarchies + derived stats + tracksInCratesCount (the
+// play-count scan is already async).
 timeIt("FULL reload() equivalent (main-thread)") {
     let parsed = try! SeratoDatabaseParser.parseTracks(at: dbFile, rootDirectory: root)
+    var loaded = [Crate?](repeating: nil, count: crateFiles.count)
+    loaded.withUnsafeMutableBufferPointer { out in
+        nonisolated(unsafe) let outBuffer = out
+        DispatchQueue.concurrentPerform(iterations: crateFiles.count) { index in
+            outBuffer[index] = try? SeratoCrateParser.parseCrate(at: crateFiles[index])
+        }
+    }
+    let loadedCrates = loaded.compactMap { $0 }
     _ = Array(Set(parsed.map(\.genre).filter { !$0.isEmpty })).sorted()
     _ = Set(parsed.map(\.artist).filter { !$0.isEmpty }).count
-    _ = Set(crates.lazy.flatMap(\.trackPaths)).count
-    _ = CrateHierarchy.build(from: crates)
+    _ = Set(loadedCrates.lazy.flatMap(\.trackPaths)).count
+    _ = CrateHierarchy.build(from: loadedCrates)
 }
 
 // MARK: - TrackTableView interaction costs (mirrors the app's logic)
@@ -288,10 +339,13 @@ timeIt("cached recompute: filter+sort+extract/keystroke") {
     _ = sorted.map(\.key)
 }
 
-// TracksAndTagsView per-body cascade: 8 fill-count passes (each O(n) with a
-// per-element trimmingCharacters allocation) + scope/genre/displayed filters.
-// ALL of this currently re-runs on every SwiftUI body evaluation.
-timeIt("stats: 8x count(trimming) per body") {
+// TracksAndTagsView fill-count stats. These no longer run per SwiftUI body
+// evaluation — they're part of the memoized `Derived` snapshot recomputed off
+// the main actor — but that snapshot is rebuilt on every search keystroke, so
+// the cost still sits on the interactive path.
+//
+// Old shape: 8 separate O(n) passes, each allocating a trimmed copy per track.
+timeIt("stats: 8 passes x trimmingCharacters") {
     let ws = CharacterSet.whitespacesAndNewlines
     for _ in 0..<4 {
         _ = tracks.filter { !$0.artist.trimmingCharacters(in: ws).isEmpty }.count
@@ -302,15 +356,31 @@ timeIt("stats: 8x count(trimming) per body") {
     _ = tracks.filter { !$0.artist.trimmingCharacters(in: ws).isEmpty }.count
 }
 
-// Cheaper equivalent without trimming allocations (candidate optimization).
-timeIt("stats: 8x count(no-trim) per body") {
-    @inline(__always) func nonEmpty(_ s: String) -> Bool {
-        for ch in s.unicodeScalars where !CharacterSet.whitespacesAndNewlines.contains(ch) { return true }
+// Shipping shape: one fused pass over the array for all four fields, with an
+// allocation-free whitespace test (see `TracksAndTagsView.fillCounts`).
+timeIt("stats: 1 fused pass, no allocation") {
+    @inline(__always) func hasContent(_ s: String) -> Bool {
+        for scalar in s.unicodeScalars {
+            switch scalar.value {
+            case 0x20, 0x09, 0x0A, 0x0B, 0x0C, 0x0D: continue
+            default:
+                if scalar.value < 0x85 { return true }
+                if !CharacterSet.whitespacesAndNewlines.contains(scalar) { return true }
+            }
+        }
         return false
     }
-    for _ in 0..<6 { _ = tracks.reduce(0) { nonEmpty($1.artist) ? $0 + 1 : $0 } }
-    _ = tracks.reduce(0) { $1.year != nil ? $0 + 1 : $0 }
-    _ = tracks.reduce(0) { nonEmpty($1.genre) ? $0 + 1 : $0 }
+    // The view computes these twice: once for the scope, once for all tracks.
+    for _ in 0..<2 {
+        var artist = 0, album = 0, genre = 0, year = 0
+        for track in tracks {
+            if hasContent(track.artist) { artist += 1 }
+            if hasContent(track.album) { album += 1 }
+            if hasContent(track.genre) { genre += 1 }
+            if track.year != nil { year += 1 }
+        }
+        _ = (artist, album, genre, year)
+    }
 }
 
 

@@ -108,3 +108,69 @@ public enum SeratoChunkCodec {
         ]
     }
 }
+
+// MARK: - Raw-buffer scanning primitives
+
+/// Byte-level readers used by the parsers' hot paths, which walk a file's
+/// chunks by offset instead of building `[SeratoChunk]` (one `Data` copy and
+/// one tag `String` per chunk). On a large library that difference is tens of
+/// thousands of allocations per load, so both `SeratoDatabaseParser` and
+/// `SeratoCrateParser` decode straight out of the mapped buffer.
+///
+/// Deliberately module-internal: these hand back no bounds checking beyond
+/// what the caller does itself, so they aren't part of the public API.
+extension SeratoChunkCodec {
+    /// Reads a 4-byte ASCII chunk tag as a single integer, so tag comparison
+    /// is one integer compare rather than a `String` allocation + compare.
+    @inline(__always)
+    static func readTag(_ raw: UnsafeRawBufferPointer, _ offset: Int) -> UInt32 {
+        (UInt32(raw[offset]) << 24) | (UInt32(raw[offset + 1]) << 16)
+            | (UInt32(raw[offset + 2]) << 8) | UInt32(raw[offset + 3])
+    }
+
+    /// Reads a chunk's 4-byte big-endian payload length.
+    @inline(__always)
+    static func readSize(_ raw: UnsafeRawBufferPointer, _ offset: Int) -> Int {
+        (Int(raw[offset]) << 24) | (Int(raw[offset + 1]) << 16)
+            | (Int(raw[offset + 2]) << 8) | Int(raw[offset + 3])
+    }
+
+    /// Decodes a UTF-16BE string directly from `range` of the shared buffer.
+    static func decodeUTF16BE(_ raw: UnsafeRawBufferPointer, _ range: Range<Int>) -> String {
+        let start = range.lowerBound
+        let unitCount = range.count / 2
+        guard unitCount > 0 else { return "" }
+
+        // Fast path: pure ASCII (high byte 0, low byte < 0x80) is by far the
+        // most common case for paths/titles and decodes without a UTF-16
+        // intermediate buffer.
+        var isASCII = true
+        for i in 0..<unitCount where raw[start + i * 2] != 0 || raw[start + i * 2 + 1] >= 0x80 {
+            isASCII = false
+            break
+        }
+        if isASCII {
+            var bytes = [UInt8](repeating: 0, count: unitCount)
+            for i in 0..<unitCount {
+                bytes[i] = raw[start + i * 2 + 1]
+            }
+            return String(decoding: bytes, as: UTF8.self)
+        }
+
+        var units = [UInt16](repeating: 0, count: unitCount)
+        for i in 0..<unitCount {
+            units[i] = (UInt16(raw[start + i * 2]) << 8) | UInt16(raw[start + i * 2 + 1])
+        }
+        return String(decoding: units, as: UTF16.self)
+    }
+
+    /// Compile-time-friendly conversion of a 4-character tag literal to the
+    /// integer form `readTag` returns.
+    static func fourCC(_ tag: StaticString) -> UInt32 {
+        var result: UInt32 = 0
+        tag.withUTF8Buffer { buffer in
+            for byte in buffer { result = (result << 8) | UInt32(byte) }
+        }
+        return result
+    }
+}
