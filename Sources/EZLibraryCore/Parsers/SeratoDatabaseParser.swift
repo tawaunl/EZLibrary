@@ -89,6 +89,58 @@ public enum SeratoDatabaseParser {
         }
     }
 
+    /// Every `otrk` record's stored path (`pfil`), in file order.
+    ///
+    /// The write path repeatedly needs just this — "which paths does the
+    /// database already contain?" — and decoding whole `Track` values, or
+    /// walking the file as `[SeratoChunk]` (a `Data` copy and a tag `String`
+    /// per chunk), costs far more than reading the one field it uses.
+    ///
+    /// Records with no `pfil` are skipped; an empty `pfil` is kept, matching
+    /// what the callers' previous inline scans did.
+    public static func storedPaths(from data: Data) -> [String] {
+        data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) -> [String] in
+            guard raw.baseAddress != nil else { return [] }
+            let count = raw.count
+            var paths: [String] = []
+            var offset = 0
+            while offset + 8 <= count {
+                let tag = SeratoChunkCodec.readTag(raw, offset)
+                let size = SeratoChunkCodec.readSize(raw, offset + 4)
+                let payloadStart = offset + 8
+                let payloadEnd = payloadStart + size
+                guard payloadEnd <= count else { break }
+                if tag == tagOtrk,
+                   let path = firstStoredPath(raw: raw, start: payloadStart, end: payloadEnd) {
+                    paths.append(path)
+                }
+                offset = payloadEnd
+            }
+            return paths
+        }
+    }
+
+    /// The first `pfil` field within one `otrk` payload, or `nil` if it has none.
+    private static func firstStoredPath(
+        raw: UnsafeRawBufferPointer,
+        start: Int,
+        end: Int
+    ) -> String? {
+        var offset = start
+        while offset + 8 <= end {
+            let tag = SeratoChunkCodec.readTag(raw, offset)
+            let size = SeratoChunkCodec.readSize(raw, offset + 4)
+            let payloadStart = offset + 8
+            let payloadEnd = payloadStart + size
+            guard payloadEnd <= end else { break }
+            if tag == tagPfil {
+                return SeratoChunkCodec.decodeUTF16BE(raw, payloadStart..<payloadEnd)
+            }
+            offset = payloadEnd
+        }
+        return nil
+    }
+
     // MARK: - Per-record decode
 
     /// Decodes a single `otrk` payload directly from the shared buffer,

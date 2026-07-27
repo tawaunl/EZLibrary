@@ -32,8 +32,15 @@ jobs:
       - name: Build
         run: swift build --build-tests
 
+      # `--no-parallel` because EZLibraryCore's write-safety test seams
+      # (`SeratoBackupBeforeWrite.backupDirectory`, `SeratoProcessGuard`)
+      # are process-wide mutable statics that several suites override at once.
+      # Run in parallel, one suite redirects another's backups mid-write and
+      # the build fails at random (~1 in 14 runs measured). Serializing costs
+      # under a second here. The real fix is to scope those seams per test
+      # (e.g. task-local) rather than sharing one global.
       - name: Run tests
-        run: swift test --skip-build
+        run: swift test --skip-build --no-parallel
 
   lint:
     name: SwiftLint

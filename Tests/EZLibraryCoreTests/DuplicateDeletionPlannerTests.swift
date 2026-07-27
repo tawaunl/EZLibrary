@@ -12,6 +12,13 @@ import Foundation
 import Testing
 @testable import EZLibraryCore
 
+// A suite type rather than free functions so `sandbox` is per-test: swift-testing
+// builds a fresh instance for every test, and these run in parallel. As one
+// shared file-scope directory, each test's `defer` deleted the sandbox out from
+// under whichever tests were still running, so `filesToTrash` intermittently
+// found nothing to trash.
+@Suite struct DuplicateDeletionPlannerTests {
+
 private let sandbox = FileManager.default.temporaryDirectory
     .appendingPathComponent("ezlib-deletion-\(UUID().uuidString)")
 
@@ -135,4 +142,5 @@ private func track(_ storedPath: String, fileURL: URL) -> Track {
         deletedTracks: deleted,
         survivingTracks: surviving
     ).count == 2)
+}
 }

@@ -176,10 +176,11 @@ timeIt("load crates from disk — SERIAL") {
 
 var parallelCrates = [Crate?](repeating: nil, count: crateFiles.count)
 timeIt("load crates from disk — PARALLEL (shipping)") {
+    let files = crateFiles
     parallelCrates.withUnsafeMutableBufferPointer { out in
         nonisolated(unsafe) let outBuffer = out
-        DispatchQueue.concurrentPerform(iterations: crateFiles.count) { index in
-            outBuffer[index] = try? SeratoCrateParser.parseCrate(at: crateFiles[index])
+        DispatchQueue.concurrentPerform(iterations: files.count) { index in
+            outBuffer[index] = try? SeratoCrateParser.parseCrate(at: files[index])
         }
     }
 }
@@ -200,11 +201,12 @@ timeIt("CrateHierarchy.build") {
 // play-count scan is already async).
 timeIt("FULL reload() equivalent (main-thread)") {
     let parsed = try! SeratoDatabaseParser.parseTracks(at: dbFile, rootDirectory: root)
-    var loaded = [Crate?](repeating: nil, count: crateFiles.count)
+    let files = crateFiles
+    var loaded = [Crate?](repeating: nil, count: files.count)
     loaded.withUnsafeMutableBufferPointer { out in
         nonisolated(unsafe) let outBuffer = out
-        DispatchQueue.concurrentPerform(iterations: crateFiles.count) { index in
-            outBuffer[index] = try? SeratoCrateParser.parseCrate(at: crateFiles[index])
+        DispatchQueue.concurrentPerform(iterations: files.count) { index in
+            outBuffer[index] = try? SeratoCrateParser.parseCrate(at: files[index])
         }
     }
     let loadedCrates = loaded.compactMap { $0 }

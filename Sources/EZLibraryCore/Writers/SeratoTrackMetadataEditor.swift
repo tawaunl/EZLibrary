@@ -420,10 +420,7 @@ public enum SeratoTrackMetadataEditor {
         }
 
         let canonicalTargetPaths = canonicalPathSet(for: track.fileURL)
-        for chunk in SeratoChunkCodec.readChunks(from: databaseData) where chunk.tag == "otrk" {
-            let fields = SeratoChunkCodec.readChunks(from: chunk.payload)
-            guard let pfil = fields.first(where: { $0.tag == "pfil" }) else { continue }
-            let storedPath = SeratoChunkCodec.decodeUTF16BEString(pfil.payload)
+        for storedPath in SeratoDatabaseParser.storedPaths(from: databaseData) {
             let resolved = SeratoLibraryLocator.resolve(seratoStoredPath: storedPath, rootDirectory: rootDirectory)
             if canonicalTargetPaths.contains(canonicalPath(for: resolved)), !candidates.contains(storedPath) {
                 candidates.append(storedPath)
@@ -437,46 +434,75 @@ public enum SeratoTrackMetadataEditor {
     /// scan over the database. Lets `resolveStoredPath` answer per-track
     /// path-resolution questions in O(1) instead of each track re-scanning
     /// every chunk the way `storedPathCandidates`/`firstMatchingStoredPath` do.
-    private struct StoredPathIndex {
+    ///
+    /// The canonical-path map is built only if some track fails to match by
+    /// stored path, because building it resolves and symlink-canonicalizes
+    /// every path in the library — over a second of filesystem work on a large
+    /// one. Tracks read from this same database almost always match verbatim,
+    /// so that fallback normally never runs.
+    private final class StoredPathIndex {
         let existingStoredPaths: Set<String>
-        let canonicalPathToStoredPath: [String: String]
+
+        /// Stored paths in file order, so the lazily-built map keeps the
+        /// last-record-wins behavior of building it in a single forward scan.
+        private let storedPathsInFileOrder: [String]
+        private let rootDirectory: URL
+        private var cachedCanonicalPathToStoredPath: [String: String]?
+
+        init(rootDirectory: URL, databaseData: Data) {
+            let storedPaths = SeratoDatabaseParser.storedPaths(from: databaseData)
+            self.storedPathsInFileOrder = storedPaths
+            self.existingStoredPaths = Set(storedPaths)
+            self.rootDirectory = rootDirectory
+        }
+
+        var canonicalPathToStoredPath: [String: String] {
+            if let cachedCanonicalPathToStoredPath {
+                return cachedCanonicalPathToStoredPath
+            }
+            var map: [String: String] = [:]
+            map.reserveCapacity(storedPathsInFileOrder.count)
+            for storedPath in storedPathsInFileOrder {
+                let resolved = SeratoLibraryLocator.resolve(
+                    seratoStoredPath: storedPath, rootDirectory: rootDirectory)
+                map[canonicalPath(for: resolved)] = storedPath
+            }
+            cachedCanonicalPathToStoredPath = map
+            return map
+        }
     }
 
     private static func buildStoredPathIndex(rootDirectory: URL, databaseData: Data) -> StoredPathIndex {
-        var existingStoredPaths: Set<String> = []
-        var canonicalPathToStoredPath: [String: String] = [:]
-
-        for chunk in SeratoChunkCodec.readChunks(from: databaseData) where chunk.tag == "otrk" {
-            let fields = SeratoChunkCodec.readChunks(from: chunk.payload)
-            guard let pfil = fields.first(where: { $0.tag == "pfil" }) else { continue }
-            let storedPath = SeratoChunkCodec.decodeUTF16BEString(pfil.payload)
-            existingStoredPaths.insert(storedPath)
-
-            let resolved = SeratoLibraryLocator.resolve(seratoStoredPath: storedPath, rootDirectory: rootDirectory)
-            canonicalPathToStoredPath[canonicalPath(for: resolved)] = storedPath
-        }
-
-        return StoredPathIndex(existingStoredPaths: existingStoredPaths, canonicalPathToStoredPath: canonicalPathToStoredPath)
+        StoredPathIndex(rootDirectory: rootDirectory, databaseData: databaseData)
     }
 
     /// Same candidate-then-match logic as
     /// `storedPathCandidates`/`firstMatchingStoredPath`, but against a
     /// prebuilt `StoredPathIndex` instead of re-scanning the database.
     private static func resolveStoredPath(for track: Track, rootDirectory: URL, index: StoredPathIndex) -> String? {
-        var candidates: [String] = [track.seratoStoredPath]
-
-        let derived = SeratoLibraryLocator.seratoStoredPath(for: track.fileURL, rootDirectory: rootDirectory)
-        if !derived.isEmpty, !candidates.contains(derived) {
-            candidates.append(derived)
+        // The stored path and the path derived from the file URL both take
+        // priority over any canonical-path match, so they're checked first —
+        // a hit here also means the index never has to build its canonical
+        // map, which is the expensive half of resolving a whole batch.
+        if index.existingStoredPaths.contains(track.seratoStoredPath) {
+            return track.seratoStoredPath
         }
 
+        let derived = SeratoLibraryLocator.seratoStoredPath(for: track.fileURL, rootDirectory: rootDirectory)
+        if !derived.isEmpty, index.existingStoredPaths.contains(derived) {
+            return derived
+        }
+
+        // Fallback for libraries whose stored path doesn't match the file URL
+        // verbatim (symlinks, /private prefixes, mixed path conventions).
         for canonical in canonicalPathSet(for: track.fileURL) {
-            if let matched = index.canonicalPathToStoredPath[canonical], !candidates.contains(matched) {
-                candidates.append(matched)
+            if let matched = index.canonicalPathToStoredPath[canonical],
+               index.existingStoredPaths.contains(matched) {
+                return matched
             }
         }
 
-        return candidates.first(where: { index.existingStoredPaths.contains($0) })
+        return nil
     }
 
     private static func verifyPersistedMetadata(
@@ -548,15 +574,7 @@ public enum SeratoTrackMetadataEditor {
     }
 
     private static func firstMatchingStoredPath(candidates: [String], in databaseData: Data) -> String? {
-        let existingPaths = Set(
-            SeratoChunkCodec.readChunks(from: databaseData)
-                .filter { $0.tag == "otrk" }
-                .compactMap { trackChunk -> String? in
-                    let fields = SeratoChunkCodec.readChunks(from: trackChunk.payload)
-                    guard let pfil = fields.first(where: { $0.tag == "pfil" }) else { return nil }
-                    return SeratoChunkCodec.decodeUTF16BEString(pfil.payload)
-                }
-        )
+        let existingPaths = Set(SeratoDatabaseParser.storedPaths(from: databaseData))
 
         return candidates.first(where: { existingPaths.contains($0) })
     }

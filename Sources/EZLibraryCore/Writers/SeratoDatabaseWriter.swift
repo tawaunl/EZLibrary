@@ -63,25 +63,20 @@ public enum SeratoDatabaseWriter {
         metadata: SeratoTrackMetadataUpdate? = nil,
         in fileData: Data
     ) -> (data: Data, didInsert: Bool) {
-        let topLevel = SeratoChunkCodec.readChunks(from: fileData)
-
-        let alreadyExists = topLevel.contains { chunk in
-            guard chunk.tag == "otrk" else { return false }
-            let fields = SeratoChunkCodec.readChunks(from: chunk.payload)
-            guard let pfilField = fields.first(where: { $0.tag == "pfil" }) else {
-                return false
-            }
-            return SeratoChunkCodec.decodeUTF16BEString(pfilField.payload) == storedPath
-        }
+        // Checked with a stored-path-only scan so the common "already there"
+        // case doesn't have to materialize the whole file as `[SeratoChunk]`.
+        let alreadyExists = SeratoDatabaseParser.storedPaths(from: fileData).contains(storedPath)
 
         guard !alreadyExists else {
             return (fileData, false)
         }
 
+        // A new record only ever appends, so the existing bytes are reused
+        // verbatim rather than being decoded and re-encoded chunk by chunk.
         let newTrack = makeTrackChunk(storedPath: storedPath, metadata: metadata)
-        var newChunks = topLevel
-        newChunks.append(newTrack)
-        return (SeratoChunkCodec.writeChunks(newChunks), true)
+        var newData = fileData
+        newData.append(SeratoChunkCodec.writeChunk(newTrack))
+        return (newData, true)
     }
 
     /// Rewrites the `pfil` field of every `otrk` record whose current
