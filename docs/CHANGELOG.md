@@ -9,6 +9,29 @@ version (`CFBundleShortVersionString.CFBundleVersion`) and are used verbatim by
 > the highest priority — see [SECURITY.md](../SECURITY.md). This changelog is kept
 > up to date so you can see exactly what changed and when.
 
+## 0.1.0.9
+
+### Audio-verified duplicate detection
+- Added **offline audio fingerprint matching** so duplicate detection can verify
+  tracks by audio content, even when metadata is inconsistent.
+- Added whole-library audio scan support and surfaced audio verification details
+  directly in the Duplicates tab.
+- Fingerprint and verification results are now cached for faster repeat scans.
+
+### Safer duplicate cleanup
+- Duplicate groups now keep DJ version markers separate (for example Intro,
+  Extended, Clean, Dirty, Remix, and Edit variants) to reduce false merges.
+- Duplicate deletion was hardened to avoid half-applied states and keep crates
+  reconciled when removing redundant entries.
+- Added better retention controls, including Pick Best/Keep workflows and
+  preserving results visibility after deletion actions.
+
+### Performance and stability
+- Improved crate and parser performance by reducing allocations and enabling
+  parallel processing for heavy library operations.
+- Updated tests and shared-state handling to improve reliability with parallel
+  test execution.
+
 ## 0.1.0.8
 
 ### Built for big libraries
