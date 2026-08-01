@@ -60,7 +60,7 @@ struct LibraryConsolidationServiceTests {
     let scratch = try makeScratchLibrary()
     defer { try? FileManager.default.removeItem(at: scratch.rootDirectory) }
 
-    SeratoBackupBeforeWrite.backupDirectory = scratch.rootDirectory.appendingPathComponent("Backups")
+    TestBackupDirectory.use()
 
     let tracks = try SeratoDatabaseParser.parseTracks(at: scratch.databaseFile, rootDirectory: scratch.rootDirectory)
     let crate = try SeratoCrateParser.parseCrate(at: scratch.crateFile)
@@ -110,7 +110,7 @@ struct LibraryConsolidationServiceTests {
     let scratch = try makeScratchLibrary()
     defer { try? FileManager.default.removeItem(at: scratch.rootDirectory) }
 
-    SeratoBackupBeforeWrite.backupDirectory = scratch.rootDirectory.appendingPathComponent("Backups")
+    TestBackupDirectory.use()
 
     let tracks = try SeratoDatabaseParser.parseTracks(at: scratch.databaseFile, rootDirectory: scratch.rootDirectory)
     let crate = try SeratoCrateParser.parseCrate(at: scratch.crateFile)
@@ -151,7 +151,7 @@ struct LibraryConsolidationServiceTests {
     let scratch = try makeScratchLibrary()
     defer { try? FileManager.default.removeItem(at: scratch.rootDirectory) }
 
-    SeratoBackupBeforeWrite.backupDirectory = scratch.rootDirectory.appendingPathComponent("Backups")
+    TestBackupDirectory.use()
 
     let tracks = try SeratoDatabaseParser.parseTracks(at: scratch.databaseFile, rootDirectory: scratch.rootDirectory)
     let crate = try SeratoCrateParser.parseCrate(at: scratch.crateFile)
@@ -199,7 +199,7 @@ struct LibraryConsolidationServiceTests {
     let scratch = try makeScratchLibrary()
     defer { try? FileManager.default.removeItem(at: scratch.rootDirectory) }
 
-    SeratoBackupBeforeWrite.backupDirectory = scratch.rootDirectory.appendingPathComponent("Backups")
+    TestBackupDirectory.use()
 
     let tracks = try SeratoDatabaseParser.parseTracks(at: scratch.databaseFile, rootDirectory: scratch.rootDirectory)
     let crate = try SeratoCrateParser.parseCrate(at: scratch.crateFile)

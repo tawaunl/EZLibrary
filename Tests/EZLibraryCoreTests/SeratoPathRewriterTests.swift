@@ -31,7 +31,7 @@ private func makeScratchDatabaseCopy() throws -> URL {
     let scratchFile = try makeScratchDatabaseCopy()
     defer { try? FileManager.default.removeItem(at: scratchFile.deletingLastPathComponent()) }
 
-    SeratoBackupBeforeWrite.backupDirectory = scratchFile.deletingLastPathComponent().appendingPathComponent("Backups")
+    TestBackupDirectory.use()
     SeratoProcessGuard.isRunningOverride = false
     defer { SeratoProcessGuard.isRunningOverride = nil }
 
@@ -63,7 +63,7 @@ private func makeScratchDatabaseCopy() throws -> URL {
     let scratchFile = try makeScratchDatabaseCopy()
     defer { try? FileManager.default.removeItem(at: scratchFile.deletingLastPathComponent()) }
 
-    SeratoBackupBeforeWrite.backupDirectory = scratchFile.deletingLastPathComponent().appendingPathComponent("Backups")
+    TestBackupDirectory.use()
     SeratoProcessGuard.isRunningOverride = false
     defer { SeratoProcessGuard.isRunningOverride = nil }
 

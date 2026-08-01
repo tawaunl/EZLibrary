@@ -103,7 +103,7 @@ func printUsageAndExit(status: Int32) -> Never {
     let usage = """
     Usage:
       EZLibraryCLI [options] <file-or-folder> [more files/folders...]
-      EZLibraryCLI repair-locations [--library-dir <path>] [--apply]
+      EZLibraryCLI repair-locations [--library-dir <path>] [--search <path>]... [--apply]
 
     Options:
       -d, --destination <path>  Main music folder destination (default: ~/Music)
@@ -116,6 +116,8 @@ func printUsageAndExit(status: Int32) -> Never {
       Re-points Serato's SQLite library (Library/location.sqlite) at where
       files actually live now, for libraries moved by a build that only
       rewrote database V2. Previews by default; pass --apply to write.
+      -s, --search <path>  Extra folder to search for the files (repeatable;
+                           defaults to the folders database V2 already names)
 
     Example:
       EZLibraryCLI -d "$HOME/Music" -c "New Music" -- ~/Downloads/incoming ~/Desktop/track.mp3
@@ -131,6 +133,7 @@ func printUsageAndExit(status: Int32) -> Never {
 
 struct RepairCLIOptions {
     var libraryDirectory: URL?
+    var searchRoots: [URL] = []
     var shouldApply = false
 
     static func parse(arguments: [String]) throws -> RepairCLIOptions {
@@ -148,6 +151,12 @@ struct RepairCLIOptions {
                     throw CLIError.invalidArgument("Missing value for --library-dir")
                 }
                 options.libraryDirectory = URL(fileURLWithPath: arguments[index])
+            case "--search", "-s":
+                index += 1
+                guard index < arguments.count else {
+                    throw CLIError.invalidArgument("Missing value for --search")
+                }
+                options.searchRoots.append(URL(fileURLWithPath: arguments[index]))
             default:
                 throw CLIError.invalidArgument("Unknown option \(arguments[index])")
             }
@@ -162,8 +171,14 @@ func runRepairLocations(arguments: [String]) throws {
     let libraryDirectory = options.libraryDirectory ?? SeratoLibraryLocator.discoverLibraryDirectory()
 
     print("Library: \(libraryDirectory.path)")
-    let plan = try SeratoLocationRepairService.plan(libraryDirectory: libraryDirectory)
+    let plan = try SeratoLocationRepairService.plan(
+        libraryDirectory: libraryDirectory,
+        searchRoots: options.searchRoots.isEmpty ? nil : options.searchRoots
+    )
     print("Portable IDs are relative to: \(plan.baseDirectory.path)")
+    for root in plan.searchRoots {
+        print("Searched: \(root.path)")
+    }
     print("Already correct: \(plan.intactCount)")
     print("Repairable: \(plan.repairs.count)")
     print("Needs review: \(plan.unrepairable.count)")

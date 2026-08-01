@@ -31,14 +31,12 @@ private func makeScratchDatabaseCopy() throws -> (databaseFile: URL, tempRoot: U
 @Suite(.serialized)
 struct MissingTracksServiceTests {
     @Test func preferredMatchPicksCandidateInsidePreferredDirectory() async throws {
-        let oldBackupDirectory = SeratoBackupBeforeWrite.backupDirectory
         let scratch = try makeScratchDatabaseCopy()
         defer {
-            SeratoBackupBeforeWrite.backupDirectory = oldBackupDirectory
             try? FileManager.default.removeItem(at: scratch.tempRoot)
         }
 
-        SeratoBackupBeforeWrite.backupDirectory = scratch.tempRoot.appendingPathComponent("Backups")
+        TestBackupDirectory.use()
 
         let parseRoot = URL(fileURLWithPath: "/Volumes/Crucial X10")
         let tracks = try SeratoDatabaseParser.parseTracks(at: scratch.databaseFile, rootDirectory: parseRoot)
@@ -66,14 +64,12 @@ struct MissingTracksServiceTests {
     }
 
     @Test func repairAllUsingPreferredLocationSkipsTracksWithoutPreferredMatch() async throws {
-        let oldBackupDirectory = SeratoBackupBeforeWrite.backupDirectory
         let scratch = try makeScratchDatabaseCopy()
         defer {
-            SeratoBackupBeforeWrite.backupDirectory = oldBackupDirectory
             try? FileManager.default.removeItem(at: scratch.tempRoot)
         }
 
-        SeratoBackupBeforeWrite.backupDirectory = scratch.tempRoot.appendingPathComponent("Backups")
+        TestBackupDirectory.use()
 
         let parseRoot = URL(fileURLWithPath: "/Volumes/Crucial X10")
         let tracks = try SeratoDatabaseParser.parseTracks(at: scratch.databaseFile, rootDirectory: parseRoot)
@@ -115,14 +111,12 @@ struct MissingTracksServiceTests {
     }
 
     @Test func deleteFromLibraryRemovesTrackAndCandidate() async throws {
-        let oldBackupDirectory = SeratoBackupBeforeWrite.backupDirectory
         let scratch = try makeScratchDatabaseCopy()
         defer {
-            SeratoBackupBeforeWrite.backupDirectory = oldBackupDirectory
             try? FileManager.default.removeItem(at: scratch.tempRoot)
         }
 
-        SeratoBackupBeforeWrite.backupDirectory = scratch.tempRoot.appendingPathComponent("Backups")
+        TestBackupDirectory.use()
 
         let parseRoot = URL(fileURLWithPath: "/Volumes/Crucial X10")
         let tracks = try SeratoDatabaseParser.parseTracks(at: scratch.databaseFile, rootDirectory: parseRoot)
@@ -149,14 +143,12 @@ struct MissingTracksServiceTests {
     }
 
     @Test func deleteAllWithoutMatchesRemovesOnlyUnmatchedTracks() async throws {
-        let oldBackupDirectory = SeratoBackupBeforeWrite.backupDirectory
         let scratch = try makeScratchDatabaseCopy()
         defer {
-            SeratoBackupBeforeWrite.backupDirectory = oldBackupDirectory
             try? FileManager.default.removeItem(at: scratch.tempRoot)
         }
 
-        SeratoBackupBeforeWrite.backupDirectory = scratch.tempRoot.appendingPathComponent("Backups")
+        TestBackupDirectory.use()
 
         let parseRoot = URL(fileURLWithPath: "/Volumes/Crucial X10")
         let tracks = try SeratoDatabaseParser.parseTracks(at: scratch.databaseFile, rootDirectory: parseRoot)

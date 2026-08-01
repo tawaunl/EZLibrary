@@ -84,6 +84,9 @@ public enum SeratoLocationRepairService {
         /// The directory `portable_id` values are relative to, as detected
         /// from this library rather than assumed.
         public let baseDirectory: URL
+        /// Directories searched for candidate files, beyond the locations
+        /// `database V2` already names.
+        public let searchRoots: [URL]
         public let repairs: [Repair]
         /// Assets whose path already resolves to a file on disk.
         public let intactCount: Int
@@ -100,8 +103,15 @@ public enum SeratoLocationRepairService {
     // MARK: - Planning
 
     /// Builds a dry-run plan. Reads only — nothing is written until `apply`.
+    ///
+    /// `searchRoots` widens the candidate pool beyond the files `database V2`
+    /// names, which matters because the two can disagree: a real library had
+    /// 2931 files in its music folder and only 1663 of them in `database V2`,
+    /// leaving hundreds of repairable assets with no candidate. Defaults to
+    /// the directories the library's files already live in.
     public static func plan(
         libraryDirectory: URL,
+        searchRoots: [URL]? = nil,
         homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
         fileManager: FileManager = .default
     ) throws -> Plan {
@@ -129,11 +139,20 @@ public enum SeratoLocationRepairService {
             fileManager: fileManager
         )
 
+        let resolvedSearchRoots = searchRoots ?? defaultSearchRoots(for: destinations)
+
         // Serato's own uniqueness rule is case-insensitive, so the filename
         // index has to be too or a repair could collide on apply.
         var destinationsByName: [String: [URL]] = [:]
-        for destination in destinations {
-            destinationsByName[destination.lastPathComponent.lowercased(), default: []].append(destination)
+        var seenPaths = Set<String>()
+        func offer(_ url: URL) {
+            let path = url.standardizedFileURL.path
+            guard seenPaths.insert(path).inserted else { return }
+            destinationsByName[url.lastPathComponent.lowercased(), default: []].append(url)
+        }
+        destinations.forEach(offer)
+        for (_, urls) in FileSystemScanner.scanRoots(resolvedSearchRoots).byFilename {
+            urls.forEach(offer)
         }
 
         let portableIDOwners = Dictionary(
@@ -205,10 +224,39 @@ public enum SeratoLocationRepairService {
         return Plan(
             libraryDirectory: libraryDirectory,
             baseDirectory: baseDirectory,
+            searchRoots: resolvedSearchRoots,
             repairs: repairs.sorted { $0.assetID < $1.assetID },
             intactCount: intactCount,
             unrepairable: unrepairable.sorted { $0.assetID < $1.assetID }
         )
+    }
+
+    /// The folders the library's files already live in, per `database V2`.
+    /// Narrower and far quicker than a blanket home-directory sweep, and it
+    /// automatically points at wherever this particular library was
+    /// consolidated to. Falls back to the standard music locations when
+    /// `database V2` names nothing that still exists.
+    private static func defaultSearchRoots(for destinations: [URL]) -> [URL] {
+        var roots: [URL] = []
+        var seen = Set<String>()
+        for directory in destinations.map({ $0.deletingLastPathComponent() }) {
+            let path = directory.standardizedFileURL.path
+            if seen.insert(path).inserted {
+                roots.append(directory)
+            }
+        }
+        guard !roots.isEmpty else { return FileSystemScanner.defaultScanRoots }
+
+        // Drop any root already covered by an ancestor, so a nested folder
+        // isn't enumerated twice.
+        let sorted = roots.sorted { $0.standardizedFileURL.path.count < $1.standardizedFileURL.path.count }
+        var kept: [URL] = []
+        for root in sorted {
+            let path = root.standardizedFileURL.path
+            let isNested = kept.contains { path.hasPrefix($0.standardizedFileURL.path + "/") }
+            if !isNested { kept.append(root) }
+        }
+        return kept
     }
 
     // MARK: - Applying

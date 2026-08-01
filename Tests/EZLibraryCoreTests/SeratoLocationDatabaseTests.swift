@@ -21,103 +21,8 @@ struct SeratoLocationDatabaseTests {
 
 // MARK: - Fixture helpers
 
-private final class TestDatabase {
-    let url: URL
-    private var db: OpaquePointer?
-
-    init(at url: URL) throws {
-        self.url = url
-        var handle: OpaquePointer?
-        let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE
-        guard sqlite3_open_v2(url.path, &handle, flags, nil) == SQLITE_OK, handle != nil else {
-            throw TestError.open
-        }
-        db = handle
-    }
-
-    enum TestError: Error { case open, exec(String), noRow }
-
-    func exec(_ sql: String) throws {
-        var errorPointer: UnsafeMutablePointer<CChar>?
-        guard sqlite3_exec(db, sql, nil, nil, &errorPointer) == SQLITE_OK else {
-            let message = errorPointer.map { String(cString: $0) } ?? "unknown"
-            sqlite3_free(errorPointer)
-            throw TestError.exec(message)
-        }
-    }
-
-    func close() {
-        sqlite3_close_v2(db)
-        db = nil
-    }
-
-    func queryString(_ sql: String) throws -> String? {
-        var statement: OpaquePointer?
-        defer { sqlite3_finalize(statement) }
-        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else { throw TestError.exec(sql) }
-        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
-        guard let text = sqlite3_column_text(statement, 0) else { return nil }
-        return String(cString: text)
-    }
-
-    func queryInt(_ sql: String) throws -> Int64? {
-        var statement: OpaquePointer?
-        defer { sqlite3_finalize(statement) }
-        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else { throw TestError.exec(sql) }
-        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
-        return sqlite3_column_int64(statement, 0)
-    }
-
-    /// Applies the tables and the NOCASE unique index the rewriter relies on.
-    func createSeratoSchema(revision: Int64 = 500) throws {
-        try exec("""
-            CREATE TABLE serato (
-                database_name TEXT DEFAULT '',
-                time_created INTEGER NOT NULL,
-                time_last_connected INTEGER DEFAULT NULL,
-                last_master_uuid BLOB DEFAULT NULL,
-                revision INT DEFAULT 0
-            );
-            CREATE TABLE space (
-                id INTEGER PRIMARY KEY,
-                name TEXT NOT NULL,
-                revision INTEGER NOT NULL DEFAULT 0,
-                UNIQUE(name COLLATE NOCASE)
-            );
-            CREATE TABLE asset (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                revision INTEGER NOT NULL,
-                portable_id TEXT NOT NULL DEFAULT '',
-                file_name TEXT DEFAULT NULL,
-                file_size INTEGER,
-                artist TEXT NOT NULL DEFAULT '',
-                name TEXT NOT NULL DEFAULT '',
-                is_missing INTEGER NOT NULL DEFAULT 0
-            );
-            CREATE UNIQUE INDEX asset__unique_portable_id ON asset ( portable_id COLLATE NOCASE );
-            CREATE TABLE space_asset (
-                id INTEGER PRIMARY KEY,
-                asset_id INTEGER NOT NULL,
-                space_id INTEGER NOT NULL,
-                UNIQUE(asset_id, space_id)
-            );
-            INSERT INTO serato (time_created, revision) VALUES (1, \(revision));
-            INSERT INTO space (id, name, revision) VALUES (1, 'Serato Library', \(revision - 100));
-            """)
-    }
-
-    /// Inserts an asset and files it under space 1, the way Serato does for
-    /// every track in the main library.
-    func insertAsset(id: Int64, portableID: String, revision: Int64 = 100) throws {
-        let escaped = portableID.replacingOccurrences(of: "'", with: "''")
-        let fileName = (portableID as NSString).lastPathComponent.replacingOccurrences(of: "'", with: "''")
-        try exec("""
-            INSERT INTO asset (id, revision, portable_id, file_name)
-                VALUES (\(id), \(revision), '\(escaped)', '\(fileName)');
-            INSERT INTO space_asset (asset_id, space_id) VALUES (\(id), 1);
-            """)
-    }
-}
+// `TestLocationDatabase` (the shared schema-v202 stand-in) lives in
+// SeratoLocationRepairServiceTests.swift.
 
 private struct Environment {
     let root: URL
@@ -133,7 +38,7 @@ private func makeEnvironment() throws -> Environment {
         at: libraryDirectory.appendingPathComponent("Library", isDirectory: true),
         withIntermediateDirectories: true
     )
-    SeratoBackupBeforeWrite.backupDirectory = root.appendingPathComponent("Backups", isDirectory: true)
+    TestBackupDirectory.use()
     return Environment(
         root: root,
         libraryDirectory: libraryDirectory,
@@ -147,7 +52,7 @@ private func makeEnvironment() throws -> Environment {
     let env = try makeEnvironment()
     defer { try? FileManager.default.removeItem(at: env.root) }
 
-    let database = try TestDatabase(at: env.locationDatabaseURL)
+    let database = try TestLocationDatabase(at: env.locationDatabaseURL)
     try database.createSeratoSchema()
     try database.insertAsset(id: 7, portableID: "Music/Old Name.mp3")
     database.close()
@@ -162,7 +67,7 @@ private func makeEnvironment() throws -> Environment {
     #expect(summary.unmatchedPaths.isEmpty)
     #expect(summary.conflictingPaths.isEmpty)
 
-    let reopened = try TestDatabase(at: env.locationDatabaseURL)
+    let reopened = try TestLocationDatabase(at: env.locationDatabaseURL)
     defer { reopened.close() }
     #expect(try reopened.queryString("SELECT portable_id FROM asset WHERE id = 7") == "Music/Artist-Title.mp3")
     #expect(try reopened.queryString("SELECT file_name FROM asset WHERE id = 7") == "Artist-Title.mp3")
@@ -172,7 +77,7 @@ private func makeEnvironment() throws -> Environment {
     let env = try makeEnvironment()
     defer { try? FileManager.default.removeItem(at: env.root) }
 
-    let database = try TestDatabase(at: env.locationDatabaseURL)
+    let database = try TestLocationDatabase(at: env.locationDatabaseURL)
     try database.createSeratoSchema()
     try database.insertAsset(id: 42, portableID: "Music/Old Name.mp3")
     database.close()
@@ -183,7 +88,7 @@ private func makeEnvironment() throws -> Environment {
         in: env.locationDatabaseURL
     )
 
-    let reopened = try TestDatabase(at: env.locationDatabaseURL)
+    let reopened = try TestLocationDatabase(at: env.locationDatabaseURL)
     defer { reopened.close() }
     // A rename must be an in-place edit: everything Serato attaches to a
     // track (cues, beat grid, play count, crate membership) is keyed on
@@ -197,7 +102,7 @@ private func makeEnvironment() throws -> Environment {
     let env = try makeEnvironment()
     defer { try? FileManager.default.removeItem(at: env.root) }
 
-    let database = try TestDatabase(at: env.locationDatabaseURL)
+    let database = try TestLocationDatabase(at: env.locationDatabaseURL)
     try database.createSeratoSchema(revision: 900)
     try database.insertAsset(id: 3, portableID: "Music/Old Name.mp3", revision: 120)
     database.close()
@@ -208,7 +113,7 @@ private func makeEnvironment() throws -> Environment {
         in: env.locationDatabaseURL
     )
 
-    let reopened = try TestDatabase(at: env.locationDatabaseURL)
+    let reopened = try TestLocationDatabase(at: env.locationDatabaseURL)
     defer { reopened.close() }
     #expect(try reopened.queryInt("SELECT revision FROM asset WHERE id = 3") == 900)
     #expect(try reopened.queryInt("SELECT revision FROM space WHERE id = 1") == 900)
@@ -224,7 +129,7 @@ private func makeEnvironment() throws -> Environment {
     // IDs relative to the home directory — the case that made every track in
     // a real library look missing after a path rewrite.
     let home = env.root.appendingPathComponent("Users/dj", isDirectory: true)
-    let database = try TestDatabase(at: env.locationDatabaseURL)
+    let database = try TestLocationDatabase(at: env.locationDatabaseURL)
     try database.createSeratoSchema()
     try database.insertAsset(id: 11, portableID: "Music/All Music/Old Name.mp3")
     database.close()
@@ -241,7 +146,7 @@ private func makeEnvironment() throws -> Environment {
 
     #expect(summary.updatedCount == 1)
 
-    let reopened = try TestDatabase(at: env.locationDatabaseURL)
+    let reopened = try TestLocationDatabase(at: env.locationDatabaseURL)
     defer { reopened.close() }
     #expect(
         try reopened.queryString("SELECT portable_id FROM asset WHERE id = 11")
@@ -253,7 +158,7 @@ private func makeEnvironment() throws -> Environment {
     let env = try makeEnvironment()
     defer { try? FileManager.default.removeItem(at: env.root) }
 
-    let database = try TestDatabase(at: env.locationDatabaseURL)
+    let database = try TestLocationDatabase(at: env.locationDatabaseURL)
     try database.createSeratoSchema()
     try database.insertAsset(id: 1, portableID: "Music/Known.mp3")
     database.close()
@@ -275,7 +180,7 @@ private func makeEnvironment() throws -> Environment {
     let env = try makeEnvironment()
     defer { try? FileManager.default.removeItem(at: env.root) }
 
-    let database = try TestDatabase(at: env.locationDatabaseURL)
+    let database = try TestLocationDatabase(at: env.locationDatabaseURL)
     try database.createSeratoSchema()
     try database.insertAsset(id: 1, portableID: "Music/Old Name.mp3")
     try database.insertAsset(id: 2, portableID: "Music/Taken.mp3")
@@ -292,7 +197,7 @@ private func makeEnvironment() throws -> Environment {
     #expect(summary.updatedCount == 0)
     #expect(summary.conflictingPaths == ["Music/Old Name.mp3"])
 
-    let reopened = try TestDatabase(at: env.locationDatabaseURL)
+    let reopened = try TestLocationDatabase(at: env.locationDatabaseURL)
     defer { reopened.close() }
     #expect(try reopened.queryString("SELECT portable_id FROM asset WHERE id = 1") == "Music/Old Name.mp3")
 }
@@ -316,7 +221,7 @@ private func makeEnvironment() throws -> Environment {
     let env = try makeEnvironment()
     defer { try? FileManager.default.removeItem(at: env.root) }
 
-    let database = try TestDatabase(at: env.locationDatabaseURL)
+    let database = try TestLocationDatabase(at: env.locationDatabaseURL)
     try database.exec("CREATE TABLE unrelated (id INTEGER PRIMARY KEY);")
     database.close()
 
@@ -350,7 +255,7 @@ private func makeEnvironment() throws -> Environment {
     )
     let oldPortableID = SeratoLibraryLocator.seratoStoredPath(for: target.fileURL, rootDirectory: env.root)
 
-    let database = try TestDatabase(at: env.locationDatabaseURL)
+    let database = try TestLocationDatabase(at: env.locationDatabaseURL)
     try database.createSeratoSchema()
     try database.insertAsset(id: 5, portableID: oldPortableID)
     database.close()
@@ -367,7 +272,7 @@ private func makeEnvironment() throws -> Environment {
     let expectedPortableID = (oldPortableID as NSString)
         .deletingLastPathComponent
         .appending("/Renamed By Test.mp3")
-    let reopened = try TestDatabase(at: env.locationDatabaseURL)
+    let reopened = try TestLocationDatabase(at: env.locationDatabaseURL)
     defer { reopened.close() }
     #expect(try reopened.queryString("SELECT portable_id FROM asset WHERE id = 5") == expectedPortableID)
 }
@@ -392,7 +297,7 @@ private func makeEnvironment() throws -> Environment {
     let target = try #require(tracks.first)
     let oldPortableID = SeratoLibraryLocator.seratoStoredPath(for: target.fileURL, rootDirectory: env.root)
 
-    let database = try TestDatabase(at: env.locationDatabaseURL)
+    let database = try TestLocationDatabase(at: env.locationDatabaseURL)
     try database.createSeratoSchema()
     try database.insertAsset(id: 9, portableID: oldPortableID)
     database.close()
@@ -434,7 +339,7 @@ private func makeEnvironment() throws -> Environment {
     let expectedStoredPath = SeratoLibraryLocator.seratoStoredPath(for: renamedFileURL, rootDirectory: rootDirectory)
     #expect(reparsed.contains { $0.seratoStoredPath == expectedStoredPath })
 
-    let reopened = try TestDatabase(at: env.locationDatabaseURL)
+    let reopened = try TestLocationDatabase(at: env.locationDatabaseURL)
     defer { reopened.close() }
     #expect(try reopened.queryString("SELECT portable_id FROM asset WHERE id = 9") == expectedPortableID)
     #expect(try reopened.queryInt("SELECT COUNT(*) FROM asset") == 1)
