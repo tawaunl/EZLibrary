@@ -820,6 +820,10 @@ private struct AppSettingsSheet: View {
                     Text("When saving ID3/track metadata, rename files as title-artist-album-year and update Serato database/crate paths. Leave off unless you know you need it: renaming files Serato has already analyzed can orphan the original entry and re-import the file as a new track.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+
+                    Divider()
+
+                    FilenameFormatSection()
                 }
             }
 
@@ -902,3 +906,127 @@ private struct AppSettingsSheet: View {
         }
     }
 }
+
+// MARK: - Filename Format Section
+
+/// Settings sub-view for configuring the bulk-rename filename format template.
+private struct FilenameFormatSection: View {
+    @AppStorage(SeratoFeatureFlags.filenameFormatTemplateDefaultsKey)
+    private var template: String = SeratoFeatureFlags.defaultFilenameFormatTemplate
+
+    /// A scratch copy so the user can type freely without every keystroke
+    /// hitting AppStorage.
+    @State private var draft: String = ""
+    @State private var isEditing = false
+
+    private let previewTrack = Track(
+        seratoStoredPath: "/Music/sample.mp3",
+        fileURL: URL(fileURLWithPath: "/Music/sample.mp3"),
+        title: "Title (Extended)",
+        artist: "Artist",
+        album: "Album",
+        genre: "Electronic",
+        year: 2023,
+        bpm: 128,
+        key: "Am"
+    )
+
+    /// Returns the saved template, falling back to the default when blank.
+    private var storedTemplate: String {
+        template.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? SeratoFeatureFlags.defaultFilenameFormatTemplate
+            : template
+    }
+
+    private var effectiveTemplate: String {
+        isEditing ? draft : storedTemplate
+    }
+
+    private var previewStem: String {
+        TrackFilenameFormatter.renderStem(for: previewTrack, template: effectiveTemplate)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("File Renaming Format")
+                .font(.subheadline.weight(.semibold))
+
+            Text("Template used when bulk-renaming tracks. Combine tokens and literal separators.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            // Token insertion buttons
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Insert token:")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                LazyVGrid(
+                    columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 4),
+                    spacing: 6
+                ) {
+                    ForEach(TrackFilenameFormatter.Token.allCases, id: \.self) { token in
+                        Button(token.displayName) {
+                            appendToken(token)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .help("Insert \(token.rawValue) into the template")
+                    }
+                }
+            }
+
+            // Editable template field
+            TextField("e.g. {artist}-{title}-{album}-{year}", text: $draft)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(.body, design: .monospaced))
+                .onAppear { draft = storedTemplate }
+                .onChange(of: draft) { isEditing = true }
+                .onSubmit { commitDraft() }
+
+            HStack(spacing: 8) {
+                Button("Reset to Default") {
+                    draft = SeratoFeatureFlags.defaultFilenameFormatTemplate
+                    commitDraft()
+                }
+                .controlSize(.small)
+                .help("Restore the default template: \(SeratoFeatureFlags.defaultFilenameFormatTemplate)")
+
+                Button("Apply") {
+                    commitDraft()
+                }
+                .controlSize(.small)
+                .disabled(!isEditing)
+            }
+
+            // Live preview
+            if !previewStem.isEmpty {
+                HStack(spacing: 4) {
+                    Text("Preview:")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("\(previewStem).mp3")
+                        .font(.caption)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            } else {
+                Text("Preview: (no output — template contains no recognised tokens)")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+        }
+    }
+
+    private func appendToken(_ token: TrackFilenameFormatter.Token) {
+        draft = (isEditing ? draft : storedTemplate) + token.rawValue
+        isEditing = true
+    }
+
+    private func commitDraft() {
+        let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        template = trimmed.isEmpty ? SeratoFeatureFlags.defaultFilenameFormatTemplate : trimmed
+        isEditing = false
+    }
+}
+

@@ -15,6 +15,19 @@ enum SeratoFeatureFlags {
     static let mainMusicFolderDefaultsKey = "YouTubeRipDestinationPath"
     static let addMusicUsesCentralCrateDefaultsKey = "AddMusicUsesCentralCrate"
     static let addMusicCentralCrateIDDefaultsKey = "AddMusicCentralCrateID"
+    static let filenameFormatTemplateDefaultsKey = "SeratoToolsFilenameFormatTemplate"
+
+    /// The default filename format template used when none has been explicitly saved.
+    /// Tokens: {artist}, {title}, {album}, {year}, {bpm}, {key}, {genre}.
+    static let defaultFilenameFormatTemplate = "{artist}-{title}-{album}-{year}"
+
+    /// Returns the user's saved filename format template, or the default if none is set.
+    static func filenameFormatTemplate(userDefaults: UserDefaults = .standard) -> String {
+        let saved = userDefaults.string(forKey: filenameFormatTemplateDefaultsKey) ?? ""
+        return saved.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? defaultFilenameFormatTemplate
+            : saved
+    }
 
     /// Marks that the one-time "disable auto-rename" migration has run, so it
     /// resets the preference exactly once instead of on every launch.
