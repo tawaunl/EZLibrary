@@ -22,6 +22,11 @@ import Foundation
 /// album renders `Disclosure-Latch-2012`, not `Disclosure-Latch--2012`.
 public enum TrackFilenameFormatter {
 
+    /// Used whenever the user hasn't saved a template of their own. Lives
+    /// here rather than in the app's settings layer so the renamer and the
+    /// settings preview can't drift apart on what "default" means.
+    public static let defaultTemplate = "{artist}-{title}-{album}-{year}"
+
     // MARK: - Public token catalogue
 
     public enum Token: String, CaseIterable, Sendable {
@@ -72,17 +77,67 @@ public enum TrackFilenameFormatter {
     /// Returns an empty string only when every token in the template resolves
     /// to an empty value.
     public static func renderStem(for track: Track, template: String) -> String {
+        render(TokenValues(track), into: template)
+    }
+
+    /// Renders from a pending metadata edit rather than a stored track, so a
+    /// rename triggered by a tag edit names the file after the values being
+    /// saved instead of the ones being replaced.
+    public static func renderStem(for metadata: SeratoTrackMetadataUpdate, template: String) -> String {
+        render(TokenValues(metadata), into: template)
+    }
+
+    /// The one set of values a template can reference, so `Track` and
+    /// `SeratoTrackMetadataUpdate` share a single substitution pass.
+    private struct TokenValues {
+        let artist: String
+        let title: String
+        let album: String
+        let year: Int?
+        let bpm: Double?
+        let key: String
+        let genre: String
+
+        init(_ track: Track) {
+            self.init(
+                artist: track.artist, title: track.title, album: track.album,
+                year: track.year, bpm: track.bpm, key: track.key ?? "", genre: track.genre
+            )
+        }
+
+        init(_ metadata: SeratoTrackMetadataUpdate) {
+            self.init(
+                artist: metadata.artist, title: metadata.title, album: metadata.album,
+                year: metadata.year, bpm: metadata.bpm, key: metadata.key, genre: metadata.genre
+            )
+        }
+
+        private init(
+            artist: String, title: String, album: String,
+            year: Int?, bpm: Double?, key: String, genre: String
+        ) {
+            self.artist = artist
+            self.title = title
+            self.album = album
+            self.year = year
+            self.bpm = bpm
+            self.key = key
+            self.genre = genre
+        }
+    }
+
+    private static func render(_ values: TokenValues, into template: String) -> String {
         var result = template
 
-        let bpmString = track.bpm.map { String(format: "%.0f", $0) } ?? ""
+        let bpmString = values.bpm.map { String(format: "%.0f", $0) } ?? ""
 
-        result = result.replacingOccurrences(of: Token.artist.rawValue, with: sanitize(track.artist))
-        result = result.replacingOccurrences(of: Token.title.rawValue,  with: sanitize(track.title))
-        result = result.replacingOccurrences(of: Token.album.rawValue,  with: sanitize(track.album))
-        result = result.replacingOccurrences(of: Token.year.rawValue,   with: track.year.map(String.init) ?? "")
-        result = result.replacingOccurrences(of: Token.bpm.rawValue,    with: bpmString)
-        result = result.replacingOccurrences(of: Token.key.rawValue,    with: sanitize(track.key ?? ""))
-        result = result.replacingOccurrences(of: Token.genre.rawValue,  with: sanitize(track.genre))
+        result = result.replacingOccurrences(of: Token.artist.rawValue, with: sanitize(values.artist))
+        result = result.replacingOccurrences(of: Token.title.rawValue, with: sanitize(values.title))
+        result = result.replacingOccurrences(of: Token.album.rawValue, with: sanitize(values.album))
+        result = result.replacingOccurrences(of: Token.year.rawValue, with: values.year.map(String.init) ?? "")
+        result = result.replacingOccurrences(of: Token.bpm.rawValue, with: bpmString)
+        result = result.replacingOccurrences(of: Token.key.rawValue, with: sanitize(values.key))
+        result = result.replacingOccurrences(of: Token.genre.rawValue, with: sanitize(values.genre))
 
         return collapseEmptyTokenGaps(result)
     }
@@ -121,7 +176,7 @@ public enum TrackFilenameFormatter {
         // Detect conflict: a *different* file already sits at the target path.
         let fm = FileManager.default
         if fm.fileExists(atPath: candidate.path) {
-            let isSelf = (try? fm.contentsEqual(atPath: candidate.path, andPath: track.fileURL.path)) ?? false
+            let isSelf = fm.contentsEqual(atPath: candidate.path, andPath: track.fileURL.path)
             if !isSelf {
                 warnings.append(.fileConflict(existingURL: candidate))
             }

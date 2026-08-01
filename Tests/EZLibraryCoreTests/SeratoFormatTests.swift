@@ -143,7 +143,9 @@ private func makeMetadataRenameEnvironment() throws -> (tempRoot: URL, libraryDi
         rewriteFilenameFromMetadata: true
     )
 
-    let expectedFilename = "ArtistRen-TitleRen-AlbumRen-2026-GenreRen.\(targetTrack.fileURL.pathExtension)"
+    // Default template is {artist}-{title}-{album}-{year}, so genre is not
+    // part of the name unless the user's template asks for it.
+    let expectedFilename = "ArtistRen-TitleRen-AlbumRen-2026.\(targetTrack.fileURL.pathExtension)"
     let expectedFileURL = targetTrack.fileURL.deletingLastPathComponent().appendingPathComponent(expectedFilename)
     let expectedStoredPath = SeratoLibraryLocator.seratoStoredPath(for: expectedFileURL, rootDirectory: rootDirectory)
 
@@ -154,4 +156,123 @@ private func makeMetadataRenameEnvironment() throws -> (tempRoot: URL, libraryDi
     let reparsedCrate = try SeratoCrateParser.parseCrate(at: crateURL)
     #expect(reparsedCrate.trackPaths.contains(expectedStoredPath))
     #expect(!reparsedCrate.trackPaths.contains(oldStoredPath))
+}
+
+/// Sets up a renameable track and returns it alongside the environment.
+private func makeRenameTarget() throws -> (
+    env: (tempRoot: URL, libraryDirectory: URL, databaseFile: URL),
+    track: Track
+) {
+    let env = try makeMetadataRenameEnvironment()
+    let rootDirectory = SeratoLibraryLocator.rootDirectory(for: env.libraryDirectory)
+    let tracks = try SeratoDatabaseParser.parseTracks(at: env.databaseFile, rootDirectory: rootDirectory)
+    let target = try #require(tracks.first)
+
+    try FileManager.default.createDirectory(
+        at: target.fileURL.deletingLastPathComponent(),
+        withIntermediateDirectories: true
+    )
+    try Data("audio".utf8).write(to: target.fileURL)
+    return (env, target)
+}
+
+private func renameMetadata() -> SeratoTrackMetadataUpdate {
+    SeratoTrackMetadataUpdate(
+        title: "Latch",
+        artist: "Disclosure",
+        album: "Settle",
+        genre: "House",
+        comment: "",
+        key: "Ab",
+        bpm: 122,
+        year: 2012
+    )
+}
+
+@Test func renameUsesTheConfiguredFilenameTemplate() throws {
+    let (env, target) = try makeRenameTarget()
+    defer { try? FileManager.default.removeItem(at: env.tempRoot) }
+
+    SeratoProcessGuard.isRunningOverride = false
+    defer { SeratoProcessGuard.isRunningOverride = nil }
+
+    try SeratoTrackMetadataEditor.update(
+        track: target,
+        metadata: renameMetadata(),
+        databaseFileURL: env.databaseFile,
+        rewriteFilenameFromMetadata: true,
+        filenameTemplate: "{title} - {artist} [{bpm}] ({key})"
+    )
+
+    let expected = target.fileURL
+        .deletingLastPathComponent()
+        .appendingPathComponent("Latch - Disclosure [122] (Ab).\(target.fileURL.pathExtension)")
+    #expect(FileManager.default.fileExists(atPath: expected.path))
+    #expect(!FileManager.default.fileExists(atPath: target.fileURL.path))
+}
+
+@Test func renameDropsTokensThatHaveNoValueWithoutLeavingSeparators() throws {
+    let (env, target) = try makeRenameTarget()
+    defer { try? FileManager.default.removeItem(at: env.tempRoot) }
+
+    SeratoProcessGuard.isRunningOverride = false
+    defer { SeratoProcessGuard.isRunningOverride = nil }
+
+    var metadata = renameMetadata()
+    metadata.album = ""
+    metadata.year = nil
+
+    try SeratoTrackMetadataEditor.update(
+        track: target,
+        metadata: metadata,
+        databaseFileURL: env.databaseFile,
+        rewriteFilenameFromMetadata: true,
+        filenameTemplate: "{artist}-{album}-{title}-{year}"
+    )
+
+    let expected = target.fileURL
+        .deletingLastPathComponent()
+        .appendingPathComponent("Disclosure-Latch.\(target.fileURL.pathExtension)")
+    #expect(FileManager.default.fileExists(atPath: expected.path))
+}
+
+@Test func resavingUnchangedMetadataDoesNotChurnTheFilename() throws {
+    let (env, target) = try makeRenameTarget()
+    defer { try? FileManager.default.removeItem(at: env.tempRoot) }
+
+    SeratoProcessGuard.isRunningOverride = false
+    defer { SeratoProcessGuard.isRunningOverride = nil }
+
+    let template = "{artist}-{title}"
+    let directory = target.fileURL.deletingLastPathComponent()
+    let expected = directory.appendingPathComponent("Disclosure-Latch.\(target.fileURL.pathExtension)")
+
+    try SeratoTrackMetadataEditor.update(
+        track: target,
+        metadata: renameMetadata(),
+        databaseFileURL: env.databaseFile,
+        rewriteFilenameFromMetadata: true,
+        filenameTemplate: template
+    )
+    #expect(FileManager.default.fileExists(atPath: expected.path))
+
+    // Saving again with the same values must be a no-op. Treating the file
+    // as a collision with itself used to walk it to "… (2)", then "… (3)".
+    let rootDirectory = SeratoLibraryLocator.rootDirectory(for: env.libraryDirectory)
+    let reparsed = try SeratoDatabaseParser.parseTracks(at: env.databaseFile, rootDirectory: rootDirectory)
+    let renamedTrack = try #require(reparsed.first { $0.fileURL.lastPathComponent == expected.lastPathComponent })
+
+    try SeratoTrackMetadataEditor.update(
+        track: renamedTrack,
+        metadata: renameMetadata(),
+        databaseFileURL: env.databaseFile,
+        rewriteFilenameFromMetadata: true,
+        filenameTemplate: template
+    )
+
+    #expect(FileManager.default.fileExists(atPath: expected.path))
+    let names = try FileManager.default
+        .contentsOfDirectory(atPath: directory.path)
+        .filter { $0.hasPrefix("Disclosure-Latch") }
+    #expect(names == [expected.lastPathComponent])
 }

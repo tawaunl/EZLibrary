@@ -51,11 +51,16 @@ public enum SeratoTrackMetadataEditor {
         }
     }
 
+    /// `filenameTemplate` is the user's format string from Settings (see
+    /// `TrackFilenameFormatter`), used only when `rewriteFilenameFromMetadata`
+    /// is on. Passed in rather than read here so the core stays free of
+    /// `UserDefaults`.
     public static func update(
         track: Track,
         metadata: SeratoTrackMetadataUpdate,
         databaseFileURL: URL,
-        rewriteFilenameFromMetadata: Bool = true
+        rewriteFilenameFromMetadata: Bool = true,
+        filenameTemplate: String = TrackFilenameFormatter.defaultTemplate
     ) throws {
         // Refuse to write while Serato is open: Serato rewrites database V2
         // from its in-memory library on quit, which would revert our edit —
@@ -91,7 +96,8 @@ public enum SeratoTrackMetadataEditor {
         if rewriteFilenameFromMetadata {
             renamedFileURL = proposedRenamedFileURL(
                 for: originalFileURL,
-                metadata: metadata
+                metadata: metadata,
+                template: filenameTemplate
             )
         } else {
             renamedFileURL = nil
@@ -175,7 +181,7 @@ public enum SeratoTrackMetadataEditor {
             try AtomicFileWriter.write(rewritten.data, to: databaseFileURL)
         } catch {
             if didRewriteLocationDatabase {
-                try? SeratoLocationDatabase.rewritePaths(
+                _ = try? SeratoLocationDatabase.rewritePaths(
                     [finalStoredPath: matchedOldStoredPath],
                     rootDirectory: rootDirectory,
                     in: locationDatabaseURL
@@ -613,29 +619,40 @@ public enum SeratoTrackMetadataEditor {
         return candidates.first(where: { existingPaths.contains($0) })
     }
 
-    private static func proposedRenamedFileURL(for fileURL: URL, metadata: SeratoTrackMetadataUpdate) -> URL? {
-        let artist = sanitizeFilenameComponent(metadata.artist)
-        let title = sanitizeFilenameComponent(metadata.title)
-        let album = sanitizeFilenameComponent(metadata.album)
-        let year = metadata.year.map(String.init).map(sanitizeFilenameComponent) ?? ""
-        let genre = sanitizeFilenameComponent(metadata.genre)
+    private static func proposedRenamedFileURL(
+        for fileURL: URL,
+        metadata: SeratoTrackMetadataUpdate,
+        template: String
+    ) -> URL? {
+        let stem = TrackFilenameFormatter.renderStem(for: metadata, template: template)
+        guard !stem.isEmpty else { return nil }
 
-        let components = [artist, title, album, year, genre].filter { !$0.isEmpty }
-        guard !components.isEmpty else { return nil }
-
-        let baseName = components.joined(separator: "-")
         let ext = fileURL.pathExtension
-        var candidate = fileURL.deletingLastPathComponent().appendingPathComponent(baseName)
+        var candidate = fileURL.deletingLastPathComponent().appendingPathComponent(stem)
         if !ext.isEmpty {
             candidate.appendPathExtension(ext)
         }
 
-        return uniqueFileURL(candidate)
+        return uniqueFileURL(candidate, ignoring: fileURL)
     }
 
-    private static func uniqueFileURL(_ preferred: URL) -> URL {
+    /// Finds a free name near `preferred`, treating `original` as free even
+    /// though it exists — it's the file being renamed. Without that, a save
+    /// that produces the file's current name would see the file itself as a
+    /// collision and move it to "name (2)", then "name (3)" on the next save.
+    private static func uniqueFileURL(_ preferred: URL, ignoring original: URL) -> URL {
         let fileManager = FileManager.default
-        if !fileManager.fileExists(atPath: preferred.path) {
+        func isFree(_ url: URL) -> Bool {
+            !fileManager.fileExists(atPath: url.path)
+                || url.standardizedFileURL.path == original.standardizedFileURL.path
+                // Case-insensitive volumes report the original as existing
+                // under a case-only rename, which is still just this file.
+                || url.standardizedFileURL.path.compare(
+                    original.standardizedFileURL.path, options: .caseInsensitive
+                ) == .orderedSame
+        }
+
+        if isFree(preferred) {
             return preferred
         }
 
@@ -649,36 +666,11 @@ public enum SeratoTrackMetadataEditor {
             if !ext.isEmpty {
                 candidate.appendPathExtension(ext)
             }
-            if !fileManager.fileExists(atPath: candidate.path) {
+            if isFree(candidate) {
                 return candidate
             }
             index += 1
         }
-    }
-
-    private static func sanitizeFilenameComponent(_ value: String) -> String {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return "" }
-
-        let forbidden = CharacterSet(charactersIn: "/\\:*?\"<>|")
-        let cleaned = trimmed.unicodeScalars.map { scalar -> Character in
-            if forbidden.contains(scalar) || scalar.value < 32 {
-                return "-"
-            }
-            return Character(scalar)
-        }
-
-        var normalized = String(cleaned)
-            .replacingOccurrences(of: "\t", with: " ")
-            .replacingOccurrences(of: "\n", with: " ")
-            .replacingOccurrences(of: "  ", with: " ")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        while normalized.contains("--") {
-            normalized = normalized.replacingOccurrences(of: "--", with: "-")
-        }
-
-        return normalized.trimmingCharacters(in: CharacterSet(charactersIn: "-. "))
     }
 
     private static func rewriteCratesPath(

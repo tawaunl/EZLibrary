@@ -9,6 +9,7 @@
 // General Public License (LICENSE) for more details.
 
 import Foundation
+import EZLibraryCore
 
 enum SeratoFeatureFlags {
     static let autoRenameFromMetadataDefaultsKey = "SeratoToolsAutoRenameFromMetadata"
@@ -19,7 +20,9 @@ enum SeratoFeatureFlags {
 
     /// The default filename format template used when none has been explicitly saved.
     /// Tokens: {artist}, {title}, {album}, {year}, {bpm}, {key}, {genre}.
-    static let defaultFilenameFormatTemplate = "{artist}-{title}-{album}-{year}"
+    /// Owned by `TrackFilenameFormatter` so the renamer and this settings
+    /// layer can't disagree about what the default is.
+    static let defaultFilenameFormatTemplate = TrackFilenameFormatter.defaultTemplate
 
     /// Returns the user's saved filename format template, or the default if none is set.
     static func filenameFormatTemplate(userDefaults: UserDefaults = .standard) -> String {

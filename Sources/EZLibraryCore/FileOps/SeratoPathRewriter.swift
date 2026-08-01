@@ -80,7 +80,7 @@ public enum SeratoPathRewriter {
         locationDatabaseURL: URL
     ) {
         let inverse = Dictionary(rewrites.map { ($0.value, $0.key) }, uniquingKeysWith: { first, _ in first })
-        try? SeratoLocationDatabase.rewritePaths(
+        _ = try? SeratoLocationDatabase.rewritePaths(
             inverse,
             rootDirectory: SeratoLibraryLocator.rootDirectory(for: libraryDirectory),
             in: locationDatabaseURL

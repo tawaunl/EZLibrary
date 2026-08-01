@@ -648,7 +648,8 @@ struct ContentView: View {
             track: track,
             metadata: metadata,
             databaseFileURL: libraryService.databaseFile,
-            rewriteFilenameFromMetadata: renameEnabled
+            rewriteFilenameFromMetadata: renameEnabled,
+            filenameTemplate: SeratoFeatureFlags.filenameFormatTemplate()
         )
         if renameEnabled {
             // Renaming rewrites crate files on disk (see `rewriteCratesPath`),
