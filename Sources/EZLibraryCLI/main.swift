@@ -103,6 +103,7 @@ func printUsageAndExit(status: Int32) -> Never {
     let usage = """
     Usage:
       EZLibraryCLI [options] <file-or-folder> [more files/folders...]
+      EZLibraryCLI repair-locations [--library-dir <path>] [--apply]
 
     Options:
       -d, --destination <path>  Main music folder destination (default: ~/Music)
@@ -111,8 +112,14 @@ func printUsageAndExit(status: Int32) -> Never {
       -l, --library-dir <path>  Override Serato _Serato_ directory
       -h, --help                Show help
 
+    repair-locations:
+      Re-points Serato's SQLite library (Library/location.sqlite) at where
+      files actually live now, for libraries moved by a build that only
+      rewrote database V2. Previews by default; pass --apply to write.
+
     Example:
       EZLibraryCLI -d "$HOME/Music" -c "New Music" -- ~/Downloads/incoming ~/Desktop/track.mp3
+      EZLibraryCLI repair-locations --apply
     """
     if status == 0 {
         print(usage)
@@ -122,9 +129,88 @@ func printUsageAndExit(status: Int32) -> Never {
     Foundation.exit(status)
 }
 
+struct RepairCLIOptions {
+    var libraryDirectory: URL?
+    var shouldApply = false
+
+    static func parse(arguments: [String]) throws -> RepairCLIOptions {
+        var options = RepairCLIOptions()
+        var index = 0
+        while index < arguments.count {
+            switch arguments[index] {
+            case "--help", "-h":
+                printUsageAndExit(status: 0)
+            case "--apply":
+                options.shouldApply = true
+            case "--library-dir", "-l":
+                index += 1
+                guard index < arguments.count else {
+                    throw CLIError.invalidArgument("Missing value for --library-dir")
+                }
+                options.libraryDirectory = URL(fileURLWithPath: arguments[index])
+            default:
+                throw CLIError.invalidArgument("Unknown option \(arguments[index])")
+            }
+            index += 1
+        }
+        return options
+    }
+}
+
+func runRepairLocations(arguments: [String]) throws {
+    let options = try RepairCLIOptions.parse(arguments: arguments)
+    let libraryDirectory = options.libraryDirectory ?? SeratoLibraryLocator.discoverLibraryDirectory()
+
+    print("Library: \(libraryDirectory.path)")
+    let plan = try SeratoLocationRepairService.plan(libraryDirectory: libraryDirectory)
+    print("Portable IDs are relative to: \(plan.baseDirectory.path)")
+    print("Already correct: \(plan.intactCount)")
+    print("Repairable: \(plan.repairs.count)")
+    print("Needs review: \(plan.unrepairable.count)")
+
+    for repair in plan.repairs.prefix(10) {
+        print("  \(repair.oldPortableID)\n    -> \(repair.newPortableID)")
+    }
+    if plan.repairs.count > 10 {
+        print("  … and \(plan.repairs.count - 10) more")
+    }
+
+    var reasonCounts: [String: Int] = [:]
+    for entry in plan.unrepairable {
+        switch entry.reason {
+        case .noCandidate:
+            reasonCounts["no matching file on disk", default: 0] += 1
+        case .multipleCandidates:
+            reasonCounts["several files could match", default: 0] += 1
+        case .destinationTaken:
+            reasonCounts["another library entry already claims that file", default: 0] += 1
+        }
+    }
+    for (reason, count) in reasonCounts.sorted(by: { $0.value > $1.value }) {
+        print("  \(count) × \(reason)")
+    }
+
+    guard options.shouldApply else {
+        print("\nPreview only. Re-run with --apply to write these changes.")
+        return
+    }
+
+    let result = try SeratoLocationRepairService.apply(plan)
+    print("\nRepaired \(result.repairedCount) library entries.")
+    if result.skippedCount > 0 {
+        print("Skipped \(result.skippedCount) whose destination was taken since the preview.")
+    }
+}
+
 func main() {
     do {
         let rawArguments = Array(CommandLine.arguments.dropFirst())
+
+        if rawArguments.first == "repair-locations" {
+            try runRepairLocations(arguments: Array(rawArguments.dropFirst()))
+            return
+        }
+
         let options = try ImportCLIOptions.parse(arguments: rawArguments)
 
         let resolvedLibraryDirectory: URL

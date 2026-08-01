@@ -110,6 +110,9 @@ public enum SeratoTrackMetadataEditor {
         }
 
         let finalStoredPath = SeratoLibraryLocator.seratoStoredPath(for: finalFileURL, rootDirectory: rootDirectory)
+        let didRenamePath = finalStoredPath != matchedOldStoredPath
+        let locationDatabaseURL = SeratoLocationDatabase.locationDatabaseFile(in: libraryDirectory)
+        var didRewriteLocationDatabase = false
 
         do {
             var rewritten = SeratoDatabaseWriter.rewritingMetadata(
@@ -122,22 +125,26 @@ public enum SeratoTrackMetadataEditor {
                 throw EditError.trackNotFoundInDatabase(track.seratoStoredPath)
             }
 
-            if finalStoredPath != matchedOldStoredPath {
+            if didRenamePath {
                 let pathRewrite = SeratoDatabaseWriter.rewritingPath(
                     matchedOldStoredPath,
                     to: finalStoredPath,
                     in: rewritten.data
                 )
-                rewritten = (data: pathRewrite.data, didRewrite: rewritten.didRewrite)
-                try rewriteCratesPath(
-                    oldStoredPath: matchedOldStoredPath,
-                    newStoredPath: finalStoredPath,
-                    libraryDirectory: libraryDirectory
-                )
+                // A silently-skipped path rewrite is the orphan case this
+                // whole method exists to avoid: the file would sit under its
+                // new name while the library still pointed at the old one.
+                guard pathRewrite.didRewrite else {
+                    throw EditError.trackNotFoundInDatabase(matchedOldStoredPath)
+                }
+                rewritten = (data: pathRewrite.data, didRewrite: true)
             }
 
-            try AtomicFileWriter.write(rewritten.data, to: databaseFileURL)
-
+            // Verification runs against the bytes we're about to write rather
+            // than against the file afterwards. Checking post-write meant a
+            // verification failure rolled the file rename back while leaving
+            // the rewritten path committed on disk — the exact state where
+            // Serato can no longer find the track.
             guard verifyPersistedMetadata(
                 metadata,
                 in: rewritten.data,
@@ -146,7 +153,34 @@ public enum SeratoTrackMetadataEditor {
             ) else {
                 throw EditError.metadataVerificationFailed(finalStoredPath)
             }
+
+            if didRenamePath {
+                try rewriteCratesPath(
+                    oldStoredPath: matchedOldStoredPath,
+                    newStoredPath: finalStoredPath,
+                    libraryDirectory: libraryDirectory
+                )
+
+                // Modern Serato reads `Library/location.sqlite`, not
+                // `database V2`; without this the renamed file shows up as
+                // missing no matter how correct the `pfil` rewrite was.
+                try SeratoLocationDatabase.rewritePaths(
+                    [matchedOldStoredPath: finalStoredPath],
+                    rootDirectory: rootDirectory,
+                    in: locationDatabaseURL
+                )
+                didRewriteLocationDatabase = true
+            }
+
+            try AtomicFileWriter.write(rewritten.data, to: databaseFileURL)
         } catch {
+            if didRewriteLocationDatabase {
+                try? SeratoLocationDatabase.rewritePaths(
+                    [finalStoredPath: matchedOldStoredPath],
+                    rootDirectory: rootDirectory,
+                    in: locationDatabaseURL
+                )
+            }
             if didMoveFile {
                 try? FileManager.default.moveItem(at: finalFileURL, to: originalFileURL)
             }
