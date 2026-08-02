@@ -370,7 +370,8 @@ struct CrateDetailView: View {
             track: track,
             metadata: metadata,
             databaseFileURL: libraryService.databaseFile,
-            rewriteFilenameFromMetadata: SeratoFeatureFlags.isAutoRenameFromMetadataEnabled()
+            rewriteFilenameFromMetadata: SeratoFeatureFlags.isAutoRenameFromMetadataEnabled(),
+            filenameTemplate: SeratoFeatureFlags.filenameFormatTemplate()
         )
         onCratesChanged()
         showMetadataSaveSuccess()

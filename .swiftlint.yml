@@ -57,6 +57,13 @@ identifier_name:
   max_length: 80
   allowed_symbols: ["_"]
 
+# Serato ships a file literally named `master.sqlite` and a `master` table.
+# Code that reads them has to say so; renaming would only obscure what it
+# refers to. Every other flagged term stays flagged.
+inclusive_language:
+  override_allowed_terms:
+    - master
+
 type_name:
   max_length: 60
 

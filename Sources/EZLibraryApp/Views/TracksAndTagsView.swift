@@ -68,6 +68,9 @@ struct TracksAndTagsView: View {
     let onDeleteRequested: ([Track]) -> Void
     let onDeleteFromLibrary: ([Track]) -> Void
     let onDeleteFromComputer: ([Track]) -> Void
+    /// Renames the selected files from their tags using the Settings
+    /// template. Optional so previews and other call sites can omit it.
+    var onBulkRename: (([Track]) -> Void)?
 
     @AppStorage("SeratoToolsConfirmTrackDeleteActions") private var confirmDeleteActions = true
     @State private var selectedScopeID: String = Self.allTracksID
@@ -458,6 +461,19 @@ struct TracksAndTagsView: View {
                     .toggleStyle(.switch)
                     .controlSize(.small)
                     .help("When off, the delete buttons execute immediately.")
+
+                if let onBulkRename {
+                    Divider()
+                        .frame(height: 16)
+                    Button("Rename Files From Tags") {
+                        onBulkRename(selectedTracks)
+                    }
+                    .disabled(selectedTracks.isEmpty)
+                    .help(
+                        "Rename the selected files using the filename format from Settings "
+                        + "(\(SeratoFeatureFlags.filenameFormatTemplate())), and update Serato to match. "
+                        + "Shows what will change before anything is renamed.")
+                }
                 Spacer(minLength: 0)
             }
 

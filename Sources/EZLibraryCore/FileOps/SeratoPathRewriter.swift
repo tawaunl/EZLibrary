@@ -11,9 +11,14 @@
 import Foundation
 
 /// The single choke point every feature should use to rewrite a track's
-/// stored path in `database V2`. Composes the Safety/ primitives in the
-/// correct order — nothing else should call `AtomicFileWriter` or
-/// `SeratoDatabaseWriter` directly for this purpose.
+/// stored path. Composes the Safety/ primitives in the correct order —
+/// nothing else should call `AtomicFileWriter` or `SeratoDatabaseWriter`
+/// directly for this purpose.
+///
+/// A path change has to land in *both* of Serato's libraries: `database V2`
+/// and `Library/location.sqlite`. Modern Serato reads the SQLite one, so
+/// updating only `database V2` leaves the track showing as missing — see
+/// `SeratoLocationDatabase` for the details.
 public enum SeratoPathRewriter {
     public enum RewriteError: Error, Equatable {
         /// Refuse to write while Serato itself might also be writing to
@@ -45,8 +50,46 @@ public enum SeratoPathRewriter {
             throw RewriteError.trackNotFound
         }
 
-        try AtomicFileWriter.write(rewritten.data, to: databaseFileURL)
+        // SQLite goes first because it's the half that can fail cleanly: its
+        // transaction either commits or rolls back, leaving `database V2`
+        // untouched and the two libraries still agreeing with each other.
+        let libraryDirectory = databaseFileURL.deletingLastPathComponent()
+        let rootDirectory = SeratoLibraryLocator.rootDirectory(for: libraryDirectory)
+        let locationDatabases = SeratoLocationDatabase.activeDatabases(forLibraryDirectory: libraryDirectory)
+        for locationDatabaseURL in locationDatabases {
+            try SeratoLocationDatabase.rewritePaths(
+                rewrites,
+                rootDirectory: rootDirectory,
+                in: locationDatabaseURL
+            )
+        }
+
+        do {
+            try AtomicFileWriter.write(rewritten.data, to: databaseFileURL)
+        } catch {
+            revertLocationDatabases(rewrites, rootDirectory: rootDirectory, databases: locationDatabases)
+            throw error
+        }
+
         return rewritten.rewrittenCount
+    }
+
+    /// Best-effort undo of the SQLite half when the `database V2` write that
+    /// should have followed it fails. A failure here is swallowed: the caller
+    /// is already throwing, and the pre-write snapshot is the backstop.
+    private static func revertLocationDatabases(
+        _ rewrites: [String: String],
+        rootDirectory: URL,
+        databases: [URL]
+    ) {
+        let inverse = Dictionary(rewrites.map { ($0.value, $0.key) }, uniquingKeysWith: { first, _ in first })
+        for database in databases {
+            _ = try? SeratoLocationDatabase.rewritePaths(
+                inverse,
+                rootDirectory: rootDirectory,
+                in: database
+            )
+        }
     }
 
     @discardableResult

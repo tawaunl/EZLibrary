@@ -103,6 +103,7 @@ func printUsageAndExit(status: Int32) -> Never {
     let usage = """
     Usage:
       EZLibraryCLI [options] <file-or-folder> [more files/folders...]
+      EZLibraryCLI repair-locations [--library-dir <path>] [--search <path>]... [--apply]
 
     Options:
       -d, --destination <path>  Main music folder destination (default: ~/Music)
@@ -111,8 +112,16 @@ func printUsageAndExit(status: Int32) -> Never {
       -l, --library-dir <path>  Override Serato _Serato_ directory
       -h, --help                Show help
 
+    repair-locations:
+      Re-points Serato's SQLite library (Library/location.sqlite) at where
+      files actually live now, for libraries moved by a build that only
+      rewrote database V2. Previews by default; pass --apply to write.
+      -s, --search <path>  Extra folder to search for the files (repeatable;
+                           defaults to the folders database V2 already names)
+
     Example:
       EZLibraryCLI -d "$HOME/Music" -c "New Music" -- ~/Downloads/incoming ~/Desktop/track.mp3
+      EZLibraryCLI repair-locations --apply
     """
     if status == 0 {
         print(usage)
@@ -122,9 +131,124 @@ func printUsageAndExit(status: Int32) -> Never {
     Foundation.exit(status)
 }
 
+struct RepairCLIOptions {
+    var libraryDirectory: URL?
+    var searchRoots: [URL] = []
+    var shouldApply = false
+
+    static func parse(arguments: [String]) throws -> RepairCLIOptions {
+        var options = RepairCLIOptions()
+        var index = 0
+        while index < arguments.count {
+            switch arguments[index] {
+            case "--help", "-h":
+                printUsageAndExit(status: 0)
+            case "--apply":
+                options.shouldApply = true
+            case "--library-dir", "-l":
+                index += 1
+                guard index < arguments.count else {
+                    throw CLIError.invalidArgument("Missing value for --library-dir")
+                }
+                options.libraryDirectory = URL(fileURLWithPath: arguments[index])
+            case "--search", "-s":
+                index += 1
+                guard index < arguments.count else {
+                    throw CLIError.invalidArgument("Missing value for --search")
+                }
+                options.searchRoots.append(URL(fileURLWithPath: arguments[index]))
+            default:
+                throw CLIError.invalidArgument("Unknown option \(arguments[index])")
+            }
+            index += 1
+        }
+        return options
+    }
+}
+
+func runRepairLocations(arguments: [String]) throws {
+    let options = try RepairCLIOptions.parse(arguments: arguments)
+    let libraryDirectory = options.libraryDirectory ?? SeratoLibraryLocator.discoverLibraryDirectory()
+
+    print("Library: \(libraryDirectory.path)")
+    let plan = try SeratoLocationRepairService.plan(
+        libraryDirectory: libraryDirectory,
+        searchRoots: options.searchRoots.isEmpty ? nil : options.searchRoots
+    )
+    print("Portable IDs are relative to: \(plan.baseDirectory.path)")
+    for root in plan.searchRoots {
+        print("Searched: \(root.path)")
+    }
+    print("Already correct: \(plan.intactCount)")
+    print("Repairable: \(plan.repairs.count)")
+    print("Needs review: \(plan.unrepairable.count)")
+
+    for repair in plan.repairs.prefix(10) {
+        print("  \(repair.oldPortableID)\n    -> \(repair.newPortableID)")
+    }
+    if plan.repairs.count > 10 {
+        print("  … and \(plan.repairs.count - 10) more")
+    }
+
+    var reasonCounts: [String: Int] = [:]
+    for entry in plan.unrepairable {
+        switch entry.reason {
+        case .noCandidate:
+            reasonCounts["no matching file on disk", default: 0] += 1
+        case .multipleCandidates:
+            reasonCounts["several files could match", default: 0] += 1
+        case .destinationTaken:
+            reasonCounts["another library entry already claims that file", default: 0] += 1
+        }
+    }
+    for (reason, count) in reasonCounts.sorted(by: { $0.value > $1.value }) {
+        print("  \(count) × \(reason)")
+    }
+
+    // Disconnected locations are where "cannot be located" entries survive a
+    // library move: Serato still shows them but never re-syncs them.
+    let ghosts = try SeratoLocationRepairService.planDisconnectedLocations(libraryDirectory: libraryDirectory)
+    print("\nDisconnected locations (master.sqlite):")
+    print("  Repairable: \(ghosts.repairs.count)")
+    print("  No file on disk: \(ghosts.unresolvedCount)")
+    if ghosts.needsSeratoRuntimeCount > 0 {
+        print("  Need renaming inside Serato: \(ghosts.needsSeratoRuntimeCount)")
+    }
+    for repair in ghosts.repairs.prefix(5) {
+        print("  \(repair.oldPortableID)\n    -> \(repair.newPortableID)")
+    }
+    if ghosts.repairs.count > 5 {
+        print("  … and \(ghosts.repairs.count - 5) more")
+    }
+    if !ghosts.isEmpty {
+        print("  Note: re-pointing these leaves the same file indexed under two")
+        print("        locations, which Serato shows as a duplicate.")
+    }
+
+    guard options.shouldApply else {
+        print("\nPreview only. Re-run with --apply to write these changes.")
+        return
+    }
+
+    let result = try SeratoLocationRepairService.apply(plan)
+    print("\nRepaired \(result.repairedCount) library entries.")
+    if result.skippedCount > 0 {
+        print("Skipped \(result.skippedCount) whose destination was taken since the preview.")
+    }
+
+    let ghostResult = try SeratoLocationRepairService.apply(ghosts)
+    print("Repaired \(ghostResult.repairedCount) entries in disconnected locations.")
+}
+
 func main() {
     do {
         let rawArguments = Array(CommandLine.arguments.dropFirst())
+
+        if rawArguments.first == "repair-locations" {
+            try runRepairLocations(arguments: Array(rawArguments.dropFirst()))
+            return
+        }
+
         let options = try ImportCLIOptions.parse(arguments: rawArguments)
 
         let resolvedLibraryDirectory: URL
