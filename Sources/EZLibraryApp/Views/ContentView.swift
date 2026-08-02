@@ -63,6 +63,17 @@ struct ContentView: View {
 
     @State private var pendingTrackDeleteSelection: [Track] = []
     @State private var showTrackDeleteDialog = false
+    /// Wrapped so the sheet can be driven by `.sheet(item:)`, which hands the
+    /// closure a non-optional value. The `isPresented` form needed an `if let`
+    /// inside the builder, and that renders an empty sheet whenever the
+    /// optional isn't populated in the same update as the flag.
+    private struct BulkRenameRequest: Identifiable {
+        let id = UUID()
+        let preview: TrackBulkRenameService.Preview
+    }
+
+    @State private var pendingBulkRename: BulkRenameRequest?
+    @State private var bulkRenameMessage: String?
     @State private var trackDeleteErrorMessage: String?
     @State private var crateListFilterMode: CrateListFilterMode = .all
     @State private var quickTrackDeleteAction: QuickTrackDeleteAction?
@@ -168,6 +179,18 @@ struct ContentView: View {
             .onReceive(NotificationCenter.default.publisher(for: .openEZLibrarySettings)) { _ in
                 showSettingsSheet = true
             }
+            // Attached here rather than alongside the settings sheet in
+            // `body`: SwiftUI honors one `.sheet` per view node, so stacking a
+            // second on the same node presented an empty window.
+            .sheet(item: $pendingBulkRename) { request in
+                BulkRenamePreviewSheet(
+                    preview: request.preview,
+                    template: SeratoFeatureFlags.filenameFormatTemplate(),
+                    skipSummary: skipSummary(for: request.preview.skips),
+                    onConfirm: { performBulkRename(request.preview) },
+                    onCancel: { pendingBulkRename = nil }
+                )
+            }
     }
 
     var body: some View {
@@ -198,6 +221,14 @@ struct ContentView: View {
             }
         } message: {
             Text("Choose how to delete \(pendingTrackDeleteSelection.count) selected track\(pendingTrackDeleteSelection.count == 1 ? "" : "s").")
+        }
+        .alert(
+            "Rename Files",
+            isPresented: Binding(get: { bulkRenameMessage != nil }, set: { if !$0 { bulkRenameMessage = nil } })
+        ) {
+            Button("OK", role: .cancel) { bulkRenameMessage = nil }
+        } message: {
+            Text(bulkRenameMessage ?? "")
         }
         .alert(
             "Couldn't Complete Operation",
@@ -416,6 +447,9 @@ struct ContentView: View {
                     onDeleteFromComputer: { selected in
                         pendingTrackDeleteSelection = selected
                         performOrConfirmQuickTrackDelete(.fromComputer)
+                    },
+                    onBulkRename: { selected in
+                        prepareBulkRename(for: selected)
                     }
                 )
             }
@@ -679,6 +713,64 @@ struct ContentView: View {
 
         var recoverySuggestion: String? {
             "Check that those files still exist and aren't locked, then try again."
+        }
+    }
+
+    // MARK: - Bulk rename
+
+    /// Builds the preview and asks for confirmation. Nothing is renamed until
+    /// the user accepts, and the message spells out what will be skipped.
+    private func prepareBulkRename(for tracks: [Track]) {
+        guard !tracks.isEmpty else { return }
+        do {
+            let preview = try TrackBulkRenameService.preview(
+                tracks: tracks,
+                template: SeratoFeatureFlags.filenameFormatTemplate(),
+                databaseFileURL: libraryService.databaseFile
+            )
+            guard !preview.isEmpty else {
+                bulkRenameMessage = "Nothing to rename. \(skipSummary(for: preview.skips))"
+                return
+            }
+            pendingBulkRename = BulkRenameRequest(preview: preview)
+        } catch {
+            bulkRenameMessage = error.localizedDescription
+        }
+    }
+
+    private func skipSummary(for skips: [TrackBulkRenameService.Skip]) -> String {
+        guard !skips.isEmpty else { return "" }
+
+        var counts: [String: Int] = [:]
+        for skip in skips {
+            switch skip.reason {
+            case .alreadyNamedCorrectly: counts["already named correctly", default: 0] += 1
+            case .noNameFromTemplate: counts["no tags to build a name from", default: 0] += 1
+            case .destinationExists: counts["a file already has that name", default: 0] += 1
+            case .collidesWithAnotherRename: counts["would collide with another selected track", default: 0] += 1
+            case .notInDatabase: counts["not in the Serato library", default: 0] += 1
+            }
+        }
+        let parts = counts.sorted { $0.value > $1.value }.map { "\($0.value) \($0.key)" }
+        return "Skipping: " + parts.joined(separator: ", ") + "."
+    }
+
+    private func performBulkRename(_ preview: TrackBulkRenameService.Preview) {
+        pendingBulkRename = nil
+
+        do {
+            let result = try TrackBulkRenameService.apply(preview)
+            // Renaming rewrites crate files on disk, so the in-memory crates
+            // would otherwise still point at the old paths.
+            reloadLibrary()
+
+            var message = "Renamed \(result.renamedCount) file\(result.renamedCount == 1 ? "" : "s")."
+            if !result.skips.isEmpty {
+                message += " " + skipSummary(for: result.skips)
+            }
+            bulkRenameMessage = message
+        } catch {
+            bulkRenameMessage = error.localizedDescription
         }
     }
 
@@ -1031,3 +1123,82 @@ private struct FilenameFormatSection: View {
     }
 }
 
+
+/// Resizable preview for a bulk rename.
+///
+/// A `confirmationDialog` was the obvious fit but renders at a fixed, narrow
+/// alert width, which truncates exactly the part that matters — the long
+/// filenames on both sides of the arrow. This lists every rename in a
+/// scrollable, resizable window instead of a three-line sample.
+private struct BulkRenamePreviewSheet: View {
+    let preview: TrackBulkRenameService.Preview
+    let template: String
+    let skipSummary: String
+    let onConfirm: () -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Rename Files From Tags")
+                    .font(.title2.weight(.semibold))
+                Text("Using \(template) — Serato's library is updated to match, so nothing goes missing.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Divider()
+
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 6) {
+                    ForEach(Array(preview.renames.enumerated()), id: \.offset) { _, rename in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(rename.sourceURL.lastPathComponent)
+                                .font(.system(.body, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                Text("→")
+                                    .foregroundStyle(.secondary)
+                                Text(rename.destinationURL.lastPathComponent)
+                                    .font(.system(.body, design: .monospaced))
+                                    .textSelection(.enabled)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 2)
+                        Divider()
+                    }
+                }
+                .padding(.horizontal, 2)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            if !skipSummary.isEmpty {
+                Text(skipSummary)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack {
+                Text("\(preview.renames.count) file\(preview.renames.count == 1 ? "" : "s") to rename")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Cancel", role: .cancel) { onCancel() }
+                    .keyboardShortcut(.cancelAction)
+                Button("Rename \(preview.renames.count) File\(preview.renames.count == 1 ? "" : "s")") {
+                    onConfirm()
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(16)
+        // Resizable: a floor so it's readable, no ceiling so long names can
+        // be dragged wider.
+        .frame(minWidth: 620, idealWidth: 860, maxWidth: .infinity,
+               minHeight: 380, idealHeight: 560, maxHeight: .infinity)
+    }
+}
