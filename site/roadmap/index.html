@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Roadmap — EZLibrary</title>
+<meta name="description" content="What's being built next in EZLibrary, what's in progress, and what just shipped. Suggest an idea and upvote the ones you want.">
+<link rel="icon" href="../assets/img/icon.png">
+<link rel="canonical" href="https://tawaunl.github.io/EZLibrary/roadmap/">
+<link rel="stylesheet" href="../assets/css/site.css">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Roadmap — EZLibrary">
+<meta property="og:description" content="What's next, what's in progress, and what just shipped. Suggest an idea and upvote the ones you want.">
+<meta property="og:image" content="https://tawaunl.github.io/EZLibrary/assets/img/icon.png">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="../"><img src="../assets/img/icon.png" alt=""> EZLibrary</a>
+    <button class="nav-toggle" aria-expanded="false" aria-controls="site-nav">Menu</button>
+    <nav class="nav" id="site-nav" aria-label="Main">
+      <a href="../features/">Features</a>
+      <a href="../roadmap/" aria-current="page">Roadmap</a>
+      <a href="../support/">Support</a>
+      <a href="https://github.com/tawaunl/EZLibrary">GitHub</a>
+      <a class="btn btn-sm btn-primary" href="https://github.com/tawaunl/EZLibrary/releases/latest" data-download>Download</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+
+<section class="page-hero">
+  <div class="wrap">
+    <p class="crumbs"><a href="../">Home</a><span>/</span>Roadmap</p>
+    <h1>You decide what gets built next</h1>
+    <p>This board is live. Every card is a real GitHub issue, ordered by how many people
+      voted for it — so the thing at the top of the first column is genuinely the thing
+      most people want.</p>
+    <div class="btn-row" style="margin-top:26px">
+      <a class="btn btn-primary" href="https://github.com/tawaunl/EZLibrary/issues/new?template=feature_request.yml">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        Suggest an idea
+      </a>
+      <a class="btn" href="https://github.com/tawaunl/EZLibrary/issues?q=label%3Aroadmap">See it all on GitHub</a>
+    </div>
+  </div>
+</section>
+
+<!-- ---------------------------------------------------------------- how it works -->
+<section class="section-tight">
+  <div class="wrap">
+    <div class="grid grid-3">
+      <div class="card">
+        <div class="card-icon">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 00-3.5 10.9c.5.4.8 1 .8 1.6h5.4c0-.6.3-1.2.8-1.6A6 6 0 0012 3z"/></svg>
+        </div>
+        <h3>1. Post it</h3>
+        <p>Describe the thing that's annoying you. Requests show up on this board as soon as
+          they're opened — you don't have to wait for anyone to bless them.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+        </div>
+        <h3>2. Vote on it</h3>
+        <p>Hit the arrow on any card to open it on GitHub, then react with 👍. That reaction
+          <em>is</em> the vote, and it's what sorts this board.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>
+        </div>
+        <h3>3. Watch it move</h3>
+        <p>Cards move to <em>In Progress</em> when work starts and to <em>Recently Completed</em>
+          when the release ships. Comment on a card to add detail — that shapes what gets built
+          as much as the vote count does.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ----------------------------------------------------------------- board -->
+<section class="section" style="padding-top:34px">
+  <div class="wrap">
+    <div id="board" class="board">
+      <div class="column c-planned">
+        <div class="column-head">
+          <span class="dot"></span>
+          <h3>Requested &amp; Planned</h3>
+          <span class="count" id="count-planned">–</span>
+        </div>
+        <div class="column-body" id="col-planned">
+          <div class="skeleton"></div>
+          <div class="skeleton"></div>
+          <div class="skeleton"></div>
+        </div>
+      </div>
+
+      <div class="column c-progress">
+        <div class="column-head">
+          <span class="dot"></span>
+          <h3>In Progress</h3>
+          <span class="count" id="count-progress">–</span>
+        </div>
+        <div class="column-body" id="col-progress">
+          <div class="skeleton"></div>
+        </div>
+      </div>
+
+      <div class="column c-done">
+        <div class="column-head">
+          <span class="dot"></span>
+          <h3>Recently Completed</h3>
+          <span class="count" id="count-done">–</span>
+        </div>
+        <div class="column-body" id="col-done">
+          <div class="skeleton"></div>
+          <div class="skeleton"></div>
+        </div>
+      </div>
+    </div>
+
+    <noscript>
+      <p class="board-status" style="margin-top:20px">
+        The live board needs JavaScript. You can see the same list, with the same votes, on
+        <a href="https://github.com/tawaunl/EZLibrary/issues?q=label%3Aroadmap">GitHub</a>.
+      </p>
+    </noscript>
+
+    <p class="shot-caption" style="margin-top:26px">
+      Loaded straight from GitHub Issues. Vote counts refresh every few minutes.
+    </p>
+  </div>
+</section>
+
+<!-- ---------------------------------------------------------------- context -->
+<section class="section section-alt">
+  <div class="wrap">
+    <div class="two-col">
+      <div class="prose">
+        <span class="eyebrow">Honest answers</span>
+        <h2>How this board actually works</h2>
+
+        <h3>Votes matter, but they aren't a queue</h3>
+        <p>
+          Vote count is the strongest signal for what gets picked up next, and it's the reason
+          the first column is sorted the way it is. It isn't the only input though. Anything
+          that risks losing or corrupting a library gets fixed ahead of everything on this
+          board, no matter how few votes it has.
+        </p>
+
+        <h3>Some things are genuinely hard</h3>
+        <p>
+          A few of the most-wanted items — Rekordbox transfer especially — mean
+          reverse-engineering someone else's file format and keeping up with it as it changes.
+          Those are scheduled deliberately late, not because nobody wants them, but because
+          shipping them badly is worse than not shipping them.
+        </p>
+
+        <h3>Nothing here is a promise</h3>
+        <p>
+          This is a free project maintained by one person. The board is what's intended, in the
+          order it's intended, and it's kept honest — but there are no dates on it and nothing
+          on it is a commitment. What did ship is in the
+          <a href="https://github.com/tawaunl/EZLibrary/blob/main/docs/CHANGELOG.md">changelog</a>,
+          with the detail.
+        </p>
+
+        <h3>You can also just build it</h3>
+        <p>
+          It's GPLv3, and pull requests are welcome — from a typo fix upward. The
+          <a href="https://github.com/tawaunl/EZLibrary/blob/main/CONTRIBUTING.md">contributing guide</a>
+          covers how to get set up, and the
+          <a href="https://github.com/tawaunl/EZLibrary/blob/main/docs/ENGINEERING_RULES.md">engineering rules</a>
+          cover what a change has to hold up to before it lands.
+        </p>
+      </div>
+
+      <aside class="aside">
+        <h4>Contribute</h4>
+        <ul>
+          <li><a href="https://github.com/tawaunl/EZLibrary/issues/new?template=feature_request.yml">Suggest a feature</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/issues/new?template=bug_report.yml">Report a bug</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/discussions">Discuss an idea first</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/blob/main/CONTRIBUTING.md">Contributing guide</a></li>
+        </ul>
+        <h4 style="margin-top:22px">Track progress</h4>
+        <ul>
+          <li><a href="https://github.com/tawaunl/EZLibrary/blob/main/docs/CHANGELOG.md">Changelog</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/releases">All releases</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/blob/main/docs/ROADMAP.md">Long-form roadmap doc</a></li>
+        </ul>
+        <a class="btn btn-primary btn-sm" style="width:100%" href="https://github.com/tawaunl/EZLibrary/issues/new?template=feature_request.yml">Suggest an idea</a>
+      </aside>
+    </div>
+  </div>
+</section>
+
+<section class="cta">
+  <div class="wrap">
+    <h2>Want a say in what's next?</h2>
+    <p>Install it, use it on your own library, and tell us what's still in your way.</p>
+    <div class="btn-row center" style="margin-top:26px">
+      <a class="btn btn-primary btn-lg" href="https://github.com/tawaunl/EZLibrary/releases/latest" data-download>
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 3v12M7 11l5 5 5-5M4 20h16"/>
+        </svg>
+        Download for macOS
+      </a>
+    </div>
+    <p class="meta-line">v<span data-latest-version>1.0</span> · <span data-latest-size>8.2 MB</span> · macOS 13+ · Apple Silicon &amp; Intel</p>
+  </div>
+</section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <div class="footer-grid">
+      <div class="footer-about">
+        <a class="brand" href="../"><img src="../assets/img/icon.png" alt=""> EZLibrary</a>
+        <p>A free, open source macOS toolkit for DJs who want a cleaner, safer Serato library.</p>
+      </div>
+      <div>
+        <h4>Product</h4>
+        <ul>
+          <li><a href="../features/">Features</a></li>
+          <li><a href="../roadmap/">Roadmap</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/releases/latest" data-download>Download</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/blob/main/docs/CHANGELOG.md">Changelog</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Help</h4>
+        <ul>
+          <li><a href="../support/">Support &amp; FAQ</a></li>
+          <li><a href="../support/#how-to">How-to guides</a></li>
+          <li><a href="../support/#contact">Contact</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/issues/new/choose">Report a bug</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Project</h4>
+        <ul>
+          <li><a href="https://github.com/tawaunl/EZLibrary">Source on GitHub</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/blob/main/CONTRIBUTING.md">Contributing</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/blob/main/SECURITY.md">Security policy</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/blob/main/LICENSE">License (GPLv3)</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p class="disclaimer">
+        EZLibrary is an independent, community-built utility. It is not affiliated with,
+        endorsed by, or sponsored by Serato Audio Research. "Serato" is a trademark of its
+        respective owner.
+      </p>
+      <p>© 2026 Tawaun Lucas · GPLv3</p>
+    </div>
+  </div>
+</footer>
+
+<script src="../assets/js/site.js"></script>
+<script src="../assets/js/roadmap.js"></script>
+</body>
+</html>

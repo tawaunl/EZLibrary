@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Add Music — EZLibrary</title>
+<meta name="description" content="Get new files into your library and into the right crate, without the drag-and-drop dance.">
+<link rel="icon" href="../assets/img/icon.png">
+<link rel="canonical" href="https://tawaunl.github.io/EZLibrary/features/add-music.html">
+<link rel="stylesheet" href="../assets/css/site.css">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Add Music — EZLibrary">
+<meta property="og:description" content="Get new files into your library and into the right crate, without the drag-and-drop dance.">
+<meta property="og:image" content="https://tawaunl.github.io/EZLibrary/assets/img/icon.png">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="../"><img src="../assets/img/icon.png" alt=""> EZLibrary</a>
+    <button class="nav-toggle" aria-expanded="false" aria-controls="site-nav">Menu</button>
+    <nav class="nav" id="site-nav" aria-label="Main">
+      <a href="../features/" aria-current="page">Features</a>
+      <a href="../roadmap/">Roadmap</a>
+      <a href="../support/">Support</a>
+      <a href="https://github.com/tawaunl/EZLibrary">GitHub</a>
+      <a class="btn btn-sm btn-primary" href="https://github.com/tawaunl/EZLibrary/releases/latest" data-download>Download</a>
+    </nav>
+  </div>
+</header>
+<main id="main">
+
+<section class="page-hero">
+  <div class="wrap">
+    <p class="crumbs"><a href="../">Home</a><span>/</span><a href="../features/">Features</a><span>/</span>Add Music</p>
+    <h1>Add Music <span class="badge">Shipped</span></h1>
+    <p>Get new files into your library and into the right crate, without the drag-and-drop dance.</p>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap">
+    <div class="two-col">
+      <div class="prose">
+        <p>New music arrives in a Downloads folder, in a zip, or on a USB stick, and getting it filed properly is the boring part. Add Music imports files or whole folders into your music directory and assigns crates in the same step.</p>
+        <p>It also installs a Finder Quick Action, so you can right-click files anywhere on your Mac and send them straight to your library without opening the app.</p>
+
+        <h2>What it does</h2>
+        <ul class="ticks">
+          <li><strong>Files or folders.</strong> Point it at a folder and it finds supported audio recursively, however deeply it is nested.</li>
+          <li><strong>Move or copy.</strong> Move files into your library folder, or copy them and leave the originals where they are.</li>
+          <li><strong>Crate on import.</strong> Create a dated crate, add to an existing crate, or import with no crate at all.</li>
+          <li><strong>Every common format.</strong> <code>mp3</code>, <code>m4a</code>, <code>aac</code>, <code>wav</code>, <code>aif</code>, <code>aiff</code>, <code>flac</code>, <code>alac</code> and <code>ogg</code>.</li>
+          <li><strong>Right-click from Finder.</strong> The <em>Add to EZLibrary</em> Quick Action imports the selection using your saved defaults.</li>
+          <li><strong>Scriptable.</strong> The same import runs from the CLI, so it can be wired into whatever else you use.</li>
+        </ul>
+
+        <h2>How to use it</h2>
+        <ol class="steps">
+          <li>
+            <h3>Choose your source</h3>
+            <p>Select the files or the folder you want to bring in.</p>
+          </li>
+          <li>
+            <h3>Pick move or copy</h3>
+            <p>Move keeps one canonical copy in your library folder; copy leaves the source untouched.</p>
+          </li>
+          <li>
+            <h3>Choose a crate</h3>
+            <p>A dated crate is the default and makes new music easy to find later.</p>
+          </li>
+          <li>
+            <h3>Import</h3>
+            <p>Files are placed in your music directory and registered with Serato.</p>
+          </li>
+        </ol>
+
+        <div class="note"><p>Install the Finder Quick Action once with <code>/Applications/EZLibrary.app/Contents/Resources/scripts/install-finder-quick-action.sh</code>. Its behaviour is configured with the <code>EZLIBRARY_ADD_MODE</code>, <code>EZLIBRARY_ADD_DESTINATION</code> and <code>EZLIBRARY_ADD_CRATE_PREFIX</code> environment variables.</p></div>
+
+        <h2>Related</h2>
+        <div class="grid grid-2">
+          <a class="card" href="playlistmatch.html">
+            <h3>PlaylistMatch</h3>
+            <p>Paste a playlist, find out what you already own, and get a crate out of it.</p>
+          </a>
+          <a class="card" href="consolidation.html">
+            <h3>Library Consolidation</h3>
+            <p>Pull music scattered across drives and folders into one place, without breaking a single crate.</p>
+          </a>
+          <a class="card" href="cli.html">
+            <h3>Command Line Tools</h3>
+            <p>The same engine, scriptable — for imports, bulk repair and anything you want to automate.</p>
+          </a>
+        </div>
+      </div>
+      <aside class="aside">
+        <h4>All features</h4>
+        <ul>
+          <li><a href="tracks-and-tags.html">Tracks &amp; Tags</a></li>
+          <li><a href="duplicates.html">Find Duplicates</a></li>
+          <li><a href="missing-tracks.html">Missing Tracks</a></li>
+          <li><a href="crates.html">Crates</a></li>
+          <li><a href="playlistmatch.html">PlaylistMatch</a></li>
+          <li><a href="add-music.html" aria-current="page">Add Music</a></li>
+          <li><a href="consolidation.html">Consolidation</a></li>
+          <li><a href="backup.html">Backup</a></li>
+          <li><a href="rename.html">Rename From Tags</a></li>
+          <li><a href="cli.html">Command Line</a></li>
+        </ul>
+        <a class="btn btn-primary btn-sm" style="width:100%" href="https://github.com/tawaunl/EZLibrary/releases/latest" data-download>Download EZLibrary</a>
+      </aside>
+    </div>
+  </div>
+</section>
+
+<section class="cta">
+  <div class="wrap">
+    <h2>Try it on your own library</h2>
+    <p>Free and open source. Takes a backup before it touches anything.</p>
+    <div class="btn-row center" style="margin-top:26px">
+      <a class="btn btn-primary btn-lg" href="https://github.com/tawaunl/EZLibrary/releases/latest" data-download>
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 3v12M7 11l5 5 5-5M4 20h16"/>
+        </svg>
+        Download for macOS
+      </a>
+    </div>
+    <p class="meta-line">v<span data-latest-version>1.0</span> · <span data-latest-size>8.2 MB</span> · macOS 13+ · Apple Silicon &amp; Intel</p>
+  </div>
+</section>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <div class="footer-grid">
+      <div class="footer-about">
+        <a class="brand" href="../"><img src="../assets/img/icon.png" alt=""> EZLibrary</a>
+        <p>A free, open source macOS toolkit for DJs who want a cleaner, safer Serato library.</p>
+      </div>
+      <div>
+        <h4>Product</h4>
+        <ul>
+          <li><a href="../features/">Features</a></li>
+          <li><a href="../roadmap/">Roadmap</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/releases/latest" data-download>Download</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/blob/main/docs/CHANGELOG.md">Changelog</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Help</h4>
+        <ul>
+          <li><a href="../support/">Support &amp; FAQ</a></li>
+          <li><a href="../support/#how-to">How-to guides</a></li>
+          <li><a href="../support/#contact">Contact</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/issues/new/choose">Report a bug</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Project</h4>
+        <ul>
+          <li><a href="https://github.com/tawaunl/EZLibrary">Source on GitHub</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/blob/main/CONTRIBUTING.md">Contributing</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/blob/main/SECURITY.md">Security policy</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/blob/main/LICENSE">License (GPLv3)</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p class="disclaimer">
+        EZLibrary is an independent, community-built utility. It is not affiliated with,
+        endorsed by, or sponsored by Serato Audio Research. "Serato" is a trademark of its
+        respective owner.
+      </p>
+      <p>© 2026 Tawaun Lucas · GPLv3</p>
+    </div>
+  </div>
+</footer>
+
+<script src="../assets/js/site.js"></script>
+</body>
+</html>

@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Crates — EZLibrary</title>
+<meta name="description" content="Your whole crate tree, including smart crates and the hidden ones, with real stats.">
+<link rel="icon" href="../assets/img/icon.png">
+<link rel="canonical" href="https://tawaunl.github.io/EZLibrary/features/crates.html">
+<link rel="stylesheet" href="../assets/css/site.css">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Crates — EZLibrary">
+<meta property="og:description" content="Your whole crate tree, including smart crates and the hidden ones, with real stats.">
+<meta property="og:image" content="https://tawaunl.github.io/EZLibrary/assets/img/icon.png">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="../"><img src="../assets/img/icon.png" alt=""> EZLibrary</a>
+    <button class="nav-toggle" aria-expanded="false" aria-controls="site-nav">Menu</button>
+    <nav class="nav" id="site-nav" aria-label="Main">
+      <a href="../features/" aria-current="page">Features</a>
+      <a href="../roadmap/">Roadmap</a>
+      <a href="../support/">Support</a>
+      <a href="https://github.com/tawaunl/EZLibrary">GitHub</a>
+      <a class="btn btn-sm btn-primary" href="https://github.com/tawaunl/EZLibrary/releases/latest" data-download>Download</a>
+    </nav>
+  </div>
+</header>
+<main id="main">
+
+<section class="page-hero">
+  <div class="wrap">
+    <p class="crumbs"><a href="../">Home</a><span>/</span><a href="../features/">Features</a><span>/</span>Crates</p>
+    <h1>Crates <span class="badge">Shipped</span></h1>
+    <p>Your whole crate tree, including smart crates and the hidden ones, with real stats.</p>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap">
+    <div class="two-col">
+      <div class="prose">
+        <p>The Crates workspace reads your crate structure straight off disk — nested crates, smart crates and the crates Serato keeps out of sight — and shows them as one tree.</p>
+        <p>It is also the scope selector for the rest of the app. Pick a crate here and tag editing, duplicate detection and backup can all be pointed at just that crate.</p>
+
+        <figure class="shot" style="margin:32px 0">
+          <div class="shot-bar"><i></i><i></i><i></i><span>Crates</span></div>
+          <img src="../assets/img/shot-crates.webp" alt="The Crates workspace with a nested crate tree on the left and the selected crate's tracks on the right." loading="lazy">
+        </figure>
+
+        <h2>What it does</h2>
+        <ul class="ticks">
+          <li><strong>The full tree.</strong> Nested crates are rebuilt from Serato's naming scheme, so you see the hierarchy you actually built.</li>
+          <li><strong>Smart crates too.</strong> Rule-based crates are read alongside regular ones, and their rules are preserved whenever EZLibrary rewrites a path inside them.</li>
+          <li><strong>Hidden crates.</strong> Crates Serato hides are still shown, because they still hold tracks and still break.</li>
+          <li><strong>Fast filtering.</strong> Filter within a crate and sort by any column to find what you are after.</li>
+          <li><strong>Crate-scoped operations.</strong> Use a crate as the scope for bulk tag edits, duplicate scans and single-crate backups.</li>
+          <li><strong>Safe deletes.</strong> Deleting a crate moves it to the Trash rather than destroying it.</li>
+        </ul>
+
+        <h2>How to use it</h2>
+        <ol class="steps">
+          <li>
+            <h3>Open Crates</h3>
+            <p>The tree loads from your <code>_Serato_</code> folder — no import step.</p>
+          </li>
+          <li>
+            <h3>Select a crate</h3>
+            <p>Its tracks appear on the right, with the same table and player as the main library view.</p>
+          </li>
+          <li>
+            <h3>Use it as a scope</h3>
+            <p>Switch to Tracks &amp; Tags, Duplicates or Backup and the crate stays selected as the scope.</p>
+          </li>
+        </ol>
+
+        <h2>Related</h2>
+        <div class="grid grid-2">
+          <a class="card" href="playlistmatch.html">
+            <h3>PlaylistMatch</h3>
+            <p>Paste a playlist, find out what you already own, and get a crate out of it.</p>
+          </a>
+          <a class="card" href="tracks-and-tags.html">
+            <h3>Tracks &amp; Tags</h3>
+            <p>Browse the whole library, fix metadata in place, and fill thousands of empty fields in one pass.</p>
+          </a>
+          <a class="card" href="backup.html">
+            <h3>Backup</h3>
+            <p>Timestamped snapshots of your library, sized before you commit to them.</p>
+          </a>
+        </div>
+      </div>
+      <aside class="aside">
+        <h4>All features</h4>
+        <ul>
+          <li><a href="tracks-and-tags.html">Tracks &amp; Tags</a></li>
+          <li><a href="duplicates.html">Find Duplicates</a></li>
+          <li><a href="missing-tracks.html">Missing Tracks</a></li>
+          <li><a href="crates.html" aria-current="page">Crates</a></li>
+          <li><a href="playlistmatch.html">PlaylistMatch</a></li>
+          <li><a href="add-music.html">Add Music</a></li>
+          <li><a href="consolidation.html">Consolidation</a></li>
+          <li><a href="backup.html">Backup</a></li>
+          <li><a href="rename.html">Rename From Tags</a></li>
+          <li><a href="cli.html">Command Line</a></li>
+        </ul>
+        <a class="btn btn-primary btn-sm" style="width:100%" href="https://github.com/tawaunl/EZLibrary/releases/latest" data-download>Download EZLibrary</a>
+      </aside>
+    </div>
+  </div>
+</section>
+
+<section class="cta">
+  <div class="wrap">
+    <h2>Try it on your own library</h2>
+    <p>Free and open source. Takes a backup before it touches anything.</p>
+    <div class="btn-row center" style="margin-top:26px">
+      <a class="btn btn-primary btn-lg" href="https://github.com/tawaunl/EZLibrary/releases/latest" data-download>
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 3v12M7 11l5 5 5-5M4 20h16"/>
+        </svg>
+        Download for macOS
+      </a>
+    </div>
+    <p class="meta-line">v<span data-latest-version>1.0</span> · <span data-latest-size>8.2 MB</span> · macOS 13+ · Apple Silicon &amp; Intel</p>
+  </div>
+</section>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <div class="footer-grid">
+      <div class="footer-about">
+        <a class="brand" href="../"><img src="../assets/img/icon.png" alt=""> EZLibrary</a>
+        <p>A free, open source macOS toolkit for DJs who want a cleaner, safer Serato library.</p>
+      </div>
+      <div>
+        <h4>Product</h4>
+        <ul>
+          <li><a href="../features/">Features</a></li>
+          <li><a href="../roadmap/">Roadmap</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/releases/latest" data-download>Download</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/blob/main/docs/CHANGELOG.md">Changelog</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Help</h4>
+        <ul>
+          <li><a href="../support/">Support &amp; FAQ</a></li>
+          <li><a href="../support/#how-to">How-to guides</a></li>
+          <li><a href="../support/#contact">Contact</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/issues/new/choose">Report a bug</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Project</h4>
+        <ul>
+          <li><a href="https://github.com/tawaunl/EZLibrary">Source on GitHub</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/blob/main/CONTRIBUTING.md">Contributing</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/blob/main/SECURITY.md">Security policy</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/blob/main/LICENSE">License (GPLv3)</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p class="disclaimer">
+        EZLibrary is an independent, community-built utility. It is not affiliated with,
+        endorsed by, or sponsored by Serato Audio Research. "Serato" is a trademark of its
+        respective owner.
+      </p>
+      <p>© 2026 Tawaun Lucas · GPLv3</p>
+    </div>
+  </div>
+</footer>
+
+<script src="../assets/js/site.js"></script>
+</body>
+</html>
