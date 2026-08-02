@@ -14,6 +14,14 @@
   <a href="CONTRIBUTING.md"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs welcome"></a>
 </p>
 
+<p align="center">
+  <b><a href="https://tawaunl.github.io/EZLibrary/">Website</a></b> ·
+  <a href="https://github.com/tawaunl/EZLibrary/releases/latest">Download</a> ·
+  <a href="https://tawaunl.github.io/EZLibrary/features/">Features</a> ·
+  <a href="https://tawaunl.github.io/EZLibrary/roadmap/">Roadmap</a> ·
+  <a href="https://tawaunl.github.io/EZLibrary/support/">Support</a>
+</p>
+
 > EZLibrary is free and open source software for DJs and hobbyists. Anyone is welcome to use it, study it, share it, and improve it under the terms of the [GNU GPL v3](LICENSE).
 
 > EZLibrary is an independent, community-built utility. It isn't affiliated with, endorsed by, or sponsored by Serato Audio Research or any other music platform referenced in this project. "Serato" is a trademark of its respective owner. This tool reads and writes Serato's library file format for interoperability purposes only.

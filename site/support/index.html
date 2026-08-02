@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Support &amp; FAQ — EZLibrary</title>
+<meta name="description" content="Install help, how-to guides, answers to common questions, and how to get in touch about EZLibrary.">
+<link rel="icon" href="../assets/img/icon.png">
+<link rel="canonical" href="https://tawaunl.github.io/EZLibrary/support/">
+<link rel="stylesheet" href="../assets/css/site.css">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Support &amp; FAQ — EZLibrary">
+<meta property="og:description" content="Install help, how-to guides, answers to common questions, and how to get in touch.">
+<meta property="og:image" content="https://tawaunl.github.io/EZLibrary/assets/img/icon.png">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="../"><img src="../assets/img/icon.png" alt=""> EZLibrary</a>
+    <button class="nav-toggle" aria-expanded="false" aria-controls="site-nav">Menu</button>
+    <nav class="nav" id="site-nav" aria-label="Main">
+      <a href="../features/">Features</a>
+      <a href="../roadmap/">Roadmap</a>
+      <a href="../support/" aria-current="page">Support</a>
+      <a href="https://github.com/tawaunl/EZLibrary">GitHub</a>
+      <a class="btn btn-sm btn-primary" href="https://github.com/tawaunl/EZLibrary/releases/latest" data-download>Download</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+
+<section class="page-hero">
+  <div class="wrap">
+    <p class="crumbs"><a href="../">Home</a><span>/</span>Support</p>
+    <h1>Support</h1>
+    <p>Getting installed, getting started, and getting unstuck. If none of this covers it,
+      there's a real person at the other end of the contact links.</p>
+  </div>
+</section>
+
+<section class="section-tight">
+  <div class="wrap">
+    <div class="grid grid-3">
+      <a class="card" href="#install">
+        <h3>Install &amp; first launch</h3>
+        <p>What macOS will say the first time you open it, and what to click.</p>
+      </a>
+      <a class="card" href="#how-to">
+        <h3>How-to guides</h3>
+        <p>The four jobs most people download EZLibrary to do, start to finish.</p>
+      </a>
+      <a class="card" href="#faq">
+        <h3>FAQ</h3>
+        <p>Licensing, libraries, safety, and what happens to your cues.</p>
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- --------------------------------------------------------------- install -->
+<section class="section" id="install">
+  <div class="wrap wrap-narrow">
+    <span class="eyebrow">Install</span>
+    <h2>Installing EZLibrary</h2>
+
+    <ol class="steps" style="margin-top:28px">
+      <li>
+        <h3>Download the installer</h3>
+        <p>One <code>.pkg</code> file, about <span data-latest-size>8.2 MB</span>. Everything the
+          app needs is inside it.</p>
+        <div class="btn-row" style="margin-top:14px">
+          <a class="btn btn-primary btn-sm" href="https://github.com/tawaunl/EZLibrary/releases/latest" data-download>Download v<span data-latest-version>1.0</span></a>
+        </div>
+      </li>
+      <li>
+        <h3>Get past the Gatekeeper warning</h3>
+        <p>EZLibrary isn't signed with an Apple Developer ID — that's a paid Apple programme, and
+          this is a free project — so macOS will refuse to open the installer on the first
+          attempt and say it's <em>from an unidentified developer</em>. This is expected, and
+          here's how to get through it:</p>
+        <ul>
+          <li>Open <strong>System Settings → Privacy &amp; Security</strong>, scroll to the
+            Security section, and click <strong>Open Anyway</strong> next to the EZLibrary
+            message. Confirm with Touch ID or your password.</li>
+          <li>On older versions of macOS you can instead <strong>Control-click the
+            <code>.pkg</code></strong> in Finder, choose <strong>Open</strong>, then
+            <strong>Open</strong> again in the dialog.</li>
+        </ul>
+        <p>If that makes you uneasy, that's a reasonable instinct. The whole source is on GitHub
+          under GPLv3, and you can build and run it yourself with <code>swift build</code>
+          instead.</p>
+      </li>
+      <li>
+        <h3>Run the installer</h3>
+        <p>EZLibrary is installed to your Applications folder. There's no Homebrew step and no
+          separate download for <code>ffmpeg</code> or <code>fpcalc</code> — they're bundled.</p>
+      </li>
+      <li>
+        <h3>Open it</h3>
+        <p>EZLibrary looks for your <code>_Serato_</code> folder automatically, including on
+          external drives. If it finds the wrong one, or you keep more than one, set the path
+          in Settings.</p>
+      </li>
+    </ol>
+
+    <div class="note" style="margin-top:30px">
+      <p><strong>Before your first big change, take a backup.</strong> Open the Backup tab and run
+        a full backup once. EZLibrary snapshots every Serato file before it writes to it anyway,
+        but a full backup is the thing you'll be glad of if something goes sideways.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ---------------------------------------------------------------- how-to -->
+<section class="section section-alt" id="how-to">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="eyebrow">How to</span>
+      <h2>The four most common jobs</h2>
+      <p>Each of these is the short version. The feature pages go into more detail.</p>
+    </div>
+
+    <div class="grid grid-2">
+      <div class="card">
+        <h3>Get your missing tracks back</h3>
+        <p>The single biggest win for most libraries, and the safest place to start.</p>
+        <ol style="padding-left:20px;color:var(--text-2);font-size:.95rem">
+          <li>Plug in every drive your music lives on.</li>
+          <li>Quit Serato.</li>
+          <li>Open <strong>Missing Tracks</strong> and run the scan.</li>
+          <li>Review the suggested new location for each track and confirm the ones that look right.</li>
+          <li>Apply, reopen Serato, and check a few crates.</li>
+        </ol>
+        <p style="margin-top:14px"><a href="../features/missing-tracks.html">Missing Tracks in detail →</a></p>
+      </div>
+
+      <div class="card">
+        <h3>Clean up duplicates</h3>
+        <p>Fingerprint-based, so it catches copies that don't share a filename.</p>
+        <ol style="padding-left:20px;color:var(--text-2);font-size:.95rem">
+          <li>Run a <strong>full backup</strong> first — this one deletes files.</li>
+          <li>Open <strong>Duplicates</strong> and scan the library.</li>
+          <li>Work through the groups. Check the audio verification detail on anything surprising.</li>
+          <li>Use <strong>Pick Best</strong>, or choose the keeper yourself.</li>
+          <li>Delete the rest from the library, or from your disk as well.</li>
+        </ol>
+        <p style="margin-top:14px"><a href="../features/duplicates.html">Find Duplicates in detail →</a></p>
+      </div>
+
+      <div class="card">
+        <h3>Fill in missing tags</h3>
+        <p>Fix a whole library's worth of blank genres and years in a few passes.</p>
+        <ol style="padding-left:20px;color:var(--text-2);font-size:.95rem">
+          <li>Open <strong>Tracks &amp; Tags</strong> and choose a scope — all tracks, or one crate.</li>
+          <li>Click a completion stat (say <em>Genre Filled</em>) to filter to the tracks missing it.</li>
+          <li>Select rows and either bulk-fill a value you know, or run an online lookup.</li>
+          <li>Turn on <strong>Only Fill Empty</strong> so existing values aren't overwritten.</li>
+          <li>Apply with Serato closed.</li>
+        </ol>
+        <p style="margin-top:14px"><a href="../features/tracks-and-tags.html">Tracks &amp; Tags in detail →</a></p>
+      </div>
+
+      <div class="card">
+        <h3>Rename files consistently</h3>
+        <p>Without Serato losing the file — which is what normally happens.</p>
+        <ol style="padding-left:20px;color:var(--text-2);font-size:.95rem">
+          <li>Set your filename template in <strong>Settings</strong> and watch the preview.</li>
+          <li>In <strong>Tracks &amp; Tags</strong>, select the tracks — start with one crate.</li>
+          <li>Click <strong>Rename Files From Tags</strong>.</li>
+          <li>Read the preview, including the list of what's being skipped and why.</li>
+          <li>Apply with Serato closed, then reopen Serato and confirm the cues are still there.</li>
+        </ol>
+        <p style="margin-top:14px"><a href="../features/rename.html">Rename From Tags in detail →</a></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ------------------------------------------------------------------- faq -->
+<section class="section" id="faq">
+  <div class="wrap wrap-narrow">
+    <span class="eyebrow">FAQ</span>
+    <h2>Frequently asked questions</h2>
+
+    <h3 style="margin-top:36px">Cost and licensing</h3>
+    <div class="faq">
+      <details>
+        <summary>Is EZLibrary really free?</summary>
+        <div class="faq-body">
+          <p>Yes. There's no paid tier, no trial, no account and no upsell. It's licensed under the
+            GNU GPL v3, which means you're free to use it, read the source, share it and modify it.
+            If you distribute a modified version, you have to release your changes under the same
+            licence.</p>
+        </div>
+      </details>
+      <details>
+        <summary>What's the catch?</summary>
+        <div class="faq-body">
+          <p>There isn't one, but there is a trade-off you should know about: the installer isn't
+            signed with an Apple Developer ID, so macOS will warn you the first time you open it.
+            See <a href="#install">Installing EZLibrary</a>.</p>
+        </div>
+      </details>
+      <details>
+        <summary>Can I use it for commercial DJ work?</summary>
+        <div class="faq-body">
+          <p>Yes. The GPL doesn't restrict what you do with the software, only what you have to do
+            if you redistribute a modified copy of it.</p>
+        </div>
+      </details>
+      <details>
+        <summary>Is this made by Serato?</summary>
+        <div class="faq-body">
+          <p>No. EZLibrary is an independent, community-built utility. It isn't affiliated with,
+            endorsed by, or sponsored by Serato Audio Research. It reads and writes Serato's
+            library file format so the two can work together, and nothing more.</p>
+        </div>
+      </details>
+    </div>
+
+    <h3 style="margin-top:44px">Requirements and setup</h3>
+    <div class="faq">
+      <details>
+        <summary>What do I need to run it?</summary>
+        <div class="faq-body">
+          <p>macOS 13 or newer, on either Apple Silicon or Intel — the app ships as a universal
+            binary, so one download covers both.</p>
+        </div>
+      </details>
+      <details>
+        <summary>Do I have to install ffmpeg or anything else?</summary>
+        <div class="faq-body">
+          <p>No. <code>ffmpeg</code>, <code>ffprobe</code> and <code>fpcalc</code> are bundled
+            inside the app, along with the libraries they need. Nothing else to provision.</p>
+        </div>
+      </details>
+      <details>
+        <summary>How does it find my Serato library?</summary>
+        <div class="faq-body">
+          <p>It looks for your <code>_Serato_</code> folder in the usual places, including external
+            drives. To point it somewhere specific, set the path in Settings, or launch it with the
+            <code>EZLIBRARY_LIBRARY_DIR</code> environment variable set to the folder that contains
+            <code>database V2</code>.</p>
+        </div>
+      </details>
+      <details>
+        <summary>My music is on an external drive.</summary>
+        <div class="faq-body">
+          <p>That's fine — mount the drive before you launch EZLibrary. If it isn't mounted, every
+            track on it looks missing, and a repair run in that state would be repairing the wrong
+            thing.</p>
+        </div>
+      </details>
+      <details>
+        <summary>Does it work with Serato DJ Lite?</summary>
+        <div class="faq-body">
+          <p>EZLibrary reads the on-disk library format that Serato DJ writes, so in principle yes.
+            In practice, development and testing is done against Serato DJ Pro — that's what it's
+            verified on. If you run Lite, take a backup first and tell us how it goes.</p>
+        </div>
+      </details>
+      <details>
+        <summary>What about Rekordbox, Traktor or Engine DJ?</summary>
+        <div class="faq-body">
+          <p>Not supported today. Transferring tracks, cues and crates between Serato and Rekordbox
+            is on the <a href="../roadmap/">roadmap</a> — it's the highest-risk item on there, so
+            it's deliberately scheduled last. Upvote it if you want it sooner.</p>
+        </div>
+      </details>
+      <details>
+        <summary>How do I update, and how do I uninstall?</summary>
+        <div class="faq-body">
+          <p>EZLibrary checks for updates when it launches and can install a new version for you in
+            one click. You can also just download the latest installer and run it over the top.</p>
+          <p>To uninstall, drag <code>EZLibrary.app</code> from Applications to the Trash. Your
+            Serato library is untouched by this, and your backups stay where they are in
+            <code>SeratoBackups</code>.</p>
+        </div>
+      </details>
+    </div>
+
+    <h3 style="margin-top:44px">Safety and your data</h3>
+    <div class="faq">
+      <details>
+        <summary>Will I lose my cue points, beat grids or play counts?</summary>
+        <div class="faq-body">
+          <p>No — keeping them is the whole point of the app. Serato attaches cues and beat grids
+            to a library entry, and it's <em>replacing</em> that entry that loses them. EZLibrary
+            repairs entries in place instead: when a file is renamed, moved or relinked, the
+            existing library row is re-pointed rather than deleted and recreated.</p>
+          <p>Cue points and beat grids embedded in the audio files themselves are also preserved
+            through tag edits, including on files that use less common ID3 encodings.</p>
+        </div>
+      </details>
+      <details>
+        <summary>Do I have to close Serato?</summary>
+        <div class="faq-body">
+          <p>For anything that writes, yes — and EZLibrary will refuse rather than let you do it by
+            accident. Serato holds its library in memory and writes the whole thing back out when
+            it quits, so any change made underneath it would simply be overwritten. Browsing and
+            scanning are fine with Serato open.</p>
+        </div>
+      </details>
+      <details>
+        <summary>What happens to my crates when a file gets renamed or moved?</summary>
+        <div class="faq-body">
+          <p>They're updated in the same operation. That means Serato's SQLite library,
+            <code>database V2</code>, your plain crates <em>and</em> your smart crates — a smart
+            crate keeps a materialised list of member paths alongside its rules, and one stale path
+            in there is enough to make Serato re-import the old name as a second, missing track.</p>
+        </div>
+      </details>
+      <details>
+        <summary>Does anything about my library get uploaded?</summary>
+        <div class="faq-body">
+          <p>No. Your library, your files and your paths never leave your Mac. The only network
+            requests EZLibrary makes are ones you trigger yourself — an online metadata lookup, a
+            playlist you pasted in, a purchase link, or the update check. There's no telemetry and
+            no account.</p>
+        </div>
+      </details>
+      <details>
+        <summary>Where do backups go, and how do I restore one?</summary>
+        <div class="faq-body">
+          <p>Into a <code>SeratoBackups</code> folder, each in its own timestamped directory. They
+            are ordinary files, not a proprietary archive, so you can browse them in Finder.</p>
+          <p>To restore, quit Serato and copy the files back over your <code>_Serato_</code> folder.
+            Automatic pre-write snapshots are kept separately from the backups you run yourself,
+            so a bad operation can be reversed even if you forgot to take a manual backup.</p>
+        </div>
+      </details>
+      <details>
+        <summary>Is there an undo button?</summary>
+        <div class="faq-body">
+          <p>Not as a single click, no — and it's better to know that up front. What there is
+            instead: a timestamped snapshot of every Serato file taken before it's written, atomic
+            writes so an operation can't leave a file half-finished, and read-back verification
+            that rolls a change back if what landed on disk doesn't match what was intended.</p>
+          <p>Restoring is a matter of copying a snapshot back. Take a full backup before your first
+            duplicate cleanup or consolidation and you'll always have a clean point to return to.</p>
+        </div>
+      </details>
+    </div>
+
+    <h3 style="margin-top:44px">Troubleshooting</h3>
+    <div class="faq">
+      <details>
+        <summary>Tracks still show as missing in Serato after I repaired them.</summary>
+        <div class="faq-body">
+          <ul>
+            <li>Make sure Serato was fully quit when the repair ran, not just minimised.</li>
+            <li>Check the drive holding those files is mounted.</li>
+            <li>Reopen Serato and give it a moment — it re-reads its library on launch.</li>
+          </ul>
+          <p>If a repair left tracks in a worse state, that's a data-integrity bug and it goes to
+            the front of the queue. <a href="https://github.com/tawaunl/EZLibrary/issues/new/choose">Open an issue</a>
+            with what you ran and what you saw.</p>
+        </div>
+      </details>
+      <details>
+        <summary>A huge number of my tracks are missing at once.</summary>
+        <div class="faq-body">
+          <p>That's usually one move or one consolidation that went through without the library
+            following it. The Missing Tracks tab handles it, but for thousands of entries the
+            command-line repair is faster and shows you everything before it writes:</p>
+          <pre><code>swift run EZLibraryCLI repair-locations --search /Volumes/Music</code></pre>
+          <p>That previews only. Re-run it with <code>--apply</code>, with Serato closed, once the
+            preview looks right.</p>
+        </div>
+      </details>
+      <details>
+        <summary>Duplicate detection says fingerprinting is unavailable.</summary>
+        <div class="faq-body">
+          <p>Basic fingerprinting is bundled and shouldn't need anything from you. The optional
+            AcoustID lookup does need a free API key of your own — add it in Settings, or set
+            <code>EZLIBRARY_ACOUSTID_KEY</code>.</p>
+        </div>
+      </details>
+      <details>
+        <summary>Discogs lookups aren't returning anything.</summary>
+        <div class="faq-body">
+          <p>Discogs requires a personal access token. Generate one from your Discogs account and
+            add it in Settings, or set <code>EZLIBRARY_DISCOGS_TOKEN</code>. The iTunes and
+            MusicBrainz lookups work without any key.</p>
+        </div>
+      </details>
+      <details>
+        <summary>The Finder right-click action isn't there.</summary>
+        <div class="faq-body">
+          <p>It's installed separately, once:</p>
+          <pre><code>/Applications/EZLibrary.app/Contents/Resources/scripts/install-finder-quick-action.sh</code></pre>
+          <p>If it still doesn't appear, relaunch Finder and check that
+            <code>~/Library/Services/Add To Serato Library.workflow</code> exists.</p>
+        </div>
+      </details>
+      <details>
+        <summary>A write operation failed. What now?</summary>
+        <div class="faq-body">
+          <p>Nothing is half-applied — failed writes roll back. To work out why:</p>
+          <ul>
+            <li>Read the error message; they're written to be actionable rather than to look
+              technical.</li>
+            <li>Check the destination and library paths are writable and the drives are mounted.</li>
+            <li>Retry on a smaller selection to isolate one problematic file.</li>
+          </ul>
+        </div>
+      </details>
+      <details>
+        <summary>The app crashes shortly after launch.</summary>
+        <div class="faq-body">
+          <p>Try launching against an empty library to separate a data problem from a UI one:</p>
+          <pre><code>EZLIBRARY_LIBRARY_DIR=/tmp/empty open -a EZLibrary</code></pre>
+          <p>Then <a href="https://github.com/tawaunl/EZLibrary/issues/new/choose">open an issue</a>
+            with your macOS version and the most recent report from
+            <code>~/Library/Logs/DiagnosticReports/</code>.</p>
+        </div>
+      </details>
+    </div>
+
+    <p style="margin-top:34px;font-size:.95rem">
+      There's a longer, more technical version of this in the
+      <a href="https://github.com/tawaunl/EZLibrary/blob/main/docs/TROUBLESHOOTING.md">troubleshooting guide</a>,
+      covering building from source and packaging.
+    </p>
+  </div>
+</section>
+
+<!-- --------------------------------------------------------------- contact -->
+<section class="section section-alt" id="contact">
+  <div class="wrap">
+    <div class="section-head center">
+      <span class="eyebrow">Contact</span>
+      <h2>Get in touch</h2>
+      <p>Everything happens in the open on GitHub, so you can see what's been reported, what's
+        been answered, and whether anything is actually getting fixed.</p>
+    </div>
+
+    <div class="grid grid-2">
+      <div class="card">
+        <div class="card-icon">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>
+        </div>
+        <h3>Something's broken</h3>
+        <p>Bug reports are the most useful thing you can send. Include what you ran, what you
+          expected, what happened, your macOS version, and whether your library is on an external
+          drive.</p>
+        <div class="btn-row" style="margin-top:18px">
+          <a class="btn btn-sm" href="https://github.com/tawaunl/EZLibrary/issues/new/choose">Report a bug</a>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-icon">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 00-3.5 10.9c.5.4.8 1 .8 1.6h5.4c0-.6.3-1.2.8-1.6A6 6 0 0012 3z"/></svg>
+        </div>
+        <h3>You've got an idea</h3>
+        <p>Feature requests go on the public roadmap, where anyone can upvote them. What gets
+          built next is genuinely driven by what people vote for.</p>
+        <div class="btn-row" style="margin-top:18px">
+          <a class="btn btn-sm btn-primary" href="../roadmap/">Go to the roadmap</a>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-icon">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+        </div>
+        <h3>You just want to ask something</h3>
+        <p>Questions, setup problems, "is this thing supposed to do that" — Discussions is the
+          place, and the answers stay searchable for whoever hits the same thing next.</p>
+        <div class="btn-row" style="margin-top:18px">
+          <a class="btn btn-sm" href="https://github.com/tawaunl/EZLibrary/discussions">Ask in Discussions</a>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-icon">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 5-3.4 8.2-8 9-4.6-.8-8-4-8-9V6l8-3z"/><path d="M9.5 12l1.8 1.8 3.4-3.6"/></svg>
+        </div>
+        <h3>A security or data-loss issue</h3>
+        <p>If you've found something that could corrupt or lose a library, or a security problem,
+          please report it privately first rather than in a public issue.</p>
+        <div class="btn-row" style="margin-top:18px">
+          <a class="btn btn-sm" href="https://github.com/tawaunl/EZLibrary/blob/main/SECURITY.md">Security policy</a>
+        </div>
+      </div>
+    </div>
+
+    <div class="note" style="margin-top:30px">
+      <p><strong>This is a one-person project.</strong> Replies are usually quick but they aren't a
+        support desk, and there's no SLA behind them. Data-integrity and security reports jump the
+        queue over everything else.</p>
+    </div>
+  </div>
+</section>
+
+<section class="cta">
+  <div class="wrap">
+    <h2>Haven't tried it yet?</h2>
+    <p>Free, open source, and it takes a backup before it touches anything.</p>
+    <div class="btn-row center" style="margin-top:26px">
+      <a class="btn btn-primary btn-lg" href="https://github.com/tawaunl/EZLibrary/releases/latest" data-download>
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 3v12M7 11l5 5 5-5M4 20h16"/>
+        </svg>
+        Download for macOS
+      </a>
+    </div>
+    <p class="meta-line">v<span data-latest-version>1.0</span> · <span data-latest-size>8.2 MB</span> · macOS 13+ · Apple Silicon &amp; Intel</p>
+  </div>
+</section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <div class="footer-grid">
+      <div class="footer-about">
+        <a class="brand" href="../"><img src="../assets/img/icon.png" alt=""> EZLibrary</a>
+        <p>A free, open source macOS toolkit for DJs who want a cleaner, safer Serato library.</p>
+      </div>
+      <div>
+        <h4>Product</h4>
+        <ul>
+          <li><a href="../features/">Features</a></li>
+          <li><a href="../roadmap/">Roadmap</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/releases/latest" data-download>Download</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/blob/main/docs/CHANGELOG.md">Changelog</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Help</h4>
+        <ul>
+          <li><a href="../support/">Support &amp; FAQ</a></li>
+          <li><a href="../support/#how-to">How-to guides</a></li>
+          <li><a href="../support/#contact">Contact</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/issues/new/choose">Report a bug</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Project</h4>
+        <ul>
+          <li><a href="https://github.com/tawaunl/EZLibrary">Source on GitHub</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/blob/main/CONTRIBUTING.md">Contributing</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/blob/main/SECURITY.md">Security policy</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/blob/main/LICENSE">License (GPLv3)</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p class="disclaimer">
+        EZLibrary is an independent, community-built utility. It is not affiliated with,
+        endorsed by, or sponsored by Serato Audio Research. "Serato" is a trademark of its
+        respective owner.
+      </p>
+      <p>© 2026 Tawaun Lucas · GPLv3</p>
+    </div>
+  </div>
+</footer>
+
+<script src="../assets/js/site.js"></script>
+</body>
+</html>

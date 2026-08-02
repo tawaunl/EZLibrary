@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PlaylistMatch — EZLibrary</title>
+<meta name="description" content="Paste a playlist, find out what you already own, and get a crate out of it.">
+<link rel="icon" href="../assets/img/icon.png">
+<link rel="canonical" href="https://tawaunl.github.io/EZLibrary/features/playlistmatch.html">
+<link rel="stylesheet" href="../assets/css/site.css">
+<meta property="og:type" content="website">
+<meta property="og:title" content="PlaylistMatch — EZLibrary">
+<meta property="og:description" content="Paste a playlist, find out what you already own, and get a crate out of it.">
+<meta property="og:image" content="https://tawaunl.github.io/EZLibrary/assets/img/icon.png">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="../"><img src="../assets/img/icon.png" alt=""> EZLibrary</a>
+    <button class="nav-toggle" aria-expanded="false" aria-controls="site-nav">Menu</button>
+    <nav class="nav" id="site-nav" aria-label="Main">
+      <a href="../features/" aria-current="page">Features</a>
+      <a href="../roadmap/">Roadmap</a>
+      <a href="../support/">Support</a>
+      <a href="https://github.com/tawaunl/EZLibrary">GitHub</a>
+      <a class="btn btn-sm btn-primary" href="https://github.com/tawaunl/EZLibrary/releases/latest" data-download>Download</a>
+    </nav>
+  </div>
+</header>
+<main id="main">
+
+<section class="page-hero">
+  <div class="wrap">
+    <p class="crumbs"><a href="../">Home</a><span>/</span><a href="../features/">Features</a><span>/</span>PlaylistMatch</p>
+    <h1>PlaylistMatch <span class="badge">Shipped</span></h1>
+    <p>Paste a playlist, find out what you already own, and get a crate out of it.</p>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap">
+    <div class="two-col">
+      <div class="prose">
+        <p>You hear a set, you find the playlist, and then you spend an hour working out which of those forty tracks you already have. PlaylistMatch does that part.</p>
+        <p>Paste a Spotify or Apple Music link, a CSV, or just a list of track names. Every entry is matched against your Serato library with a confidence score, matches become a crate, and everything you are missing goes into a plan you can work through.</p>
+
+        <figure class="shot" style="margin:32px 0">
+          <div class="shot-bar"><i></i><i></i><i></i><span>PlaylistMatch</span></div>
+          <img src="../assets/img/shot-playlistmatch.webp" alt="The PlaylistMatch workspace showing a pasted playlist matched against the library with per-track confidence." loading="lazy">
+        </figure>
+
+        <h2>What it does</h2>
+        <ul class="ticks">
+          <li><strong>Takes any list.</strong> Spotify and Apple Music playlist URLs, CSV rows, or plain text pasted in.</li>
+          <li><strong>Confidence scoring.</strong> Each match shows how sure it is, and where you own several versions of a track you choose which one counts.</li>
+          <li><strong>Remix and version aware.</strong> Remix and version titles are matched against their library originals rather than being treated as different songs.</li>
+          <li><strong>Crate from matches.</strong> Turn everything you confirmed into a new crate in one step.</li>
+          <li><strong>A plan for the rest.</strong> Unmatched tracks stay in a queue so the ones you do not own yet are not just lost.</li>
+          <li><strong>Buy links that are real.</strong> Confirmed iTunes and Beatport listings, grouped by store with per-version options — not a search URL that might find nothing.</li>
+          <li><strong>Import what you bought.</strong> <strong>I bought it</strong> brings the purchased file into your library, and a Downloads-folder watcher offers to import finished downloads automatically.</li>
+          <li><strong>Download fallback.</strong> For tracks that cannot be bought, pull the audio from YouTube or SoundCloud, with music videos filtered out of the suggestions.</li>
+        </ul>
+
+        <h2>How to use it</h2>
+        <ol class="steps">
+          <li>
+            <h3>Paste the playlist</h3>
+            <p>Drop in a link, a CSV, or a plain list of tracks.</p>
+          </li>
+          <li>
+            <h3>Match</h3>
+            <p>Review the results. Fix any low-confidence rows and pick versions where you own more than one.</p>
+          </li>
+          <li>
+            <h3>Create the crate</h3>
+            <p>Confirmed matches become a crate in your Serato library.</p>
+          </li>
+          <li>
+            <h3>Work the plan</h3>
+            <p>For the rest, use the buy links, then import each purchase back in.</p>
+          </li>
+        </ol>
+
+        <div class="note"><p>Personalised Spotify mixes (Discover Weekly and similar) are flagged, because they are generated per-listener and cannot be read back exactly.</p></div>
+
+        <h2>Related</h2>
+        <div class="grid grid-2">
+          <a class="card" href="add-music.html">
+            <h3>Add Music</h3>
+            <p>Get new files into your library and into the right crate, without the drag-and-drop dance.</p>
+          </a>
+          <a class="card" href="crates.html">
+            <h3>Crates</h3>
+            <p>Your whole crate tree, including smart crates and the hidden ones, with real stats.</p>
+          </a>
+          <a class="card" href="tracks-and-tags.html">
+            <h3>Tracks &amp; Tags</h3>
+            <p>Browse the whole library, fix metadata in place, and fill thousands of empty fields in one pass.</p>
+          </a>
+        </div>
+      </div>
+      <aside class="aside">
+        <h4>All features</h4>
+        <ul>
+          <li><a href="tracks-and-tags.html">Tracks &amp; Tags</a></li>
+          <li><a href="duplicates.html">Find Duplicates</a></li>
+          <li><a href="missing-tracks.html">Missing Tracks</a></li>
+          <li><a href="crates.html">Crates</a></li>
+          <li><a href="playlistmatch.html" aria-current="page">PlaylistMatch</a></li>
+          <li><a href="add-music.html">Add Music</a></li>
+          <li><a href="consolidation.html">Consolidation</a></li>
+          <li><a href="backup.html">Backup</a></li>
+          <li><a href="rename.html">Rename From Tags</a></li>
+          <li><a href="cli.html">Command Line</a></li>
+        </ul>
+        <a class="btn btn-primary btn-sm" style="width:100%" href="https://github.com/tawaunl/EZLibrary/releases/latest" data-download>Download EZLibrary</a>
+      </aside>
+    </div>
+  </div>
+</section>
+
+<section class="cta">
+  <div class="wrap">
+    <h2>Try it on your own library</h2>
+    <p>Free and open source. Takes a backup before it touches anything.</p>
+    <div class="btn-row center" style="margin-top:26px">
+      <a class="btn btn-primary btn-lg" href="https://github.com/tawaunl/EZLibrary/releases/latest" data-download>
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 3v12M7 11l5 5 5-5M4 20h16"/>
+        </svg>
+        Download for macOS
+      </a>
+    </div>
+    <p class="meta-line">v<span data-latest-version>1.0</span> · <span data-latest-size>8.2 MB</span> · macOS 13+ · Apple Silicon &amp; Intel</p>
+  </div>
+</section>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <div class="footer-grid">
+      <div class="footer-about">
+        <a class="brand" href="../"><img src="../assets/img/icon.png" alt=""> EZLibrary</a>
+        <p>A free, open source macOS toolkit for DJs who want a cleaner, safer Serato library.</p>
+      </div>
+      <div>
+        <h4>Product</h4>
+        <ul>
+          <li><a href="../features/">Features</a></li>
+          <li><a href="../roadmap/">Roadmap</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/releases/latest" data-download>Download</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/blob/main/docs/CHANGELOG.md">Changelog</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Help</h4>
+        <ul>
+          <li><a href="../support/">Support &amp; FAQ</a></li>
+          <li><a href="../support/#how-to">How-to guides</a></li>
+          <li><a href="../support/#contact">Contact</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/issues/new/choose">Report a bug</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Project</h4>
+        <ul>
+          <li><a href="https://github.com/tawaunl/EZLibrary">Source on GitHub</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/blob/main/CONTRIBUTING.md">Contributing</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/blob/main/SECURITY.md">Security policy</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/blob/main/LICENSE">License (GPLv3)</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p class="disclaimer">
+        EZLibrary is an independent, community-built utility. It is not affiliated with,
+        endorsed by, or sponsored by Serato Audio Research. "Serato" is a trademark of its
+        respective owner.
+      </p>
+      <p>© 2026 Tawaun Lucas · GPLv3</p>
+    </div>
+  </div>
+</footer>
+
+<script src="../assets/js/site.js"></script>
+</body>
+</html>

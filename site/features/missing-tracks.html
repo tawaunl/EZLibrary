@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Missing Tracks — EZLibrary</title>
+<meta name="description" content="Find every file Serato has lost track of, and relink it to where it actually lives.">
+<link rel="icon" href="../assets/img/icon.png">
+<link rel="canonical" href="https://tawaunl.github.io/EZLibrary/features/missing-tracks.html">
+<link rel="stylesheet" href="../assets/css/site.css">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Missing Tracks — EZLibrary">
+<meta property="og:description" content="Find every file Serato has lost track of, and relink it to where it actually lives.">
+<meta property="og:image" content="https://tawaunl.github.io/EZLibrary/assets/img/icon.png">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="../"><img src="../assets/img/icon.png" alt=""> EZLibrary</a>
+    <button class="nav-toggle" aria-expanded="false" aria-controls="site-nav">Menu</button>
+    <nav class="nav" id="site-nav" aria-label="Main">
+      <a href="../features/" aria-current="page">Features</a>
+      <a href="../roadmap/">Roadmap</a>
+      <a href="../support/">Support</a>
+      <a href="https://github.com/tawaunl/EZLibrary">GitHub</a>
+      <a class="btn btn-sm btn-primary" href="https://github.com/tawaunl/EZLibrary/releases/latest" data-download>Download</a>
+    </nav>
+  </div>
+</header>
+<main id="main">
+
+<section class="page-hero">
+  <div class="wrap">
+    <p class="crumbs"><a href="../">Home</a><span>/</span><a href="../features/">Features</a><span>/</span>Missing Tracks</p>
+    <h1>Missing Tracks <span class="badge">Shipped</span></h1>
+    <p>Find every file Serato has lost track of, and relink it to where it actually lives.</p>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap">
+    <div class="two-col">
+      <div class="prose">
+        <p>Move a folder in Finder, rename a drive, or reorganise your music once, and Serato loses the thread. Tracks show as <em>cannot be located</em>, and everything attached to them — cues, loops, beat grid, play count, crate membership — goes with them.</p>
+        <p>Missing Tracks scans your library for references that no longer resolve, then looks for where each file went. Fixes are applied per-track, only when you say so.</p>
+
+        <figure class="shot" style="margin:32px 0">
+          <div class="shot-bar"><i></i><i></i><i></i><span>Missing Tracks</span></div>
+          <img src="../assets/img/shot-missing.webp" alt="The Missing Tracks workspace listing unresolved file references with suggested replacement locations." loading="lazy">
+        </figure>
+
+        <h2>What it does</h2>
+        <ul class="ticks">
+          <li><strong>Full library scan.</strong> Every unresolved reference in <code>database V2</code> and in your crates, in one list.</li>
+          <li><strong>Candidate matching.</strong> Likely new locations are found by filename and file size, so a moved or renamed file can be reconnected.</li>
+          <li><strong>Explicit fixes only.</strong> Nothing is repaired silently. You apply each fix, and anything ambiguous is reported rather than guessed at.</li>
+          <li><strong>Repairs in place.</strong> The existing library row is re-pointed instead of being replaced, so cues, beat grids and crate membership survive the repair.</li>
+          <li><strong>Review crate.</strong> Send whatever could not be resolved to a crate so you can work through it inside Serato later.</li>
+          <li><strong>Bulk repair from the CLI.</strong> For a library knocked badly out of sync by an old move, <code>EZLibraryCLI repair-locations</code> does the same job across thousands of entries at once.</li>
+        </ul>
+
+        <h2>How to use it</h2>
+        <ol class="steps">
+          <li>
+            <h3>Mount your drives</h3>
+            <p>Anything on external storage has to be connected, or its tracks look missing when they are not.</p>
+          </li>
+          <li>
+            <h3>Scan</h3>
+            <p>Run the scan from the Missing Tracks tab and let it finish.</p>
+          </li>
+          <li>
+            <h3>Review candidates</h3>
+            <p>Each missing track shows the file EZLibrary believes it now points to. Confirm the ones that look right.</p>
+          </li>
+          <li>
+            <h3>Apply, then check in Serato</h3>
+            <p>Apply the fixes with Serato closed, then reopen Serato and confirm the tracks resolve.</p>
+          </li>
+        </ol>
+
+        <div class="note"><p>If a whole library was moved at once, try the CLI first: <code>swift run EZLibraryCLI repair-locations --search /Volumes/Music</code> previews the whole repair without writing anything. Add <code>--apply</code> when the preview looks right.</p></div>
+
+        <h2>Related</h2>
+        <div class="grid grid-2">
+          <a class="card" href="consolidation.html">
+            <h3>Library Consolidation</h3>
+            <p>Pull music scattered across drives and folders into one place, without breaking a single crate.</p>
+          </a>
+          <a class="card" href="crates.html">
+            <h3>Crates</h3>
+            <p>Your whole crate tree, including smart crates and the hidden ones, with real stats.</p>
+          </a>
+          <a class="card" href="backup.html">
+            <h3>Backup</h3>
+            <p>Timestamped snapshots of your library, sized before you commit to them.</p>
+          </a>
+        </div>
+      </div>
+      <aside class="aside">
+        <h4>All features</h4>
+        <ul>
+          <li><a href="tracks-and-tags.html">Tracks &amp; Tags</a></li>
+          <li><a href="duplicates.html">Find Duplicates</a></li>
+          <li><a href="missing-tracks.html" aria-current="page">Missing Tracks</a></li>
+          <li><a href="crates.html">Crates</a></li>
+          <li><a href="playlistmatch.html">PlaylistMatch</a></li>
+          <li><a href="add-music.html">Add Music</a></li>
+          <li><a href="consolidation.html">Consolidation</a></li>
+          <li><a href="backup.html">Backup</a></li>
+          <li><a href="rename.html">Rename From Tags</a></li>
+          <li><a href="cli.html">Command Line</a></li>
+        </ul>
+        <a class="btn btn-primary btn-sm" style="width:100%" href="https://github.com/tawaunl/EZLibrary/releases/latest" data-download>Download EZLibrary</a>
+      </aside>
+    </div>
+  </div>
+</section>
+
+<section class="cta">
+  <div class="wrap">
+    <h2>Try it on your own library</h2>
+    <p>Free and open source. Takes a backup before it touches anything.</p>
+    <div class="btn-row center" style="margin-top:26px">
+      <a class="btn btn-primary btn-lg" href="https://github.com/tawaunl/EZLibrary/releases/latest" data-download>
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 3v12M7 11l5 5 5-5M4 20h16"/>
+        </svg>
+        Download for macOS
+      </a>
+    </div>
+    <p class="meta-line">v<span data-latest-version>1.0</span> · <span data-latest-size>8.2 MB</span> · macOS 13+ · Apple Silicon &amp; Intel</p>
+  </div>
+</section>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <div class="footer-grid">
+      <div class="footer-about">
+        <a class="brand" href="../"><img src="../assets/img/icon.png" alt=""> EZLibrary</a>
+        <p>A free, open source macOS toolkit for DJs who want a cleaner, safer Serato library.</p>
+      </div>
+      <div>
+        <h4>Product</h4>
+        <ul>
+          <li><a href="../features/">Features</a></li>
+          <li><a href="../roadmap/">Roadmap</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/releases/latest" data-download>Download</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/blob/main/docs/CHANGELOG.md">Changelog</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Help</h4>
+        <ul>
+          <li><a href="../support/">Support &amp; FAQ</a></li>
+          <li><a href="../support/#how-to">How-to guides</a></li>
+          <li><a href="../support/#contact">Contact</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/issues/new/choose">Report a bug</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Project</h4>
+        <ul>
+          <li><a href="https://github.com/tawaunl/EZLibrary">Source on GitHub</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/blob/main/CONTRIBUTING.md">Contributing</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/blob/main/SECURITY.md">Security policy</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/blob/main/LICENSE">License (GPLv3)</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p class="disclaimer">
+        EZLibrary is an independent, community-built utility. It is not affiliated with,
+        endorsed by, or sponsored by Serato Audio Research. "Serato" is a trademark of its
+        respective owner.
+      </p>
+      <p>© 2026 Tawaun Lucas · GPLv3</p>
+    </div>
+  </div>
+</footer>
+
+<script src="../assets/js/site.js"></script>
+</body>
+</html>

@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Library Consolidation — EZLibrary</title>
+<meta name="description" content="Pull music scattered across drives and folders into one place, without breaking a single crate.">
+<link rel="icon" href="../assets/img/icon.png">
+<link rel="canonical" href="https://tawaunl.github.io/EZLibrary/features/consolidation.html">
+<link rel="stylesheet" href="../assets/css/site.css">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Library Consolidation — EZLibrary">
+<meta property="og:description" content="Pull music scattered across drives and folders into one place, without breaking a single crate.">
+<meta property="og:image" content="https://tawaunl.github.io/EZLibrary/assets/img/icon.png">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="../"><img src="../assets/img/icon.png" alt=""> EZLibrary</a>
+    <button class="nav-toggle" aria-expanded="false" aria-controls="site-nav">Menu</button>
+    <nav class="nav" id="site-nav" aria-label="Main">
+      <a href="../features/" aria-current="page">Features</a>
+      <a href="../roadmap/">Roadmap</a>
+      <a href="../support/">Support</a>
+      <a href="https://github.com/tawaunl/EZLibrary">GitHub</a>
+      <a class="btn btn-sm btn-primary" href="https://github.com/tawaunl/EZLibrary/releases/latest" data-download>Download</a>
+    </nav>
+  </div>
+</header>
+<main id="main">
+
+<section class="page-hero">
+  <div class="wrap">
+    <p class="crumbs"><a href="../">Home</a><span>/</span><a href="../features/">Features</a><span>/</span>Library Consolidation</p>
+    <h1>Library Consolidation <span class="badge">Shipped</span></h1>
+    <p>Pull music scattered across drives and folders into one place, without breaking a single crate.</p>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap">
+    <div class="two-col">
+      <div class="prose">
+        <p>Most libraries end up spread across a Downloads folder, two external drives, an old Music folder and a desktop folder called <em>new</em>. That is fine until a drive is not plugged in, or you try to back the whole thing up.</p>
+        <p>Consolidation maps where your files actually are, moves or copies them into one destination, and rewrites every Serato path as it goes — so nothing goes missing on the way.</p>
+
+        <h2>What it does</h2>
+        <ul class="ticks">
+          <li><strong>See the sprawl.</strong> Every source folder your library references, with how many tracks and how much data sits in each.</li>
+          <li><strong>Choose what to pull in.</strong> Select source groups individually. You do not have to consolidate everything at once.</li>
+          <li><strong>Move or copy.</strong> Move for a genuine consolidation, copy to build a second complete library.</li>
+          <li><strong>Capacity checked first.</strong> The destination is validated against the size of what you selected before anything moves.</li>
+          <li><strong>Paths rewritten as it goes.</strong> Serato's library, plain crates and smart crates are all updated so references stay valid.</li>
+          <li><strong>Identity preserved.</strong> Library rows are re-pointed rather than recreated, so cues, beat grids and play counts stay attached.</li>
+        </ul>
+
+        <h2>How to use it</h2>
+        <ol class="steps">
+          <li>
+            <h3>Back up</h3>
+            <p>This one moves real audio files. Take a full backup first.</p>
+          </li>
+          <li>
+            <h3>Map your sources</h3>
+            <p>Run the scan and look at the source groups it found.</p>
+          </li>
+          <li>
+            <h3>Pick a destination</h3>
+            <p>Choose the folder everything should live in, and check the capacity estimate.</p>
+          </li>
+          <li>
+            <h3>Select and run</h3>
+            <p>Choose the source groups to pull in, run it with Serato closed, then reopen Serato and spot-check a few crates.</p>
+          </li>
+        </ol>
+
+        <h2>Related</h2>
+        <div class="grid grid-2">
+          <a class="card" href="missing-tracks.html">
+            <h3>Missing Tracks</h3>
+            <p>Find every file Serato has lost track of, and relink it to where it actually lives.</p>
+          </a>
+          <a class="card" href="backup.html">
+            <h3>Backup</h3>
+            <p>Timestamped snapshots of your library, sized before you commit to them.</p>
+          </a>
+          <a class="card" href="rename.html">
+            <h3>Rename From Tags</h3>
+            <p>Consistent filenames across your whole library — and Serato still finds every one of them.</p>
+          </a>
+        </div>
+      </div>
+      <aside class="aside">
+        <h4>All features</h4>
+        <ul>
+          <li><a href="tracks-and-tags.html">Tracks &amp; Tags</a></li>
+          <li><a href="duplicates.html">Find Duplicates</a></li>
+          <li><a href="missing-tracks.html">Missing Tracks</a></li>
+          <li><a href="crates.html">Crates</a></li>
+          <li><a href="playlistmatch.html">PlaylistMatch</a></li>
+          <li><a href="add-music.html">Add Music</a></li>
+          <li><a href="consolidation.html" aria-current="page">Consolidation</a></li>
+          <li><a href="backup.html">Backup</a></li>
+          <li><a href="rename.html">Rename From Tags</a></li>
+          <li><a href="cli.html">Command Line</a></li>
+        </ul>
+        <a class="btn btn-primary btn-sm" style="width:100%" href="https://github.com/tawaunl/EZLibrary/releases/latest" data-download>Download EZLibrary</a>
+      </aside>
+    </div>
+  </div>
+</section>
+
+<section class="cta">
+  <div class="wrap">
+    <h2>Try it on your own library</h2>
+    <p>Free and open source. Takes a backup before it touches anything.</p>
+    <div class="btn-row center" style="margin-top:26px">
+      <a class="btn btn-primary btn-lg" href="https://github.com/tawaunl/EZLibrary/releases/latest" data-download>
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 3v12M7 11l5 5 5-5M4 20h16"/>
+        </svg>
+        Download for macOS
+      </a>
+    </div>
+    <p class="meta-line">v<span data-latest-version>1.0</span> · <span data-latest-size>8.2 MB</span> · macOS 13+ · Apple Silicon &amp; Intel</p>
+  </div>
+</section>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <div class="footer-grid">
+      <div class="footer-about">
+        <a class="brand" href="../"><img src="../assets/img/icon.png" alt=""> EZLibrary</a>
+        <p>A free, open source macOS toolkit for DJs who want a cleaner, safer Serato library.</p>
+      </div>
+      <div>
+        <h4>Product</h4>
+        <ul>
+          <li><a href="../features/">Features</a></li>
+          <li><a href="../roadmap/">Roadmap</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/releases/latest" data-download>Download</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/blob/main/docs/CHANGELOG.md">Changelog</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Help</h4>
+        <ul>
+          <li><a href="../support/">Support &amp; FAQ</a></li>
+          <li><a href="../support/#how-to">How-to guides</a></li>
+          <li><a href="../support/#contact">Contact</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/issues/new/choose">Report a bug</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Project</h4>
+        <ul>
+          <li><a href="https://github.com/tawaunl/EZLibrary">Source on GitHub</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/blob/main/CONTRIBUTING.md">Contributing</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/blob/main/SECURITY.md">Security policy</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/blob/main/LICENSE">License (GPLv3)</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p class="disclaimer">
+        EZLibrary is an independent, community-built utility. It is not affiliated with,
+        endorsed by, or sponsored by Serato Audio Research. "Serato" is a trademark of its
+        respective owner.
+      </p>
+      <p>© 2026 Tawaun Lucas · GPLv3</p>
+    </div>
+  </div>
+</footer>
+
+<script src="../assets/js/site.js"></script>
+</body>
+</html>

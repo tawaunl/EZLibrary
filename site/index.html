@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EZLibrary — Fix, clean and organize your Serato library</title>
+<meta name="description" content="A free, open source macOS app for Serato DJs. Recover missing tracks, kill duplicates, bulk-fix tags, build crates from playlists, and consolidate your library — without breaking your cues.">
+<link rel="icon" href="assets/img/icon.png">
+<link rel="apple-touch-icon" href="assets/img/icon.png">
+<link rel="canonical" href="https://tawaunl.github.io/EZLibrary/">
+<link rel="stylesheet" href="assets/css/site.css">
+<meta property="og:type" content="website">
+<meta property="og:title" content="EZLibrary — Fix, clean and organize your Serato library">
+<meta property="og:description" content="A free, open source macOS app for Serato DJs. Recover missing tracks, kill duplicates, bulk-fix tags, and consolidate your library — without breaking your cues.">
+<meta property="og:url" content="https://tawaunl.github.io/EZLibrary/">
+<meta property="og:image" content="https://tawaunl.github.io/EZLibrary/assets/img/icon.png">
+<meta name="twitter:card" content="summary_large_image">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="./"><img src="assets/img/icon.png" alt=""> EZLibrary</a>
+    <button class="nav-toggle" aria-expanded="false" aria-controls="site-nav">Menu</button>
+    <nav class="nav" id="site-nav" aria-label="Main">
+      <a href="features/">Features</a>
+      <a href="roadmap/">Roadmap</a>
+      <a href="support/">Support</a>
+      <a href="https://github.com/tawaunl/EZLibrary">GitHub</a>
+      <a class="btn btn-sm btn-primary" href="https://github.com/tawaunl/EZLibrary/releases/latest" data-download>Download</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+
+<!-- ------------------------------------------------------------------ hero -->
+<section class="hero">
+  <div class="wrap">
+    <img class="hero-icon" src="assets/img/icon.png" alt="EZLibrary app icon" width="92" height="92">
+
+    <p class="pill"><b>v<span data-latest-version>1.0</span></b> Rename files without losing them in Serato</p>
+
+    <h1>Your Serato library,<br><span class="grad">finally under control</span></h1>
+
+    <p class="hero-sub">
+      Missing tracks, duplicate files, half-empty tags, music scattered across five drives.
+      EZLibrary fixes all of it on your Mac — and updates Serato so your cues, beat grids
+      and crates come along for the ride.
+    </p>
+
+    <div class="btn-row center">
+      <a class="btn btn-primary btn-lg" href="https://github.com/tawaunl/EZLibrary/releases/latest" data-download>
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 3v12M7 11l5 5 5-5M4 20h16"/>
+        </svg>
+        Download for macOS
+      </a>
+      <a class="btn btn-lg" href="#tour">See it in action</a>
+    </div>
+
+    <p class="meta-line">
+      Free and open source · <strong>v<span data-latest-version>1.0</span></strong> installer
+      (<span data-latest-size>8.2 MB</span>) · macOS 13+ · Apple Silicon &amp; Intel
+    </p>
+
+    <div class="trust">
+      <span>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>
+        No account, no subscription
+      </span>
+      <span>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 5-3.4 8.2-8 9-4.6-.8-8-4-8-9V6l8-3z"/></svg>
+        Backs up before every write
+      </span>
+      <span>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg>
+        GPLv3, fully auditable
+      </span>
+      <span>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+        230+ automated tests
+      </span>
+    </div>
+
+    <figure class="shot shot-hero">
+      <div class="shot-bar"><i></i><i></i><i></i><span>EZLibrary — Tracks &amp; Tags</span></div>
+      <img src="assets/img/shot-tracks.webp" alt="The EZLibrary Tracks and Tags window, showing a library table with artist, title, album, BPM and key columns, completion stats across the top, and a bulk edit bar." width="2000" height="1110" loading="eager">
+    </figure>
+  </div>
+</section>
+
+<!-- --------------------------------------------------------------- problem -->
+<section class="section">
+  <div class="wrap">
+    <div class="section-head center">
+      <span class="eyebrow">Why you need it</span>
+      <h2>Serato is great at playing music. It's terrible at housekeeping.</h2>
+      <p>Every DJ library rots the same way. EZLibrary is the cleanup crew.</p>
+    </div>
+
+    <div class="grid grid-3">
+      <div class="card">
+        <div class="card-icon">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>
+        </div>
+        <h3>Tracks that vanish</h3>
+        <p>You move one folder and Serato loses hundreds of files. EZLibrary finds where
+          they actually went and repairs the library in place, so cues, loops and play
+          counts survive the fix.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="13" height="13" rx="2.2"/><path d="M16 8V5a2 2 0 00-2-2H5a2 2 0 00-2 2v9a2 2 0 002 2h3"/></svg>
+        </div>
+        <h3>The same song, five times</h3>
+        <p>Pool rips, re-downloads and mislabelled edits pile up. Duplicate detection
+          compares the actual audio, not just the filename, and keeps the best copy of
+          each — while leaving genuine Intro / Clean / Extended versions alone.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16M4 12h11M4 18h7"/></svg>
+        </div>
+        <h3>Metadata you can't search</h3>
+        <p>Missing genres, blank years, "Track 03" titles. Fill thousands of fields at
+          once from online sources or from what you already know, and see exactly how
+          complete each field is across your library.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ------------------------------------------------------------------ tour -->
+<section class="section section-alt" id="tour">
+  <div class="wrap">
+    <div class="section-head center">
+      <span class="eyebrow">The tour</span>
+      <h2>One window, every cleanup job</h2>
+      <p>Nine workspaces that all read and write the same Serato library, safely.</p>
+    </div>
+
+    <div class="tabs" role="tablist" aria-label="App screenshots" data-tabs="tour-panels">
+      <button class="tab" role="tab" type="button" aria-selected="true">Tracks &amp; Tags</button>
+      <button class="tab" role="tab" type="button" aria-selected="false">Crates</button>
+      <button class="tab" role="tab" type="button" aria-selected="false">PlaylistMatch</button>
+      <button class="tab" role="tab" type="button" aria-selected="false">Duplicates</button>
+      <button class="tab" role="tab" type="button" aria-selected="false">Missing Tracks</button>
+      <button class="tab" role="tab" type="button" aria-selected="false">Backup</button>
+    </div>
+
+    <div class="tab-panels" id="tour-panels">
+      <div class="tab-panel" role="tabpanel">
+        <figure class="shot">
+          <div class="shot-bar"><i></i><i></i><i></i><span>Tracks &amp; Tags</span></div>
+          <img src="assets/img/shot-tracks.webp" alt="Tracks and Tags workspace with the full library table and bulk tag editing controls." width="2000" height="1110" loading="lazy">
+        </figure>
+        <p class="shot-caption">Browse everything, filter by what's missing, and bulk-fill artist, album, genre and year.</p>
+      </div>
+      <div class="tab-panel" role="tabpanel" hidden>
+        <figure class="shot">
+          <div class="shot-bar"><i></i><i></i><i></i><span>Crates</span></div>
+          <img src="assets/img/shot-crates.webp" alt="Crates workspace showing the crate tree on the left and the contents of the selected crate on the right." width="2000" height="1110" loading="lazy">
+        </figure>
+        <p class="shot-caption">Your full crate tree, including smart crates and hidden crates, with per-crate stats.</p>
+      </div>
+      <div class="tab-panel" role="tabpanel" hidden>
+        <figure class="shot">
+          <div class="shot-bar"><i></i><i></i><i></i><span>PlaylistMatch</span></div>
+          <img src="assets/img/shot-playlistmatch.webp" alt="PlaylistMatch workspace with a pasted playlist and per-track match confidence." width="2000" height="1110" loading="lazy">
+        </figure>
+        <p class="shot-caption">Paste a Spotify or Apple Music playlist and turn what you own into a crate.</p>
+      </div>
+      <div class="tab-panel" role="tabpanel" hidden>
+        <figure class="shot">
+          <div class="shot-bar"><i></i><i></i><i></i><span>Duplicates</span></div>
+          <img src="assets/img/shot-duplicates.webp" alt="Duplicates workspace showing grouped duplicate tracks with completeness scores." width="2000" height="1110" loading="lazy">
+        </figure>
+        <p class="shot-caption">Grouped by audio fingerprint, scored for completeness, with a one-click keep-the-best.</p>
+      </div>
+      <div class="tab-panel" role="tabpanel" hidden>
+        <figure class="shot">
+          <div class="shot-bar"><i></i><i></i><i></i><span>Missing Tracks</span></div>
+          <img src="assets/img/shot-missing.webp" alt="Missing Tracks workspace listing unresolved file references and suggested replacements." width="2000" height="1110" loading="lazy">
+        </figure>
+        <p class="shot-caption">Every broken reference, with the likely new location found for you. Nothing is fixed without your say-so.</p>
+      </div>
+      <div class="tab-panel" role="tabpanel" hidden>
+        <figure class="shot">
+          <div class="shot-bar"><i></i><i></i><i></i><span>Backup</span></div>
+          <img src="assets/img/shot-backup.webp" alt="Backup workspace with full, incremental and single-crate backup modes and a size estimate." width="2000" height="1110" loading="lazy">
+        </figure>
+        <p class="shot-caption">Timestamped snapshots — full, incremental or a single crate — sized before you commit.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- -------------------------------------------------------------- features -->
+<section class="section">
+  <div class="wrap">
+    <div class="section-head center">
+      <span class="eyebrow">Features</span>
+      <h2>Everything in the box</h2>
+      <p>All of it free, all of it on your Mac. Nothing about your library leaves your computer.</p>
+    </div>
+
+    <div class="grid grid-3">
+      <a class="card" href="features/tracks-and-tags.html">
+        <div class="card-icon">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.6 13.4l-7.1 7.1a2 2 0 01-2.9 0l-7.2-7.2A2 2 0 013 12V5a2 2 0 012-2h7a2 2 0 011.4.6l7.2 7.2a2 2 0 010 2.6z"/><circle cx="7.5" cy="7.5" r="1.3"/></svg>
+        </div>
+        <h3>Tracks &amp; Tags</h3>
+        <p>Browse the whole library, edit tags in place, look metadata up online, and bulk-fill
+          thousands of fields with one action.</p>
+      </a>
+
+      <a class="card" href="features/duplicates.html">
+        <div class="card-icon">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="13" height="13" rx="2.2"/><path d="M16 8V5a2 2 0 00-2-2H5a2 2 0 00-2 2v9a2 2 0 002 2h3"/></svg>
+        </div>
+        <h3>Find Duplicates</h3>
+        <p>Audio-fingerprint matching that catches the same song under different names —
+          and knows an Extended Mix isn't a duplicate.</p>
+      </a>
+
+      <a class="card" href="features/missing-tracks.html">
+        <div class="card-icon">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.6-3.6"/></svg>
+        </div>
+        <h3>Missing Tracks</h3>
+        <p>Find every broken reference in your library and relink it to where the file
+          actually lives now.</p>
+      </a>
+
+      <a class="card" href="features/crates.html">
+        <div class="card-icon">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7l9-4 9 4-9 4-9-4z"/><path d="M3 12l9 4 9-4M3 17l9 4 9-4"/></svg>
+        </div>
+        <h3>Crates</h3>
+        <p>Navigate regular and smart crates, inspect contents fast, and run crate-scoped
+          operations across the app.</p>
+      </a>
+
+      <a class="card" href="features/playlistmatch.html">
+        <div class="card-icon">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg>
+        </div>
+        <h3>PlaylistMatch</h3>
+        <p>Paste a Spotify, Apple Music or CSV playlist, match it against what you own,
+          and buy or download the rest.</p>
+      </a>
+
+      <a class="card" href="features/add-music.html">
+        <div class="card-icon">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V8a2 2 0 012-2h4l2 2h6a2 2 0 012 2v10a2 2 0 01-2 2H6a2 2 0 01-2-2z"/><path d="M12 11v6M9 14h6"/></svg>
+        </div>
+        <h3>Add Music</h3>
+        <p>Import files or whole folders, move or copy, and drop them straight into a
+          dated crate — or from Finder with a right-click.</p>
+      </a>
+
+      <a class="card" href="features/consolidation.html">
+        <div class="card-icon">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 5h6l2 3h10v11a2 2 0 01-2 2H5a2 2 0 01-2-2V5z"/><path d="M12 17V11M9 14l3 3 3-3"/></svg>
+        </div>
+        <h3>Library Consolidation</h3>
+        <p>Pull music scattered across drives and folders into one place, rewriting every
+          Serato path as it goes.</p>
+      </a>
+
+      <a class="card" href="features/backup.html">
+        <div class="card-icon">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a9 9 0 108.5 6"/><path d="M21 3v6h-6"/><path d="M12 8v4l3 2"/></svg>
+        </div>
+        <h3>Backup</h3>
+        <p>Timestamped snapshots of your library — full, incremental or a single crate —
+          with the size shown before you start.</p>
+      </a>
+
+      <a class="card" href="features/rename.html">
+        <div class="card-icon">
+          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+        </div>
+        <h3>Rename From Tags</h3>
+        <p>Give every file a consistent name from its tags, in bulk — and Serato keeps
+          pointing at all of them.</p>
+      </a>
+    </div>
+
+    <div class="btn-row center" style="margin-top:40px">
+      <a class="btn" href="features/">Browse all features →</a>
+    </div>
+  </div>
+</section>
+
+<!-- ---------------------------------------------------------------- safety -->
+<section class="section section-alt">
+  <div class="wrap">
+    <div class="two-col">
+      <div>
+        <span class="eyebrow">Safety</span>
+        <h2>It's your library. We treat it that way.</h2>
+        <p>
+          EZLibrary writes directly to the files Serato depends on. That's the only way to
+          fix them — and it's exactly why every write path is built to fail safely rather
+          than fail fast.
+        </p>
+        <ul class="ticks">
+          <li><strong>A snapshot before every write.</strong> Every Serato file is copied to a
+            timestamped backup before it's touched, whether you asked for a backup or not.</li>
+          <li><strong>Atomic writes.</strong> Files are written to a temp file and swapped into
+            place, so a crash or a full disk can't leave <code>database V2</code> half-written.</li>
+          <li><strong>Read-back verification.</strong> After a tag write, the file is re-read and
+            checked. If it doesn't match, the change is rolled back.</li>
+          <li><strong>Refuses to run while Serato is open</strong>, because Serato overwrites the
+            library from memory when it quits.</li>
+          <li><strong>No silent repairs.</strong> Missing-track fixes and duplicate deletions are
+            always shown to you first and applied per-track, never guessed.</li>
+          <li><strong>Cues and beat grids are preserved</strong> through tag edits, renames and
+            moves — that's the whole point.</li>
+        </ul>
+        <div class="btn-row" style="margin-top:26px">
+          <a class="btn" href="https://github.com/tawaunl/EZLibrary/blob/main/docs/SECURITY_AND_DATA_HANDLING.md">Read the data-handling doc</a>
+        </div>
+      </div>
+
+      <div class="aside">
+        <h4>Nothing phones home</h4>
+        <p style="font-size:.93rem">
+          Your library, your files and your paths never leave your Mac. The only network
+          calls EZLibrary makes are ones you trigger: an online metadata lookup, a playlist
+          you pasted, or the update check.
+        </p>
+        <h4 style="margin-top:22px">Open where it counts</h4>
+        <p style="font-size:.93rem;margin-bottom:0">
+          The whole engine is GPLv3 on GitHub. You don't have to take any of this on trust —
+          the parsers, writers and safety layer are all there to read, with the tests that
+          cover them.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ----------------------------------------------------------------- trust -->
+<section class="section">
+  <div class="wrap">
+    <div class="section-head center">
+      <span class="eyebrow">Built to last</span>
+      <h2>Not another abandoned DJ tool</h2>
+      <p>
+        There's been a wave of AI-generated DJ utilities shipped with no commit history, no
+        tests, and no maintenance plan — several already abandoned. That's a real risk when
+        a tool has write access to your entire library. Here's what you can go and verify.
+      </p>
+    </div>
+
+    <div class="stats">
+      <div class="stat"><b>230+</b><span>automated tests</span></div>
+      <div class="stat"><b>8</b><span>public releases</span></div>
+      <div class="stat"><b>180+</b><span>commits, in the open</span></div>
+      <div class="stat"><b>GPLv3</b><span>every line auditable</span></div>
+    </div>
+
+    <div class="grid grid-3" style="margin-top:22px">
+      <div class="card">
+        <h3>Tested, not just tried</h3>
+        <p>The parsing, writing and safety logic is covered by a real test suite that runs in
+          CI on every push — including a byte-exact round-trip against a real 1,343-track
+          library.</p>
+      </div>
+      <div class="card">
+        <h3>Actively maintained</h3>
+        <p>Releases land roughly monthly, more often for fixes. The changelog says exactly
+          what changed and when, and data-integrity bugs go to the front of the queue.</p>
+      </div>
+      <div class="card">
+        <h3>Independent</h3>
+        <p>EZLibrary isn't affiliated with, endorsed by, or sponsored by Serato. It reads and
+          writes Serato's file format for interoperability, nothing more.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ----------------------------------------------------------------- start -->
+<section class="section section-alt">
+  <div class="wrap wrap-narrow">
+    <div class="section-head center">
+      <span class="eyebrow">Getting started</span>
+      <h2>Three minutes, start to finish</h2>
+    </div>
+
+    <ol class="steps">
+      <li>
+        <h3>Download and install</h3>
+        <p>Grab the installer and run it. Everything EZLibrary needs is bundled inside the
+          app — there's no Homebrew step and nothing else to set up.</p>
+        <div class="btn-row" style="margin-top:14px">
+          <a class="btn btn-primary btn-sm" href="https://github.com/tawaunl/EZLibrary/releases/latest" data-download>Download v<span data-latest-version>1.0</span></a>
+        </div>
+      </li>
+      <li>
+        <h3>Open it — it finds your library</h3>
+        <p>EZLibrary looks for your <code>_Serato_</code> folder automatically, including on
+          external drives. Got more than one? Point it wherever you want in Settings.</p>
+      </li>
+      <li>
+        <h3>Take a backup, then start with Missing Tracks</h3>
+        <p>Run a full backup once so you have a known-good snapshot. Then let Missing Tracks
+          scan — for most libraries that's the biggest single win, and it's the safest place
+          to see how the app behaves before you touch anything else.</p>
+      </li>
+    </ol>
+  </div>
+</section>
+
+<!-- ------------------------------------------------------------------- cta -->
+<section class="cta">
+  <div class="wrap">
+    <h2>Get your library back</h2>
+    <p>Free, open source, and built by someone who got tired of hunting for missing files
+      ten minutes before a set.</p>
+    <div class="btn-row center" style="margin-top:28px">
+      <a class="btn btn-primary btn-lg" href="https://github.com/tawaunl/EZLibrary/releases/latest" data-download>
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 3v12M7 11l5 5 5-5M4 20h16"/>
+        </svg>
+        Download for macOS
+      </a>
+      <a class="btn btn-lg" href="roadmap/">Vote on what's next</a>
+    </div>
+    <p class="meta-line">v<span data-latest-version>1.0</span> · <span data-latest-size>8.2 MB</span> · macOS 13+ · Apple Silicon &amp; Intel</p>
+  </div>
+</section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <div class="footer-grid">
+      <div class="footer-about">
+        <a class="brand" href="./"><img src="assets/img/icon.png" alt=""> EZLibrary</a>
+        <p>A free, open source macOS toolkit for DJs who want a cleaner, safer Serato library.</p>
+      </div>
+      <div>
+        <h4>Product</h4>
+        <ul>
+          <li><a href="features/">Features</a></li>
+          <li><a href="roadmap/">Roadmap</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/releases/latest" data-download>Download</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/blob/main/docs/CHANGELOG.md">Changelog</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Help</h4>
+        <ul>
+          <li><a href="support/">Support &amp; FAQ</a></li>
+          <li><a href="support/#how-to">How-to guides</a></li>
+          <li><a href="support/#contact">Contact</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/issues/new/choose">Report a bug</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Project</h4>
+        <ul>
+          <li><a href="https://github.com/tawaunl/EZLibrary">Source on GitHub</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/blob/main/CONTRIBUTING.md">Contributing</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/blob/main/SECURITY.md">Security policy</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/blob/main/LICENSE">License (GPLv3)</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p class="disclaimer">
+        EZLibrary is an independent, community-built utility. It is not affiliated with,
+        endorsed by, or sponsored by Serato Audio Research. "Serato" is a trademark of its
+        respective owner.
+      </p>
+      <p>© 2026 Tawaun Lucas · GPLv3</p>
+    </div>
+  </div>
+</footer>
+
+<script src="assets/js/site.js"></script>
+</body>
+</html>
