@@ -205,6 +205,26 @@ func runRepairLocations(arguments: [String]) throws {
         print("  \(count) × \(reason)")
     }
 
+    // Disconnected locations are where "cannot be located" entries survive a
+    // library move: Serato still shows them but never re-syncs them.
+    let ghosts = try SeratoLocationRepairService.planDisconnectedLocations(libraryDirectory: libraryDirectory)
+    print("\nDisconnected locations (master.sqlite):")
+    print("  Repairable: \(ghosts.repairs.count)")
+    print("  No file on disk: \(ghosts.unresolvedCount)")
+    if ghosts.needsSeratoRuntimeCount > 0 {
+        print("  Need renaming inside Serato: \(ghosts.needsSeratoRuntimeCount)")
+    }
+    for repair in ghosts.repairs.prefix(5) {
+        print("  \(repair.oldPortableID)\n    -> \(repair.newPortableID)")
+    }
+    if ghosts.repairs.count > 5 {
+        print("  … and \(ghosts.repairs.count - 5) more")
+    }
+    if !ghosts.isEmpty {
+        print("  Note: re-pointing these leaves the same file indexed under two")
+        print("        locations, which Serato shows as a duplicate.")
+    }
+
     guard options.shouldApply else {
         print("\nPreview only. Re-run with --apply to write these changes.")
         return
@@ -215,6 +235,9 @@ func runRepairLocations(arguments: [String]) throws {
     if result.skippedCount > 0 {
         print("Skipped \(result.skippedCount) whose destination was taken since the preview.")
     }
+
+    let ghostResult = try SeratoLocationRepairService.apply(ghosts)
+    print("Repaired \(ghostResult.repairedCount) entries in disconnected locations.")
 }
 
 func main() {

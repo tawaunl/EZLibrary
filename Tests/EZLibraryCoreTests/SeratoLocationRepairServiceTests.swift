@@ -120,8 +120,8 @@ private func makeDesyncedLibrary(
     let library = try makeDesyncedLibrary(fileNames: ["Alpha.mp3", "Beta.mp3"])
     defer { try? FileManager.default.removeItem(at: library.root) }
 
-    SeratoProcessGuard.isRunningOverride = false
-    defer { SeratoProcessGuard.isRunningOverride = nil }
+    TestSeratoEnvironment.pretendSeratoIsClosed()
+    defer { TestSeratoEnvironment.pretendSeratoIsClosed() }
 
     let plan = try SeratoLocationRepairService.plan(
         libraryDirectory: library.libraryDirectory,
@@ -205,8 +205,8 @@ private func makeDesyncedLibrary(
     let library = try makeDesyncedLibrary(fileNames: ["Alpha.mp3"])
     defer { try? FileManager.default.removeItem(at: library.root) }
 
-    SeratoProcessGuard.isRunningOverride = false
-    defer { SeratoProcessGuard.isRunningOverride = nil }
+    TestSeratoEnvironment.pretendSeratoIsClosed()
+    defer { TestSeratoEnvironment.pretendSeratoIsClosed() }
 
     let firstPlan = try SeratoLocationRepairService.plan(
         libraryDirectory: library.libraryDirectory,
@@ -302,14 +302,14 @@ private func makeDesyncedLibrary(
     let library = try makeDesyncedLibrary(fileNames: ["Alpha.mp3"])
     defer { try? FileManager.default.removeItem(at: library.root) }
 
-    SeratoProcessGuard.isRunningOverride = false
+    TestSeratoEnvironment.pretendSeratoIsClosed()
     let plan = try SeratoLocationRepairService.plan(
         libraryDirectory: library.libraryDirectory,
         homeDirectory: library.root
     )
 
     SeratoProcessGuard.isRunningOverride = true
-    defer { SeratoProcessGuard.isRunningOverride = nil }
+    defer { TestSeratoEnvironment.pretendSeratoIsClosed() }
 
     #expect(throws: SeratoLocationRepairService.RepairError.self) {
         try SeratoLocationRepairService.apply(plan)

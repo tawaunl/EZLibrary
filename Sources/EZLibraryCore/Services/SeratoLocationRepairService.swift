@@ -81,6 +81,9 @@ public enum SeratoLocationRepairService {
 
     public struct Plan: Sendable {
         public let libraryDirectory: URL
+        /// The database this plan was built against, so `apply` can't end up
+        /// writing somewhere else.
+        public let locationDatabaseURL: URL
         /// The directory `portable_id` values are relative to, as detected
         /// from this library rather than assumed.
         public let baseDirectory: URL
@@ -112,12 +115,20 @@ public enum SeratoLocationRepairService {
     public static func plan(
         libraryDirectory: URL,
         searchRoots: [URL]? = nil,
+        applicationSupportDirectory: URL? = nil,
         homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
         fileManager: FileManager = .default
     ) throws -> Plan {
-        let locationDatabaseURL = SeratoLocationDatabase.locationDatabaseFile(in: libraryDirectory)
-        guard fileManager.fileExists(atPath: locationDatabaseURL.path) else {
-            throw RepairError.noLocationDatabase(locationDatabaseURL)
+        // The database Serato actually reads, which on 4.x is not the
+        // `location.sqlite` sitting inside `_Serato_` — planning against that
+        // leftover would report repairs nothing would ever act on.
+        guard let locationDatabaseURL = SeratoLocationDatabase.activeDatabases(
+            forLibraryDirectory: libraryDirectory,
+            applicationSupportDirectory: applicationSupportDirectory,
+            fileManager: fileManager
+        ).first else {
+            throw RepairError.noLocationDatabase(
+                SeratoLocationDatabase.locationDatabaseFile(in: libraryDirectory))
         }
 
         let databaseFileURL = SeratoLibraryLocator.databaseFile(in: libraryDirectory)
@@ -223,6 +234,7 @@ public enum SeratoLocationRepairService {
 
         return Plan(
             libraryDirectory: libraryDirectory,
+            locationDatabaseURL: locationDatabaseURL,
             baseDirectory: baseDirectory,
             searchRoots: resolvedSearchRoots,
             repairs: repairs.sorted { $0.assetID < $1.assetID },
@@ -259,6 +271,143 @@ public enum SeratoLocationRepairService {
         return kept
     }
 
+    // MARK: - Disconnected locations (master.sqlite)
+
+    /// A stale row in a disconnected location, and where its file actually is.
+    public struct GhostRepair: Sendable, Equatable {
+        public let assetID: Int64
+        public let locationID: Int64
+        public let oldPortableID: String
+        public let newPortableID: String
+    }
+
+    public struct GhostPlan: Sendable {
+        public let masterDatabaseURL: URL
+        public let repairs: [GhostRepair]
+        /// Rows whose file couldn't be found anywhere — genuinely deleted
+        /// music, left untouched.
+        public let unresolvedCount: Int
+        /// Rows that would need their `file_name` rewritten, which can't be
+        /// done outside Serato (see `SeratoMasterDatabase.rewritePortableIDs`).
+        public let needsSeratoRuntimeCount: Int
+        public let searchRoots: [URL]
+
+        public var isEmpty: Bool { repairs.isEmpty }
+    }
+
+    /// Plans repairs for every location Serato still displays but no longer
+    /// syncs — the source of "cannot be located" entries that survive a move.
+    ///
+    /// Re-pointing these makes each repaired track resolve, but it does not
+    /// merge it with the connected location's row for the same file: the same
+    /// path then exists under two `location_id`s, which Serato's
+    /// `(location_id, portable_id)` unique index permits and which shows up as
+    /// a duplicate. Removing the stale location instead is the way to avoid
+    /// that; this is here because re-pointing preserves whatever is attached
+    /// to the old rows.
+    public static func planDisconnectedLocations(
+        libraryDirectory: URL,
+        searchRoots: [URL]? = nil,
+        applicationSupportDirectory: URL? = nil,
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+        fileManager: FileManager = .default
+    ) throws -> GhostPlan {
+        let master = SeratoLocationDatabase.masterDatabaseFile(
+            applicationSupportDirectory: applicationSupportDirectory)
+        guard fileManager.fileExists(atPath: master.path) else {
+            throw RepairError.noLocationDatabase(master)
+        }
+
+        let databaseFileURL = SeratoLibraryLocator.databaseFile(in: libraryDirectory)
+        let rootDirectory = SeratoLibraryLocator.rootDirectory(for: libraryDirectory, homeDirectory: homeDirectory)
+        let destinations = currentFileLocations(
+            databaseFileURL: databaseFileURL, rootDirectory: rootDirectory, fileManager: fileManager)
+        let resolvedSearchRoots = searchRoots ?? defaultSearchRoots(for: destinations)
+
+        var byName: [String: [URL]] = [:]
+        var seenPaths = Set<String>()
+        func offer(_ url: URL) {
+            guard seenPaths.insert(url.standardizedFileURL.path).inserted else { return }
+            byName[url.lastPathComponent.lowercased(), default: []].append(url)
+        }
+        destinations.forEach(offer)
+        for (_, urls) in FileSystemScanner.scanRoots(resolvedSearchRoots).byFilename {
+            urls.forEach(offer)
+        }
+
+        var repairs: [GhostRepair] = []
+        var unresolved = 0
+        var needsRuntime = 0
+
+        for locationID in try SeratoMasterDatabase.disconnectedLocationIDs(in: master) {
+            for asset in try SeratoMasterDatabase.assets(in: master, locationID: locationID) {
+                // Streaming providers register assets under a URI scheme
+                // (`streaming:…`) rather than a path. They aren't files, so
+                // they're neither broken nor repairable here.
+                guard !isStreamingIdentifier(asset.portableID) else { continue }
+
+                // `portable_id` in these rows is relative to the home folder;
+                // a row that still resolves needs nothing.
+                let current = homeDirectory.appendingPathComponent(asset.portableID)
+                guard !fileManager.fileExists(atPath: current.path) else { continue }
+
+                let searchName = asset.fileName.isEmpty
+                    ? (asset.portableID as NSString).lastPathComponent
+                    : asset.fileName
+                let candidates = byName[searchName.lowercased()] ?? []
+                guard candidates.count == 1, let match = candidates.first else {
+                    unresolved += 1
+                    continue
+                }
+
+                // Only `portable_id` can be written from outside Serato, so a
+                // match whose filename differs is reported, not attempted.
+                guard match.lastPathComponent == searchName else {
+                    needsRuntime += 1
+                    continue
+                }
+
+                let newPortableID = relativePath(of: match, under: homeDirectory)
+                guard !newPortableID.isEmpty, newPortableID != asset.portableID else {
+                    unresolved += 1
+                    continue
+                }
+
+                repairs.append(
+                    GhostRepair(
+                        assetID: asset.id,
+                        locationID: asset.locationID,
+                        oldPortableID: asset.portableID,
+                        newPortableID: newPortableID
+                    ))
+            }
+        }
+
+        return GhostPlan(
+            masterDatabaseURL: master,
+            repairs: repairs.sorted { $0.assetID < $1.assetID },
+            unresolvedCount: unresolved,
+            needsSeratoRuntimeCount: needsRuntime,
+            searchRoots: resolvedSearchRoots
+        )
+    }
+
+    @discardableResult
+    public static func apply(_ plan: GhostPlan) throws -> Result {
+        guard !SeratoProcessGuard.isSeratoRunning else {
+            throw RepairError.seratoIsRunning
+        }
+        guard !plan.repairs.isEmpty else {
+            return Result(repairedCount: 0, skippedCount: 0)
+        }
+
+        let repaired = try SeratoMasterDatabase.rewritePortableIDs(
+            plan.repairs.map { (id: $0.assetID, portableID: $0.newPortableID) },
+            in: plan.masterDatabaseURL
+        )
+        return Result(repairedCount: repaired, skippedCount: plan.repairs.count - repaired)
+    }
+
     // MARK: - Applying
 
     @discardableResult
@@ -270,7 +419,6 @@ public enum SeratoLocationRepairService {
             return Result(repairedCount: 0, skippedCount: 0)
         }
 
-        let locationDatabaseURL = SeratoLocationDatabase.locationDatabaseFile(in: plan.libraryDirectory)
         let updates = plan.repairs.map {
             SeratoLocationDatabase.AssetPathUpdate(
                 id: $0.assetID,
@@ -279,7 +427,7 @@ public enum SeratoLocationRepairService {
             )
         }
 
-        let repairedCount = try SeratoLocationDatabase.rewriteAssetPaths(updates, in: locationDatabaseURL)
+        let repairedCount = try SeratoLocationDatabase.rewriteAssetPaths(updates, in: plan.locationDatabaseURL)
         return Result(repairedCount: repairedCount, skippedCount: updates.count - repairedCount)
     }
 
@@ -362,6 +510,14 @@ public enum SeratoLocationRepairService {
             return (attributes?[.size] as? NSNumber)?.int64Value == expectedSize
         }
         return sizeMatches.count == 1 ? sizeMatches[0] : nil
+    }
+
+    /// A `portable_id` that names a streaming track rather than a file — it
+    /// carries a URI scheme before the first path separator.
+    private static func isStreamingIdentifier(_ portableID: String) -> Bool {
+        guard let colon = portableID.firstIndex(of: ":") else { return false }
+        let slash = portableID.firstIndex(of: "/")
+        return slash.map { colon < $0 } ?? true
     }
 
     private static func relativePath(of fileURL: URL, under base: URL) -> String {

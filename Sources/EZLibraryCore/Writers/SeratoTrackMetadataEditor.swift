@@ -19,6 +19,8 @@ public enum SeratoTrackMetadataEditor {
         case metadataVerificationFailed(String)
         case fileTypeNotSupportedForID3(URL)
         case fileRenameFailed(String)
+        case trackNotFoundInLocationDatabase(String)
+        case locationDatabaseConflict(String)
 
         public var errorDescription: String? {
             switch self {
@@ -32,6 +34,11 @@ public enum SeratoTrackMetadataEditor {
                 return "ID3 writing is only supported for MP3 files. Unsupported file: \(fileURL.lastPathComponent)"
             case let .fileRenameFailed(reason):
                 return "Could not rewrite file name from metadata: \(reason)"
+            case let .trackNotFoundInLocationDatabase(path):
+                return "Could not find this track in Serato's library index, so renaming it would leave Serato "
+                    + "pointing at the old file name: \(path)"
+            case let .locationDatabaseConflict(path):
+                return "Another track in Serato's library index already claims this file name: \(path)"
             }
         }
 
@@ -47,6 +54,10 @@ public enum SeratoTrackMetadataEditor {
                 return "Metadata can still be written to Serato database V2 for this track type."
             case .fileRenameFailed:
                 return "Check file permissions and try again."
+            case .trackNotFoundInLocationDatabase:
+                return "Open the track in Serato once so it's indexed, or run the library index repair, then retry."
+            case .locationDatabaseConflict:
+                return "Rename or remove the other file with that name, then retry."
             }
         }
     }
@@ -117,8 +128,8 @@ public enum SeratoTrackMetadataEditor {
 
         let finalStoredPath = SeratoLibraryLocator.seratoStoredPath(for: finalFileURL, rootDirectory: rootDirectory)
         let didRenamePath = finalStoredPath != matchedOldStoredPath
-        let locationDatabaseURL = SeratoLocationDatabase.locationDatabaseFile(in: libraryDirectory)
-        var didRewriteLocationDatabase = false
+        let locationDatabases = SeratoLocationDatabase.activeDatabases(forLibraryDirectory: libraryDirectory)
+        var rewrittenLocationDatabases: [URL] = []
 
         do {
             var rewritten = SeratoDatabaseWriter.rewritingMetadata(
@@ -167,20 +178,40 @@ public enum SeratoTrackMetadataEditor {
                     libraryDirectory: libraryDirectory
                 )
 
-                // Modern Serato reads `Library/location.sqlite`, not
-                // `database V2`; without this the renamed file shows up as
-                // missing no matter how correct the `pfil` rewrite was.
-                try SeratoLocationDatabase.rewritePaths(
-                    [matchedOldStoredPath: finalStoredPath],
-                    rootDirectory: rootDirectory,
-                    in: locationDatabaseURL
-                )
-                didRewriteLocationDatabase = true
+                // Serato reads its own SQLite library, not `database V2`.
+                // Without this the renamed file is re-imported as a brand-new
+                // track — Serato's log literally says "Adding track not found
+                // in database" — and the original row is left behind pointing
+                // at a path that no longer exists.
+                var didUpdateAnyAsset = false
+                for locationDatabaseURL in locationDatabases {
+                    let summary = try SeratoLocationDatabase.rewritePaths(
+                        [matchedOldStoredPath: finalStoredPath],
+                        rootDirectory: rootDirectory,
+                        in: locationDatabaseURL
+                    )
+                    if summary.updatedCount > 0 {
+                        rewrittenLocationDatabases.append(locationDatabaseURL)
+                        didUpdateAnyAsset = true
+                    }
+                    if !summary.conflictingPaths.isEmpty {
+                        throw EditError.locationDatabaseConflict(finalStoredPath)
+                    }
+                }
+
+                // A track Serato has never seen has no row to orphan, so an
+                // empty library is fine — but if it has assets and none of
+                // them matched, renaming the file would strand the one that
+                // does refer to it. Fail instead, and let the rollback put
+                // the file back under its original name.
+                if !didUpdateAnyAsset, try locationDatabasesContainAnyAsset(locationDatabases) {
+                    throw EditError.trackNotFoundInLocationDatabase(matchedOldStoredPath)
+                }
             }
 
             try AtomicFileWriter.write(rewritten.data, to: databaseFileURL)
         } catch {
-            if didRewriteLocationDatabase {
+            for locationDatabaseURL in rewrittenLocationDatabases {
                 _ = try? SeratoLocationDatabase.rewritePaths(
                     [finalStoredPath: matchedOldStoredPath],
                     rootDirectory: rootDirectory,
@@ -451,6 +482,16 @@ public enum SeratoTrackMetadataEditor {
             | Int(bytes[3] & 0x7F)
     }
 
+    /// Whether any of Serato's location databases has assets at all. Used to
+    /// tell "this track isn't indexed yet" apart from "there's no index",
+    /// since only the former means a rename would strand a row.
+    private static func locationDatabasesContainAnyAsset(_ databases: [URL]) throws -> Bool {
+        for database in databases where try !SeratoLocationDatabase.assets(in: database).isEmpty {
+            return true
+        }
+        return false
+    }
+
     private static func storedPathCandidates(track: Track, rootDirectory: URL, databaseData: Data) -> [String] {
         var candidates: [String] = [track.seratoStoredPath]
 
@@ -680,20 +721,24 @@ public enum SeratoTrackMetadataEditor {
     ) throws {
         guard oldStoredPath != newStoredPath else { return }
 
-        // Smart crates (.scrate) contain rule payloads that must not be
-        // regenerated via the plain crate writer, or their logic is lost.
+        // Smart crates are included, and the rewrite is surgical for exactly
+        // that reason. A `.scrate` stores its rules next to a materialized
+        // list of member paths; leaving those paths stale is what made Serato
+        // log "Adding track not found in database … but found in crate" and
+        // re-add the renamed file as a second, missing entry.
         let entries = SeratoLibraryLocator.subcrateFiles(in: libraryDirectory)
+            + SeratoLibraryLocator.smartCrateFiles(in: libraryDirectory)
 
         for entry in entries {
             let crateURL = entry.url
             let crateData = try Data(contentsOf: crateURL)
-            let paths = SeratoCrateParser.trackPaths(from: crateData)
-            guard paths.contains(oldStoredPath) else { continue }
+            let rewritten = SeratoCrateWriter.rewritingTrackPaths(
+                [oldStoredPath: newStoredPath], in: crateData
+            )
+            guard rewritten.rewrittenCount > 0 else { continue }
 
-            let rewrittenPaths = paths.map { $0 == oldStoredPath ? newStoredPath : $0 }
             try SeratoBackupBeforeWrite.snapshot(of: crateURL)
-            let rewrittenData = SeratoCrateWriter.makeCrateData(trackPaths: rewrittenPaths)
-            try AtomicFileWriter.write(rewrittenData, to: crateURL)
+            try AtomicFileWriter.write(rewritten.data, to: crateURL)
         }
     }
 }

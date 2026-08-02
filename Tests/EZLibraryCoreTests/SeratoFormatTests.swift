@@ -98,6 +98,85 @@ private func makeMetadataRenameEnvironment() throws -> (tempRoot: URL, libraryDi
     }
 }
 
+/// Reads every top-level chunk tag in order, so a rewrite can be checked for
+/// having preserved a smart crate's rule payload rather than regenerating it.
+private func topLevelChunkTags(of data: Data) -> [String] {
+    SeratoChunkCodec.readChunks(from: data).map(\.tag)
+}
+
+@Test func rewritingSmartCrateKeepsItsRulesIntact() throws {
+    let crateURL = fixture("SmartCrates/ALL GENRES\u{226B}\u{226B}House.scrate")
+    let original = try Data(contentsOf: crateURL)
+    let paths = SeratoCrateParser.trackPaths(from: original)
+    let target = try #require(paths.first)
+
+    let rewritten = SeratoCrateWriter.rewritingTrackPaths(
+        [target: "Users/tawaun/Music/All Music/Renamed.mp3"], in: original
+    )
+
+    #expect(rewritten.rewrittenCount == 1)
+
+    let newPaths = SeratoCrateParser.trackPaths(from: rewritten.data)
+    #expect(newPaths.count == paths.count)
+    #expect(newPaths.contains("Users/tawaun/Music/All Music/Renamed.mp3"))
+    #expect(!newPaths.contains(target))
+
+    // A smart crate's rules (`rart`/`rlut`/`rurt`) and column layout live
+    // beside its member list. Regenerating from paths alone would drop them,
+    // which is why these files used to be skipped entirely — and skipping
+    // them is what left Serato re-importing the pre-rename path.
+    #expect(topLevelChunkTags(of: rewritten.data) == topLevelChunkTags(of: original))
+}
+
+@Test func metadataRenameRewritesSmartCratePathsToo() throws {
+    let env = try makeMetadataRenameEnvironment()
+    defer { try? FileManager.default.removeItem(at: env.tempRoot) }
+
+    TestBackupDirectory.use()
+    TestSeratoEnvironment.pretendSeratoIsClosed()
+
+    let rootDirectory = SeratoLibraryLocator.rootDirectory(for: env.libraryDirectory)
+    let smartCrateURL = env.libraryDirectory
+        .appendingPathComponent("SmartCrates/ALL GENRES\u{226B}\u{226B}House.scrate")
+    // The sample smart crates were captured from a different user's library
+    // than the sample `database V2`, so point one of their entries at a track
+    // this database actually has. (Seeded with the primitive covered by
+    // `rewritingSmartCrateKeepsItsRulesIntact`.)
+    let tracks = try SeratoDatabaseParser.parseTracks(at: env.databaseFile, rootDirectory: rootDirectory)
+    let target = try #require(tracks.first)
+    let originalSmartCrate = try Data(contentsOf: smartCrateURL)
+    let seedPath = try #require(SeratoCrateParser.trackPaths(from: originalSmartCrate).first)
+    let seeded = SeratoCrateWriter.rewritingTrackPaths(
+        [seedPath: target.seratoStoredPath], in: originalSmartCrate)
+    #expect(seeded.rewrittenCount == 1)
+    try seeded.data.write(to: smartCrateURL)
+
+    try FileManager.default.createDirectory(
+        at: target.fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try Data("audio".utf8).write(to: target.fileURL)
+
+    try SeratoTrackMetadataEditor.update(
+        track: target,
+        metadata: SeratoTrackMetadataUpdate(
+            title: "Smart", artist: "Crate", album: "", genre: "",
+            comment: target.comment, key: target.key ?? "", bpm: target.bpm, year: nil),
+        databaseFileURL: env.databaseFile,
+        rewriteFilenameFromMetadata: true,
+        filenameTemplate: "{artist}-{title}"
+    )
+
+    let renamed = target.fileURL
+        .deletingLastPathComponent()
+        .appendingPathComponent("Crate-Smart.\(target.fileURL.pathExtension)")
+    let expectedStoredPath = SeratoLibraryLocator.seratoStoredPath(for: renamed, rootDirectory: rootDirectory)
+
+    // Serato re-adds a renamed track as a second, missing entry when any
+    // crate still names the old path — smart crates included.
+    let updated = SeratoCrateParser.trackPaths(from: try Data(contentsOf: smartCrateURL))
+    #expect(updated.contains(expectedStoredPath))
+    #expect(!updated.contains(target.seratoStoredPath))
+}
+
 @Test func crateWriterRoundTripsTrackPaths() {
     let paths = ["Imported/Track One.mp3", "Imported/Track Two.mp3"]
     let data = SeratoCrateWriter.makeCrateData(trackPaths: paths)
@@ -108,8 +187,8 @@ private func makeMetadataRenameEnvironment() throws -> (tempRoot: URL, libraryDi
     let env = try makeMetadataRenameEnvironment()
     defer { try? FileManager.default.removeItem(at: env.tempRoot) }
 
-    SeratoProcessGuard.isRunningOverride = false
-    defer { SeratoProcessGuard.isRunningOverride = nil }
+    TestSeratoEnvironment.pretendSeratoIsClosed()
+    defer { TestSeratoEnvironment.pretendSeratoIsClosed() }
 
     let rootDirectory = SeratoLibraryLocator.rootDirectory(for: env.libraryDirectory)
     let crateURL = env.libraryDirectory.appendingPathComponent("Subcrates/Mike's Party.crate")
@@ -193,8 +272,8 @@ private func renameMetadata() -> SeratoTrackMetadataUpdate {
     let (env, target) = try makeRenameTarget()
     defer { try? FileManager.default.removeItem(at: env.tempRoot) }
 
-    SeratoProcessGuard.isRunningOverride = false
-    defer { SeratoProcessGuard.isRunningOverride = nil }
+    TestSeratoEnvironment.pretendSeratoIsClosed()
+    defer { TestSeratoEnvironment.pretendSeratoIsClosed() }
 
     try SeratoTrackMetadataEditor.update(
         track: target,
@@ -215,8 +294,8 @@ private func renameMetadata() -> SeratoTrackMetadataUpdate {
     let (env, target) = try makeRenameTarget()
     defer { try? FileManager.default.removeItem(at: env.tempRoot) }
 
-    SeratoProcessGuard.isRunningOverride = false
-    defer { SeratoProcessGuard.isRunningOverride = nil }
+    TestSeratoEnvironment.pretendSeratoIsClosed()
+    defer { TestSeratoEnvironment.pretendSeratoIsClosed() }
 
     var metadata = renameMetadata()
     metadata.album = ""
@@ -240,8 +319,8 @@ private func renameMetadata() -> SeratoTrackMetadataUpdate {
     let (env, target) = try makeRenameTarget()
     defer { try? FileManager.default.removeItem(at: env.tempRoot) }
 
-    SeratoProcessGuard.isRunningOverride = false
-    defer { SeratoProcessGuard.isRunningOverride = nil }
+    TestSeratoEnvironment.pretendSeratoIsClosed()
+    defer { TestSeratoEnvironment.pretendSeratoIsClosed() }
 
     let template = "{artist}-{title}"
     let directory = target.fileURL.deletingLastPathComponent()

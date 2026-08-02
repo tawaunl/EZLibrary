@@ -33,5 +33,39 @@ enum TestBackupDirectory {
     /// from any test, in any order — it always sets the same value.
     static func use() {
         SeratoBackupBeforeWrite.backupDirectory = shared
+        TestSeratoEnvironment.isolateApplicationSupport()
+        TestSeratoEnvironment.pretendSeratoIsClosed()
+    }
+}
+
+/// Keeps tests away from the developer's real Serato installation.
+enum TestSeratoEnvironment {
+    /// An empty stand-in for `~/Library/Application Support`.
+    ///
+    /// `SeratoLocationDatabase.activeDatabases` looks up Serato's live
+    /// databases through `master.sqlite` there. Left unset, any test that
+    /// renames a track would find the real one and write to the actual
+    /// library — including bumping its revision counter.
+    static let applicationSupport: URL = {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "ezlibrary-test-appsupport-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }()
+
+    static func isolateApplicationSupport() {
+        SeratoLocationDatabase.applicationSupportDirectoryOverride = applicationSupport
+    }
+
+    /// Force the "Serato is closed" answer for the whole test process.
+    ///
+    /// `SeratoProcessGuard` otherwise asks `NSWorkspace`, so every write-path
+    /// test would fail on a machine that simply has Serato open. Tests that
+    /// exercise the refusal set the override to `true` themselves and must
+    /// restore it with `pretendSeratoIsClosed()` rather than `nil` — clearing
+    /// it re-exposes the real check to whatever else is running in parallel.
+    static func pretendSeratoIsClosed() {
+        SeratoProcessGuard.isRunningOverride = false
     }
 }

@@ -75,10 +75,72 @@ public enum SeratoLocationDatabase {
     }
 
     /// `_Serato_/Library/location.sqlite` for a given `_Serato_` directory.
+    ///
+    /// Only the right target for older libraries. Serato 4.x keeps the live
+    /// database elsewhere and leaves this file behind untouched — prefer
+    /// `activeDatabases(forLibraryDirectory:)`.
     public static func locationDatabaseFile(in libraryDirectory: URL) -> URL {
         libraryDirectory
             .appendingPathComponent("Library", isDirectory: true)
             .appendingPathComponent("location.sqlite")
+    }
+
+    /// Where `masterDatabaseFile` looks when no directory is passed.
+    ///
+    /// `nonisolated(unsafe)`: a test-only seam, matching
+    /// `SeratoProcessGuard.isRunningOverride`. Without it every test that
+    /// renames a track would discover — and write to — the developer's real
+    /// Serato library.
+    public nonisolated(unsafe) static var applicationSupportDirectoryOverride: URL?
+
+    /// Serato's aggregate database, which registers where each connected
+    /// location actually stores its assets.
+    public static func masterDatabaseFile(
+        applicationSupportDirectory: URL? = nil
+    ) -> URL {
+        let base = applicationSupportDirectory
+            ?? applicationSupportDirectoryOverride
+            ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        return base
+            .appendingPathComponent("Serato", isDirectory: true)
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("master.sqlite")
+    }
+
+    /// The location databases Serato is actually reading, newest layout first.
+    ///
+    /// Serato 4.x registers one database per connected location in
+    /// `master.sqlite`'s `connection` table — for a boot-volume library that
+    /// is `~/Library/Application Support/Serato/Library/root.sqlite`, whose
+    /// `portable_id` values are relative to `/` (the same convention as
+    /// `database V2`'s `pfil`).
+    ///
+    /// The `location.sqlite` inside `_Serato_` belongs to an older layout. It
+    /// can still be present and is then a *disconnected* location: Serato
+    /// keeps aggregating its rows into `master.sqlite` but never updates it,
+    /// so writing there changes nothing a user can see. It's only used here
+    /// when `master.sqlite` registers no connections at all.
+    public static func activeDatabases(
+        forLibraryDirectory libraryDirectory: URL,
+        applicationSupportDirectory: URL? = nil,
+        fileManager: FileManager = .default
+    ) -> [URL] {
+        let master = masterDatabaseFile(applicationSupportDirectory: applicationSupportDirectory)
+        // Opened read-write even though only SELECTs run: `master.sqlite` is
+        // in WAL mode, and a read-only connection can't create the `-shm`
+        // file WAL needs, so every statement fails with SQLITE_CANTOPEN.
+        if fileManager.fileExists(atPath: master.path),
+           let handle = try? Connection(url: master) {
+            defer { handle.close() }
+            let connected = ((try? handle.connectedDatabaseURIs()) ?? [])
+                .filter { fileManager.fileExists(atPath: $0.path) }
+            if !connected.isEmpty {
+                return connected
+            }
+        }
+
+        let legacy = locationDatabaseFile(in: libraryDirectory)
+        return fileManager.fileExists(atPath: legacy.path) ? [legacy] : []
     }
 
     /// Every asset Serato knows about. Empty when the library has no
@@ -119,10 +181,10 @@ public enum SeratoLocationDatabase {
             throw LocationError.unsupportedSchema
         }
 
-        let currentRevision = handle.currentRevision
         var updatedCount = 0
 
         try handle.transaction {
+            let stamp = RevisionStamp(handle)
             for update in updates {
                 // Still checked per row: the caller's plan was built against a
                 // snapshot, and a destination taken in the meantime would
@@ -130,13 +192,14 @@ public enum SeratoLocationDatabase {
                 if try handle.assetID(forPortableID: update.portableID).map({ $0 != update.id }) == true {
                     continue
                 }
+                let revision = try stamp.value()
                 try handle.updateAssetPath(
                     id: update.id,
                     portableID: update.portableID,
                     fileName: update.fileName,
-                    revision: currentRevision
+                    revision: revision
                 )
-                try handle.touchSpaces(forAssetID: update.id, revision: currentRevision)
+                try handle.touchSpaces(forAssetID: update.id, revision: revision)
                 updatedCount += 1
             }
         }
@@ -173,12 +236,6 @@ public enum SeratoLocationDatabase {
             throw LocationError.unsupportedSchema
         }
 
-        // Serato's own triggers stamp rows with the current global revision
-        // rather than inventing a new one, so a rewrite does the same: the
-        // row is marked changed as of "now" without disturbing the counter
-        // Serato uses to decide what still needs syncing.
-        let currentRevision = handle.currentRevision
-
         // Resolved up front: `resolve` stats the filesystem for libraries on
         // an external volume, and a few thousand of those shouldn't happen
         // while holding the database's write lock.
@@ -198,6 +255,7 @@ public enum SeratoLocationDatabase {
         var conflictingPaths: [String] = []
 
         try handle.transaction {
+            let stamp = RevisionStamp(handle)
             for (oldStoredPath, oldURL, newURL) in resolved {
                 guard let match = try findAsset(
                     for: oldURL,
@@ -218,13 +276,14 @@ public enum SeratoLocationDatabase {
                     continue
                 }
 
+                let revision = try stamp.value()
                 try handle.updateAssetPath(
                     id: match.id,
                     portableID: newPortableID,
                     fileName: newURL.lastPathComponent,
-                    revision: currentRevision
+                    revision: revision
                 )
-                try handle.touchSpaces(forAssetID: match.id, revision: currentRevision)
+                try handle.touchSpaces(forAssetID: match.id, revision: revision)
                 updatedCount += 1
             }
         }
@@ -258,6 +317,33 @@ public enum SeratoLocationDatabase {
     private struct AssetMatch {
         let id: Int64
         let base: URL
+    }
+
+    /// Advances the location's global revision once per pass, on first use.
+    ///
+    /// The counter has to move, not just be read: Serato mirrors each
+    /// location into `master.sqlite` and decides what to re-sync by comparing
+    /// `master.location.revision` against the location's `serato.revision`
+    /// (observed equal on an idle library). A row stamped with the *existing*
+    /// revision is invisible to that comparison, so the aggregate keeps
+    /// serving the old path — the renamed track then shows up as a new track
+    /// beside an original that "cannot be located".
+    ///
+    /// Lazy so a pass that matches nothing leaves the counter alone.
+    private final class RevisionStamp {
+        private let handle: Connection
+        private var bumped: Int64?
+
+        init(_ handle: Connection) {
+            self.handle = handle
+        }
+
+        func value() throws -> Int64 {
+            if let bumped { return bumped }
+            let revision = try handle.bumpRevision()
+            bumped = revision
+            return revision
+        }
     }
 
     private static func findAsset(
@@ -361,6 +447,36 @@ public enum SeratoLocationDatabase {
 
         var currentRevision: Int64 {
             (try? scalarInt("SELECT COALESCE(MAX(revision), 0) FROM serato")) ?? 0
+        }
+
+        /// Advances the location's global revision and returns the new value,
+        /// which rows changed in this pass are then stamped with.
+        func bumpRevision() throws -> Int64 {
+            try execute("UPDATE serato SET revision = revision + 1")
+            return currentRevision
+        }
+
+        /// `master.sqlite`'s registry of where each connected location keeps
+        /// its assets. Rows for locations that aren't currently connected
+        /// simply aren't present.
+        func connectedDatabaseURIs() throws -> [URL] {
+            let statement = try prepare("SELECT database_uri FROM connection WHERE database_uri IS NOT NULL")
+            defer { sqlite3_finalize(statement) }
+
+            var urls: [URL] = []
+            while true {
+                switch sqlite3_step(statement) {
+                case SQLITE_ROW:
+                    guard let text = sqlite3_column_text(statement, 0) else { continue }
+                    let raw = String(cString: text)
+                    guard !raw.isEmpty else { continue }
+                    urls.append(URL(fileURLWithPath: raw))
+                case SQLITE_DONE:
+                    return urls
+                default:
+                    throw lastError()
+                }
+            }
         }
 
         func assetID(forPortableID portableID: String) throws -> Int64? {

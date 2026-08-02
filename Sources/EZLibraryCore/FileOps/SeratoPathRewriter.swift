@@ -54,17 +54,20 @@ public enum SeratoPathRewriter {
         // transaction either commits or rolls back, leaving `database V2`
         // untouched and the two libraries still agreeing with each other.
         let libraryDirectory = databaseFileURL.deletingLastPathComponent()
-        let locationDatabaseURL = SeratoLocationDatabase.locationDatabaseFile(in: libraryDirectory)
-        try SeratoLocationDatabase.rewritePaths(
-            rewrites,
-            rootDirectory: SeratoLibraryLocator.rootDirectory(for: libraryDirectory),
-            in: locationDatabaseURL
-        )
+        let rootDirectory = SeratoLibraryLocator.rootDirectory(for: libraryDirectory)
+        let locationDatabases = SeratoLocationDatabase.activeDatabases(forLibraryDirectory: libraryDirectory)
+        for locationDatabaseURL in locationDatabases {
+            try SeratoLocationDatabase.rewritePaths(
+                rewrites,
+                rootDirectory: rootDirectory,
+                in: locationDatabaseURL
+            )
+        }
 
         do {
             try AtomicFileWriter.write(rewritten.data, to: databaseFileURL)
         } catch {
-            revertLocationDatabase(rewrites, libraryDirectory: libraryDirectory, locationDatabaseURL: locationDatabaseURL)
+            revertLocationDatabases(rewrites, rootDirectory: rootDirectory, databases: locationDatabases)
             throw error
         }
 
@@ -74,17 +77,19 @@ public enum SeratoPathRewriter {
     /// Best-effort undo of the SQLite half when the `database V2` write that
     /// should have followed it fails. A failure here is swallowed: the caller
     /// is already throwing, and the pre-write snapshot is the backstop.
-    private static func revertLocationDatabase(
+    private static func revertLocationDatabases(
         _ rewrites: [String: String],
-        libraryDirectory: URL,
-        locationDatabaseURL: URL
+        rootDirectory: URL,
+        databases: [URL]
     ) {
         let inverse = Dictionary(rewrites.map { ($0.value, $0.key) }, uniquingKeysWith: { first, _ in first })
-        _ = try? SeratoLocationDatabase.rewritePaths(
-            inverse,
-            rootDirectory: SeratoLibraryLocator.rootDirectory(for: libraryDirectory),
-            in: locationDatabaseURL
-        )
+        for database in databases {
+            _ = try? SeratoLocationDatabase.rewritePaths(
+                inverse,
+                rootDirectory: rootDirectory,
+                in: database
+            )
+        }
     }
 
     @discardableResult

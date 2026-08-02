@@ -54,8 +54,8 @@ private func makeScratchImportEnvironment() throws -> (tempRoot: URL, libraryDir
     let env = try makeScratchImportEnvironment()
     defer { try? FileManager.default.removeItem(at: env.tempRoot) }
 
-    SeratoProcessGuard.isRunningOverride = false
-    defer { SeratoProcessGuard.isRunningOverride = nil }
+    TestSeratoEnvironment.pretendSeratoIsClosed()
+    defer { TestSeratoEnvironment.pretendSeratoIsClosed() }
 
     let incomingFolder = env.tempRoot.appendingPathComponent("Downloads Batch", isDirectory: true)
     let nested = incomingFolder.appendingPathComponent("House", isDirectory: true)
@@ -112,7 +112,7 @@ private func makeScratchImportEnvironment() throws -> (tempRoot: URL, libraryDir
     defer { try? FileManager.default.removeItem(at: env.tempRoot) }
 
     SeratoProcessGuard.isRunningOverride = true
-    defer { SeratoProcessGuard.isRunningOverride = nil }
+    defer { TestSeratoEnvironment.pretendSeratoIsClosed() }
 
     let incomingFile = env.tempRoot.appendingPathComponent("Live Add.mp3")
     try Data("live".utf8).write(to: incomingFile)

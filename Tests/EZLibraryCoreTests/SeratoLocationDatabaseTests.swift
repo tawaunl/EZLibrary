@@ -98,7 +98,7 @@ private func makeEnvironment() throws -> Environment {
     #expect(try reopened.queryInt("SELECT COUNT(*) FROM space_asset WHERE asset_id = 42 AND space_id = 1") == 1)
 }
 
-@Test func raisesAssetAndSpaceRevisionsToTheCurrentGlobalRevision() throws {
+@Test func advancesTheGlobalRevisionSoSeratoResyncsTheChange() throws {
     let env = try makeEnvironment()
     defer { try? FileManager.default.removeItem(at: env.root) }
 
@@ -115,9 +115,32 @@ private func makeEnvironment() throws -> Environment {
 
     let reopened = try TestLocationDatabase(at: env.locationDatabaseURL)
     defer { reopened.close() }
-    #expect(try reopened.queryInt("SELECT revision FROM asset WHERE id = 3") == 900)
-    #expect(try reopened.queryInt("SELECT revision FROM space WHERE id = 1") == 900)
-    // The global counter is Serato's to advance; we only stamp rows with it.
+    // Serato re-syncs a location into master.sqlite by comparing revisions,
+    // so the counter has to move and the changed rows carry the new value.
+    // Stamping the old revision left the aggregate serving the stale path.
+    #expect(try reopened.queryInt("SELECT revision FROM serato") == 901)
+    #expect(try reopened.queryInt("SELECT revision FROM asset WHERE id = 3") == 901)
+    #expect(try reopened.queryInt("SELECT revision FROM space WHERE id = 1") == 901)
+}
+
+@Test func leavesTheRevisionAloneWhenNothingMatched() throws {
+    let env = try makeEnvironment()
+    defer { try? FileManager.default.removeItem(at: env.root) }
+
+    let database = try TestLocationDatabase(at: env.locationDatabaseURL)
+    try database.createSeratoSchema(revision: 900)
+    try database.insertAsset(id: 3, portableID: "Music/Old Name.mp3")
+    database.close()
+
+    let summary = try SeratoLocationDatabase.rewritePaths(
+        ["Music/Not Here.mp3": "Music/Still Not Here.mp3"],
+        rootDirectory: env.root,
+        in: env.locationDatabaseURL
+    )
+
+    #expect(summary.updatedCount == 0)
+    let reopened = try TestLocationDatabase(at: env.locationDatabaseURL)
+    defer { reopened.close() }
     #expect(try reopened.queryInt("SELECT revision FROM serato") == 900)
 }
 
@@ -238,8 +261,8 @@ private func makeEnvironment() throws -> Environment {
     let env = try makeEnvironment()
     defer { try? FileManager.default.removeItem(at: env.root) }
 
-    SeratoProcessGuard.isRunningOverride = false
-    defer { SeratoProcessGuard.isRunningOverride = nil }
+    TestSeratoEnvironment.pretendSeratoIsClosed()
+    defer { TestSeratoEnvironment.pretendSeratoIsClosed() }
 
     let fixtureRoot = Bundle.module.url(forResource: "Fixtures/RealLibrarySample", withExtension: nil)!
     let databaseFileURL = env.libraryDirectory.appendingPathComponent("database V2")
@@ -281,8 +304,8 @@ private func makeEnvironment() throws -> Environment {
     let env = try makeEnvironment()
     defer { try? FileManager.default.removeItem(at: env.root) }
 
-    SeratoProcessGuard.isRunningOverride = false
-    defer { SeratoProcessGuard.isRunningOverride = nil }
+    TestSeratoEnvironment.pretendSeratoIsClosed()
+    defer { TestSeratoEnvironment.pretendSeratoIsClosed() }
 
     let fixtureRoot = Bundle.module.url(forResource: "Fixtures/RealLibrarySample", withExtension: nil)!
     let databaseFileURL = env.libraryDirectory.appendingPathComponent("database V2")

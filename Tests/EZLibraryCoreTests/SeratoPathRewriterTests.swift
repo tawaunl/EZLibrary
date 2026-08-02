@@ -32,8 +32,8 @@ private func makeScratchDatabaseCopy() throws -> URL {
     defer { try? FileManager.default.removeItem(at: scratchFile.deletingLastPathComponent()) }
 
     TestBackupDirectory.use()
-    SeratoProcessGuard.isRunningOverride = false
-    defer { SeratoProcessGuard.isRunningOverride = nil }
+    TestSeratoEnvironment.pretendSeratoIsClosed()
+    defer { TestSeratoEnvironment.pretendSeratoIsClosed() }
 
     let rootDirectory = URL(fileURLWithPath: "/Volumes/Crucial X10")
     let tracks = try SeratoDatabaseParser.parseTracks(at: scratchFile, rootDirectory: rootDirectory)
@@ -52,7 +52,7 @@ private func makeScratchDatabaseCopy() throws -> URL {
     defer { try? FileManager.default.removeItem(at: scratchFile.deletingLastPathComponent()) }
 
     SeratoProcessGuard.isRunningOverride = true
-    defer { SeratoProcessGuard.isRunningOverride = nil }
+    defer { TestSeratoEnvironment.pretendSeratoIsClosed() }
 
     #expect(throws: SeratoPathRewriter.RewriteError.seratoIsRunning) {
         try SeratoPathRewriter.rewritePath("Music/anything.mp3", to: "Music/other.mp3", in: scratchFile)
@@ -64,8 +64,8 @@ private func makeScratchDatabaseCopy() throws -> URL {
     defer { try? FileManager.default.removeItem(at: scratchFile.deletingLastPathComponent()) }
 
     TestBackupDirectory.use()
-    SeratoProcessGuard.isRunningOverride = false
-    defer { SeratoProcessGuard.isRunningOverride = nil }
+    TestSeratoEnvironment.pretendSeratoIsClosed()
+    defer { TestSeratoEnvironment.pretendSeratoIsClosed() }
 
     #expect(throws: SeratoPathRewriter.RewriteError.trackNotFound) {
         try SeratoPathRewriter.rewritePath("Music/does-not-exist.mp3", to: "Music/other.mp3", in: scratchFile)

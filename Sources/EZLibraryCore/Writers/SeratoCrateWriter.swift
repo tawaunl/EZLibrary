@@ -23,6 +23,45 @@ public enum SeratoCrateWriter {
     /// freshly created crate.
     private static let defaultColumns: [(name: String, width: String)] = [("song", "250")]
 
+    /// Rewrites the `ptrk` path inside every `otrk` record whose current path
+    /// is a key in `pathMap`, copying every other chunk through byte for byte.
+    ///
+    /// Unlike `makeCrateData`, this is safe on a `.scrate`: smart crates carry
+    /// their rule definitions (`rart`/`rlut`/`rurt`) and column layout
+    /// alongside a *materialized* list of member paths, and regenerating one
+    /// from paths alone throws the rules away. Skipping smart crates instead
+    /// was worse — Serato re-imports a stale path from them and re-adds the
+    /// renamed track as a second, missing entry.
+    public static func rewritingTrackPaths(
+        _ pathMap: [String: String],
+        in fileData: Data
+    ) -> (data: Data, rewrittenCount: Int) {
+        guard !pathMap.isEmpty else { return (fileData, 0) }
+
+        var rewrittenCount = 0
+        let chunks = SeratoChunkCodec.readChunks(from: fileData)
+
+        let newChunks: [SeratoChunk] = chunks.map { chunk in
+            guard chunk.tag == "otrk" else { return chunk }
+            let fields = SeratoChunkCodec.readChunks(from: chunk.payload)
+            guard
+                let ptrk = fields.first(where: { $0.tag == "ptrk" }),
+                let newPath = pathMap[SeratoChunkCodec.decodeUTF16BEString(ptrk.payload)]
+            else {
+                return chunk
+            }
+
+            rewrittenCount += 1
+            let newFields = fields.map { field -> SeratoChunk in
+                guard field.tag == "ptrk" else { return field }
+                return SeratoChunk(tag: "ptrk", payload: SeratoChunkCodec.encodeUTF16BEString(newPath))
+            }
+            return SeratoChunk(tag: "otrk", payload: SeratoChunkCodec.writeChunks(newFields))
+        }
+
+        return (SeratoChunkCodec.writeChunks(newChunks), rewrittenCount)
+    }
+
     public static func makeCrateData(trackPaths: [String]) -> Data {
         var chunks: [SeratoChunk] = [
             SeratoChunk(tag: "vrsn", payload: SeratoChunkCodec.encodeUTF16BEString(versionString))
