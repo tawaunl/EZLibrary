@@ -9,6 +9,54 @@ version (`CFBundleShortVersionString.CFBundleVersion`) and are used verbatim by
 > the highest priority — see [SECURITY.md](../SECURITY.md). This changelog is kept
 > up to date so you can see exactly what changed and when.
 
+## 1.0.0
+
+### Renaming a file no longer loses it in Serato
+- Renaming a track from its tags used to orphan it: Serato showed the renamed
+  file as a brand-new track and the original as **"cannot be located"**, losing
+  the cue points, beat grid and play count attached to it.
+- A rename now updates **everything Serato reads** in one operation — its SQLite
+  library, `database V2`, plain crates, and smart crates — so the track keeps
+  its identity, its cues, and its crate membership.
+- Smart crates were the last piece: a `.scrate` keeps a materialized list of
+  member paths beside its rules, and a stale path there was enough for Serato to
+  re-import the old name as a second, missing entry.
+- Renames now refuse and roll back rather than half-apply. If the track can't be
+  matched in Serato's library, the file is put back under its original name.
+
+### Bulk rename
+- New **Rename Files From Tags** button in the Tracks & Tags bulk bar: renames
+  every selected file using your filename format, and updates Serato to match.
+- A resizable preview lists every rename before anything happens, with a plain
+  summary of what's being skipped and why.
+- Anything ambiguous is skipped rather than guessed — tracks already named
+  correctly, names that would collide with another selected track, destinations
+  already taken, and tracks not in the Serato library.
+- Renames the whole selection in a single pass over each file, so a large
+  selection stays fast.
+
+### Filename format
+- The filename template in Settings now actually drives renaming. It previously
+  only fed the settings preview while renames used a fixed
+  `artist-title-album-year-genre` pattern.
+- Tokens that have no value are dropped along with their separators, so a
+  missing album or year can't leave a stray dash in the name.
+
+### Library index repair
+- New `EZLibraryCLI repair-locations` command re-points Serato's library at
+  where files actually are, for libraries knocked out of sync by an earlier
+  move or consolidation. Previews by default; `--apply` writes.
+- Matches on filename and file size, repairs rows in place so cues and crate
+  membership survive, and reports anything it can't resolve instead of guessing.
+
+### Fixes
+- Re-saving a track without changing anything no longer walks its filename to
+  `name (2)`, then `name (3)` — the file was being treated as a collision with
+  itself.
+- Tag-write verification now runs before the library is written. It previously
+  ran after, so a failed verification rolled the file rename back while leaving
+  the new path committed — exactly the state where Serato can't find the track.
+
 ## 0.1.0.9
 
 ### Audio-verified duplicate detection
