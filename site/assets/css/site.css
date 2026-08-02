@@ -51,7 +51,12 @@ body {
   overflow-x: hidden;
 }
 
-img { max-width: 100%; display: block; }
+/* `height: auto` is load-bearing. The screenshots carry width/height attributes
+   (so the browser can reserve the right box before they load), and those act as
+   a presentational height. Without this, max-width shrinks the width while the
+   height stays pinned at the attribute value and every screenshot renders
+   stretched vertically. */
+img { max-width: 100%; height: auto; display: block; }
 
 a { color: var(--gold); text-decoration: none; }
 a:hover { color: var(--gold-bright); text-decoration: underline; }
@@ -312,10 +317,7 @@ section { position: relative; }
 }
 .shot img { width: 100%; display: block; background: var(--surface-2); }
 
-.shot-hero {
-  margin-top: 56px;
-  transform: perspective(1800px) rotateX(2.2deg);
-}
+.shot-hero { margin-top: 56px; }
 
 .shot-placeholder {
   aspect-ratio: 16 / 10;
@@ -688,7 +690,7 @@ a.card::after {
   body { font-size: 16px; }
   .section { padding: 60px 0; }
   .hero { padding: 60px 0 10px; }
-  .shot-hero { transform: none; margin-top: 40px; }
+  .shot-hero { margin-top: 40px; }
 
   .nav-toggle { display: block; }
   .nav {
@@ -716,5 +718,4 @@ a.card::after {
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
   html { scroll-behavior: auto; }
-  .shot-hero { transform: none; }
 }
