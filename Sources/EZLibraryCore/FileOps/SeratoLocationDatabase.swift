@@ -159,6 +159,34 @@ public enum SeratoLocationDatabase {
         return try handle.allAssets()
     }
 
+    /// Whether any `asset` row carries this exact file name.
+    ///
+    /// Distinguishes "Serato has never seen this file" from "Serato knows this
+    /// file but we failed to match its row". Callers about to rename a file
+    /// need that difference: the first is safe to proceed with, the second
+    /// would strand a row pointing at a name that no longer exists.
+    ///
+    /// Matched on the base file name rather than the portable ID on purpose —
+    /// the portable ID is what `rewritePaths` already tried and missed, so
+    /// reusing it here would just repeat the same failure.
+    public static func containsAsset(
+        named fileName: String,
+        in locationDatabaseURL: URL
+    ) throws -> Bool {
+        guard !fileName.isEmpty else { return false }
+        guard FileManager.default.fileExists(atPath: locationDatabaseURL.path) else {
+            return false
+        }
+
+        let handle = try Connection(url: locationDatabaseURL)
+        defer { handle.close() }
+
+        guard handle.hasLocationSchema else {
+            throw LocationError.unsupportedSchema
+        }
+        return try handle.hasAsset(named: fileName)
+    }
+
     /// Applies path updates addressed by `asset.id`. Same in-place semantics
     /// as `rewritePaths` — the row keeps its identity, so cues, beat grids,
     /// play counts and crate membership come along with it.
@@ -490,6 +518,18 @@ public enum SeratoLocationDatabase {
             switch sqlite3_step(statement) {
             case SQLITE_ROW: return sqlite3_column_int64(statement, 0)
             case SQLITE_DONE: return nil
+            default: throw lastError()
+            }
+        }
+
+        func hasAsset(named fileName: String) throws -> Bool {
+            let statement = try prepare("SELECT 1 FROM asset WHERE file_name = ?1 COLLATE NOCASE LIMIT 1")
+            defer { sqlite3_finalize(statement) }
+            try bind(text: fileName, to: statement, at: 1)
+
+            switch sqlite3_step(statement) {
+            case SQLITE_ROW: return true
+            case SQLITE_DONE: return false
             default: throw lastError()
             }
         }

@@ -368,4 +368,121 @@ private func makeEnvironment() throws -> Environment {
     #expect(try reopened.queryInt("SELECT COUNT(*) FROM asset") == 1)
 }
 
+/// A freshly imported track — downloaded, tagged, never yet opened in Serato —
+/// has no `asset` row of its own. Renaming it strands nothing, so it must be
+/// allowed even though the rest of the library is full of other tracks' rows.
+///
+/// This used to fail: the guard asked whether the library had *any* assets,
+/// which is true of every real library, so every new download was refused with
+/// "Could not find this track in Serato's library index".
+@Test func renamesATrackSeratoHasNeverIndexedInANonEmptyLibrary() throws {
+    let env = try makeEnvironment()
+    defer { try? FileManager.default.removeItem(at: env.root) }
+
+    TestSeratoEnvironment.pretendSeratoIsClosed()
+    defer { TestSeratoEnvironment.pretendSeratoIsClosed() }
+
+    let fixtureRoot = Bundle.module.url(forResource: "Fixtures/RealLibrarySample", withExtension: nil)!
+    let databaseFileURL = env.libraryDirectory.appendingPathComponent("database V2")
+    try FileManager.default.copyItem(at: fixtureRoot.appendingPathComponent("database V2"), to: databaseFileURL)
+    try FileManager.default.copyItem(
+        at: fixtureRoot.appendingPathComponent("Subcrates"),
+        to: env.libraryDirectory.appendingPathComponent("Subcrates")
+    )
+
+    let rootDirectory = SeratoLibraryLocator.rootDirectory(for: env.libraryDirectory)
+    let tracks = try SeratoDatabaseParser.parseTracks(at: databaseFileURL, rootDirectory: rootDirectory)
+    let target = try #require(tracks.first)
+
+    // The library is busy — but every row belongs to some other track, exactly
+    // like a real library the moment after a download lands.
+    let database = try TestLocationDatabase(at: env.locationDatabaseURL)
+    try database.createSeratoSchema()
+    try database.insertAsset(id: 1, portableID: "Music/Some Other Track.mp3")
+    try database.insertAsset(id: 2, portableID: "Music/Yet Another Track.mp3")
+    database.close()
+
+    try FileManager.default.createDirectory(
+        at: target.fileURL.deletingLastPathComponent(),
+        withIntermediateDirectories: true
+    )
+    try Data("audio".utf8).write(to: target.fileURL)
+
+    let metadata = SeratoTrackMetadataUpdate(
+        title: "Dump Truck", artist: "E-40 & Too $hort", album: "",
+        genre: "", comment: "", key: "", bpm: nil, year: nil)
+
+    try SeratoTrackMetadataEditor.update(
+        track: target,
+        metadata: metadata,
+        databaseFileURL: databaseFileURL,
+        rewriteFilenameFromMetadata: true
+    )
+
+    let renamedFileURL = target.fileURL
+        .deletingLastPathComponent()
+        .appendingPathComponent("E-40 & Too $hort-Dump Truck.\(target.fileURL.pathExtension)")
+    #expect(FileManager.default.fileExists(atPath: renamedFileURL.path))
+
+    // The other tracks' rows are untouched — we added nothing and moved nothing.
+    let reopened = try TestLocationDatabase(at: env.locationDatabaseURL)
+    defer { reopened.close() }
+    #expect(try reopened.queryInt("SELECT COUNT(*) FROM asset") == 2)
+    #expect(try reopened.queryString("SELECT portable_id FROM asset WHERE id = 1")
+        == "Music/Some Other Track.mp3")
+}
+
+/// The guard still has to fire for its real case: Serato knows this file, but
+/// the row's path didn't match, so renaming would leave that row pointing at a
+/// name that no longer exists.
+@Test func refusesToRenameWhenSeratoKnowsTheFileButTheRowDidNotMatch() throws {
+    let env = try makeEnvironment()
+    defer { try? FileManager.default.removeItem(at: env.root) }
+
+    TestSeratoEnvironment.pretendSeratoIsClosed()
+    defer { TestSeratoEnvironment.pretendSeratoIsClosed() }
+
+    let fixtureRoot = Bundle.module.url(forResource: "Fixtures/RealLibrarySample", withExtension: nil)!
+    let databaseFileURL = env.libraryDirectory.appendingPathComponent("database V2")
+    try FileManager.default.copyItem(at: fixtureRoot.appendingPathComponent("database V2"), to: databaseFileURL)
+    try FileManager.default.copyItem(
+        at: fixtureRoot.appendingPathComponent("Subcrates"),
+        to: env.libraryDirectory.appendingPathComponent("Subcrates")
+    )
+
+    let rootDirectory = SeratoLibraryLocator.rootDirectory(for: env.libraryDirectory)
+    let tracks = try SeratoDatabaseParser.parseTracks(at: databaseFileURL, rootDirectory: rootDirectory)
+    let target = try #require(tracks.first)
+
+    // Same file name, but filed under a directory the rewriter won't resolve
+    // to — so the row exists, refers to this file, and won't be matched.
+    let database = try TestLocationDatabase(at: env.locationDatabaseURL)
+    try database.createSeratoSchema()
+    try database.insertAsset(
+        id: 5, portableID: "SomewhereElse/\(target.fileURL.lastPathComponent)")
+    database.close()
+
+    try FileManager.default.createDirectory(
+        at: target.fileURL.deletingLastPathComponent(),
+        withIntermediateDirectories: true
+    )
+    try Data("audio".utf8).write(to: target.fileURL)
+
+    let metadata = SeratoTrackMetadataUpdate(
+        title: "New Title", artist: "New Artist", album: "",
+        genre: "", comment: "", key: "", bpm: nil, year: nil)
+
+    #expect(throws: SeratoTrackMetadataEditor.EditError.self) {
+        try SeratoTrackMetadataEditor.update(
+            track: target,
+            metadata: metadata,
+            databaseFileURL: databaseFileURL,
+            rewriteFilenameFromMetadata: true
+        )
+    }
+
+    // Rolled back: the file keeps its original name.
+    #expect(FileManager.default.fileExists(atPath: target.fileURL.path))
+}
+
 }

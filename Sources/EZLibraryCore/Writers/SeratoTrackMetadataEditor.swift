@@ -199,12 +199,20 @@ public enum SeratoTrackMetadataEditor {
                     }
                 }
 
-                // A track Serato has never seen has no row to orphan, so an
-                // empty library is fine — but if it has assets and none of
-                // them matched, renaming the file would strand the one that
-                // does refer to it. Fail instead, and let the rollback put
-                // the file back under its original name.
-                if !didUpdateAnyAsset, try locationDatabasesContainAnyAsset(locationDatabases) {
+                // A track Serato has never seen has no row to orphan, so
+                // there's nothing to strand and the rename is safe. Only a
+                // file Serato *does* know about, whose row we failed to match,
+                // is dangerous — renaming that leaves the row pointing at a
+                // name that no longer exists. Fail there, and let the rollback
+                // put the file back under its original name.
+                //
+                // Asked by file name: a whole-library "are there any assets at
+                // all" check answers a different question, and answers it wrong
+                // for every freshly imported track in a library that isn't
+                // empty — which is every real library.
+                if !didUpdateAnyAsset,
+                   try locationDatabasesContainAsset(
+                       named: originalFileURL.lastPathComponent, in: locationDatabases) {
                     throw EditError.trackNotFoundInLocationDatabase(matchedOldStoredPath)
                 }
             }
@@ -485,8 +493,12 @@ public enum SeratoTrackMetadataEditor {
     /// Whether any of Serato's location databases has assets at all. Used to
     /// tell "this track isn't indexed yet" apart from "there's no index",
     /// since only the former means a rename would strand a row.
-    private static func locationDatabasesContainAnyAsset(_ databases: [URL]) throws -> Bool {
-        for database in databases where try !SeratoLocationDatabase.assets(in: database).isEmpty {
+    private static func locationDatabasesContainAsset(
+        named fileName: String,
+        in databases: [URL]
+    ) throws -> Bool {
+        for database in databases
+        where try SeratoLocationDatabase.containsAsset(named: fileName, in: database) {
             return true
         }
         return false
