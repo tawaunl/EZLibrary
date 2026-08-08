@@ -108,8 +108,12 @@ hasn't been touched in months.
   Silence** snap them just inside the leading and trailing silence
 - Zoom in to place a cut precisely — buttons, `+`/`−`, pinch, or **Zoom to
   Selection** — and scroll through the track while zoomed
-- Nudge the marker with `←`/`→` (hold `⇧` for 1s steps, `⌥` for 0.01s), then
+- Familiar transport: play/pause, skip ±5s, jump to the start or end of the
+  track, and a fast-forward speed that cycles 1× → 1.5× → 2× → 4×
+- Nudge the playhead with `←`/`→` (hold `⇧` for 1s steps, `⌥` for 0.01s), then
   press `I` or `O` to make that exact spot the new in or out point
+- Drop a marker (`M`) anywhere and jump back to it (`⇧M`) while hunting for the
+  right cut, plus one-click jumps to the in and out points
 - Preview only what you're keeping before committing, including a two-second
   **Preview Out Point** to check the cut lands cleanly
 - **Save In Place** overwrites the file and keeps a timestamped backup of the

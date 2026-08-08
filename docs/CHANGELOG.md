@@ -21,9 +21,19 @@ version (`CFBundleShortVersionString.CFBundleVersion`) and are used verbatim by
   the waveform, **Fit**, and **Zoom to Selection**, with a scrubber for moving
   through the track while zoomed. The waveform is sampled at 400 points per
   second, so zooming reveals real detail instead of stretching the same columns.
-- **Keyboard marker control**: `←`/`→` step the marker by 0.1s (`⇧` for 1s, `⌥`
-  for 0.01s), `⌘←`/`⌘→` jump to the in/out points, and `Space` plays or pauses.
-  The view follows the marker automatically when zoomed in.
+- **Transport controls**: play/pause, skip back and forward 5 seconds, and jump
+  to the start or end of the track, plus a fast-forward button cycling
+  1× → 1.5× → 2× → 4× that scans at real speed rather than skipping.
+- **Jumps and markers**: one-click jumps to the in and out points, and a
+  droppable marker (`M`) you can return to (`⇧M`) while hunting for a cut —
+  distinct from the playhead and drawn separately on the waveform.
+- Playing from inside the selection stops at the out point, so you hear exactly
+  what you'd keep. Playing from past it runs to the end of the file instead, so
+  the tail you're about to cut can be auditioned before you commit to losing it.
+- **Keyboard playhead control**: `←`/`→` step by 0.1s (`⇧` for 1s, `⌥` for
+  0.01s), `⌘←`/`⌘→` jump to the in/out points, `Home`/`End` to the track
+  boundaries, and `Space` plays or pauses. The view follows the playhead
+  automatically when zoomed in.
 - **Set In Here** / **Set Out Here** (or `I` / `O`) make the marker's position
   the new trim point — so you can nudge to the exact spot, set the in point
   there, and play straight from the new start.

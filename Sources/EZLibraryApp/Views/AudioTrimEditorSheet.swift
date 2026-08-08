@@ -28,10 +28,16 @@ final class AudioTrimEditorModel: ObservableObject {
 
     @Published var isPlaying = false
     @Published var playheadSeconds: Double = 0
+    /// Playback speed for scanning. 1 is normal; the transport cycles upward.
+    @Published private(set) var playbackRate: Double = 1
 
     /// Which slice of the track the waveform is showing. All the clamping lives
     /// in the value itself (see `WaveformZoomWindow`).
     @Published private(set) var window = WaveformZoomWindow(duration: 0)
+
+    /// A cue the user drops to come back to, independent of the playhead.
+    /// Nil until they drop one.
+    @Published private(set) var markerSeconds: Double?
 
     @Published var analysis: SeratoAnalysisSummary = .none
     @Published var isSaving = false
@@ -94,6 +100,9 @@ final class AudioTrimEditorModel: ObservableObject {
         // Playback is set up from the file itself so the preview works even if
         // waveform decoding fails.
         if let audioPlayer = try? AVAudioPlayer(contentsOf: track.fileURL) {
+            // Required before `rate` does anything — it's what makes the
+            // fast-forward speeds actually scan rather than play at 1×.
+            audioPlayer.enableRate = true
             audioPlayer.prepareToPlay()
             player = audioPlayer
             setDuration(audioPlayer.duration)
@@ -141,19 +150,19 @@ final class AudioTrimEditorModel: ObservableObject {
         endSeconds = duration
     }
 
-    /// Makes the marker's position the new in point, and cues playback there so
+    /// Makes the playhead's position the new in point, and cues playback there so
     /// the next play starts from the cut the user just made.
     func setInAtPlayhead() {
         setStart(playheadSeconds)
         seek(to: startSeconds)
     }
 
-    /// Makes the marker's position the new out point.
+    /// Makes the playhead's position the new out point.
     func setOutAtPlayhead() {
         setEnd(playheadSeconds)
     }
 
-    /// Steps the marker by `seconds`, following it with the view when zoomed in.
+    /// Steps the playhead by `seconds`, following it with the view when zoomed in.
     /// Stops playback first so the nudge isn't immediately overwritten by the
     /// player's own position on the next tick.
     func nudgePlayhead(by seconds: Double) {
@@ -162,14 +171,14 @@ final class AudioTrimEditorModel: ObservableObject {
         ensurePlayheadVisible()
     }
 
-    /// Jumps the marker to the in or out point — the two places you usually
+    /// Jumps the playhead to the in or out point — the two places you usually
     /// want to start listening from.
-    func movePlayheadToStart() {
+    func movePlayheadToInPoint() {
         seek(to: startSeconds)
         ensurePlayheadVisible()
     }
 
-    func movePlayheadToEnd() {
+    func movePlayheadToOutPoint() {
         seek(to: endSeconds)
         ensurePlayheadVisible()
     }
@@ -193,28 +202,105 @@ final class AudioTrimEditorModel: ObservableObject {
 
     // MARK: - Preview
 
-    /// Plays the selection only, so the user hears exactly what they'd keep.
-    func togglePreview() {
+    /// Where the current run of playback should stop.
+    ///
+    /// Playing from inside the selection stops at the out point, so what you
+    /// hear is exactly what you'd keep. Playing from past it runs to the end of
+    /// the file instead — that's how you audition the tail you're about to cut
+    /// before committing to losing it.
+    private var playbackStopSeconds: Double = 0
+
+    func play() {
         guard let player else { return }
-        if isPlaying {
-            player.pause()
-            isPlaying = false
-            return
-        }
-        if playheadSeconds < startSeconds || playheadSeconds >= endSeconds {
+
+        // Parked on a stopping point — the out point, or the end of the file —
+        // playing would produce nothing at all. Rewind so play always plays.
+        let isParkedAtAStop = playheadSeconds >= duration - 0.01
+            || abs(playheadSeconds - endSeconds) < 0.01
+        if isParkedAtAStop {
             seek(to: startSeconds)
         }
+
+        playbackStopSeconds = playheadSeconds > endSeconds ? duration : endSeconds
+        player.rate = Float(playbackRate)
         player.play()
         isPlaying = true
+    }
+
+    func pause() {
+        guard let player else { return }
+        player.pause()
+        isPlaying = false
+        playheadSeconds = player.currentTime
+    }
+
+    func togglePreview() {
+        if isPlaying {
+            pause()
+        } else {
+            play()
+        }
     }
 
     /// Plays the last two seconds before the out point, the quickest way to
     /// check an outro cut lands cleanly.
     func previewOutPoint() {
-        guard let player else { return }
         seek(to: max(startSeconds, endSeconds - 2))
-        player.play()
-        isPlaying = true
+        play()
+    }
+
+    /// Transport skip. Unlike the arrow-key nudge this doesn't interrupt
+    /// playback — it's the ⏪/⏩ behaviour of jumping while the audio runs on.
+    func skip(by seconds: Double) {
+        seek(to: playheadSeconds + seconds)
+        // Skipping past the out point extends this run to the end of the file,
+        // so fast-forwarding into the trimmed tail doesn't stop dead at the cut.
+        if isPlaying, playheadSeconds > playbackStopSeconds {
+            playbackStopSeconds = duration
+        }
+        ensurePlayheadVisible()
+    }
+
+    /// Cycles the scan speed. Applied live so holding ⏩ down while playing
+    /// speeds up what you're already hearing.
+    func cyclePlaybackRate() {
+        let rates: [Double] = [1, 1.5, 2, 4]
+        let next = rates.firstIndex(of: playbackRate).map { (($0 + 1) % rates.count) } ?? 0
+        playbackRate = rates[next]
+        if isPlaying { player?.rate = Float(playbackRate) }
+    }
+
+    func resetPlaybackRate() {
+        playbackRate = 1
+        if isPlaying { player?.rate = 1 }
+    }
+
+    // MARK: - Jumps
+
+    func jumpToFileStart() {
+        seek(to: 0)
+        ensurePlayheadVisible()
+    }
+
+    func jumpToFileEnd() {
+        seek(to: duration)
+        ensurePlayheadVisible()
+    }
+
+    /// Drops a cue at the playhead — somewhere to wander away from and come
+    /// back to while hunting for a cut point.
+    func dropMarker() {
+        markerSeconds = playheadSeconds
+    }
+
+    func clearMarker() {
+        markerSeconds = nil
+    }
+
+    func jumpToMarker() {
+        guard let markerSeconds else { return }
+        seek(to: markerSeconds)
+        ensurePlayheadVisible()
     }
 
     func seek(to seconds: Double) {
@@ -233,10 +319,10 @@ final class AudioTrimEditorModel: ObservableObject {
     func refreshPlayhead() {
         guard let player, isPlaying else { return }
         playheadSeconds = player.currentTime
-        if player.currentTime >= endSeconds || !player.isPlaying {
+        if player.currentTime >= playbackStopSeconds || !player.isPlaying {
             player.pause()
             isPlaying = false
-            playheadSeconds = min(playheadSeconds, endSeconds)
+            playheadSeconds = min(playheadSeconds, playbackStopSeconds)
         }
         ensurePlayheadVisible()
     }
@@ -338,6 +424,7 @@ struct AudioTrimEditorSheet: View {
             waveformSection
             zoomRow
             transportRow
+            editingRow
             selectionFields
             keyboardHintRow
 
@@ -420,6 +507,7 @@ struct AudioTrimEditorSheet: View {
                     startSeconds: model.startSeconds,
                     endSeconds: model.endSeconds,
                     playheadSeconds: model.playheadSeconds,
+                    markerSeconds: model.markerSeconds,
                     windowStart: model.windowStart,
                     windowEnd: model.windowEnd,
                     onScrub: { model.seek(to: $0) },
@@ -470,7 +558,7 @@ struct AudioTrimEditorSheet: View {
             }
             .controlSize(.small)
             .disabled(!model.canZoomIn)
-            .help("Zoom in around the marker (+).")
+            .help("Zoom in around the playhead (+).")
 
             Button("Fit") { model.zoomToFit() }
                 .controlSize(.small)
@@ -513,18 +601,44 @@ struct AudioTrimEditorSheet: View {
     // MARK: - Transport
 
     private var transportRow: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
+            transportButton(
+                "backward.end.fill",
+                help: "Jump to the start of the track (Home)."
+            ) { model.jumpToFileStart() }
+
+            transportButton(
+                "gobackward.5",
+                help: "Skip back 5 seconds."
+            ) { model.skip(by: -5) }
+
             Button {
                 model.togglePreview()
             } label: {
-                Label(
-                    model.isPlaying ? "Pause" : "Play Selection",
-                    systemImage: model.isPlaying ? "pause.fill" : "play.fill")
+                Image(systemName: model.isPlaying ? "pause.fill" : "play.fill")
+                    .frame(width: 22)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.small)
             .disabled(model.duration <= 0)
-            .help("Play only the part you're keeping.")
+            .help(model.isPlaying ? "Pause (Space)." : "Play from the playhead (Space).")
+
+            transportButton(
+                "goforward.5",
+                help: "Skip forward 5 seconds."
+            ) { model.skip(by: 5) }
+
+            transportButton(
+                "forward.end.fill",
+                help: "Jump to the end of the track (End)."
+            ) { model.jumpToFileEnd() }
+
+            Button(speedLabel) { model.cyclePlaybackRate() }
+                .controlSize(.small)
+                .disabled(model.duration <= 0)
+                .help("Fast-forward speed. Click to cycle 1× → 1.5× → 2× → 4×.")
+
+            Divider().frame(height: 14)
 
             Button("Preview Out Point") {
                 model.previewOutPoint()
@@ -532,6 +646,66 @@ struct AudioTrimEditorSheet: View {
             .controlSize(.small)
             .disabled(model.duration <= 0)
             .help("Play the last two seconds before the out point, to check the cut lands cleanly.")
+
+            Spacer()
+
+            Text("\(formatTime(model.playheadSeconds)) / \(formatTime(model.duration))")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var speedLabel: String {
+        model.playbackRate == 1.5 ? "1.5×" : String(format: "%.0f×", model.playbackRate)
+    }
+
+    private func transportButton(
+        _ systemImage: String,
+        help: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage).frame(width: 22)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .disabled(model.duration <= 0)
+        .help(help)
+    }
+
+    // MARK: - Jumps and selection editing
+
+    private var editingRow: some View {
+        HStack(spacing: 8) {
+            Button("To In") { model.movePlayheadToInPoint() }
+                .controlSize(.small)
+                .disabled(model.duration <= 0)
+                .help("Move the playhead to the in point (⌘←).")
+
+            Button("To Out") { model.movePlayheadToOutPoint() }
+                .controlSize(.small)
+                .disabled(model.duration <= 0)
+                .help("Move the playhead to the out point (⌘→).")
+
+            Divider().frame(height: 14)
+
+            Button("Drop Marker") { model.dropMarker() }
+                .controlSize(.small)
+                .disabled(model.duration <= 0)
+                .help("Leave a cue at the playhead to come back to (M).")
+
+            Button(markerJumpLabel) { model.jumpToMarker() }
+                .controlSize(.small)
+                .disabled(model.markerSeconds == nil)
+                .help("Jump back to the dropped marker (⇧M).")
+
+            if model.markerSeconds != nil {
+                Button("Clear") { model.clearMarker() }
+                    .controlSize(.small)
+                    .help("Remove the dropped marker.")
+            }
+
+            Divider().frame(height: 14)
 
             Button("Detect Silence") {
                 if !model.detectSilence() {
@@ -553,24 +727,25 @@ struct AudioTrimEditorSheet: View {
             Button("Set In Here") { model.setInAtPlayhead() }
                 .controlSize(.small)
                 .disabled(model.duration <= 0)
-                .help("Start the trimmed track at the marker (I). Playback then starts from there.")
+                .help("Start the trimmed track at the playhead (I). Playback then starts from there.")
 
             Button("Set Out Here") { model.setOutAtPlayhead() }
                 .controlSize(.small)
                 .disabled(model.duration <= 0)
-                .help("End the trimmed track at the marker (O).")
+                .help("End the trimmed track at the playhead (O).")
 
-            Spacer()
-
-            Text("\(formatTime(model.playheadSeconds)) / \(formatTime(model.duration))")
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
         }
     }
 
+    private var markerJumpLabel: String {
+        guard let markerSeconds = model.markerSeconds else { return "To Marker" }
+        return "To Marker (\(formatTime(markerSeconds)))"
+    }
+
     private var keyboardHintRow: some View {
-        Text("Space play/pause · ← → move marker (⇧ 1s, ⌥ 0.01s) · I/O set in/out · "
-            + "⌘← ⌘→ jump to in/out · + − zoom")
+        Text("Space play/pause · ← → move playhead (⇧ 1s, ⌥ 0.01s) · I/O set in/out · "
+            + "⌘← ⌘→ to in/out · Home/End to track start/end · M drop marker, ⇧M return · + − zoom")
             .font(.caption2)
             .foregroundStyle(.secondary)
     }
@@ -712,6 +887,9 @@ struct AudioTrimEditorSheet: View {
         static let equal: UInt16 = 24
         static let keypadMinus: UInt16 = 78
         static let keypadPlus: UInt16 = 69
+        static let letterM: UInt16 = 46
+        static let home: UInt16 = 115
+        static let end: UInt16 = 119
     }
 
     private func installKeyboardMonitor() {
@@ -741,10 +919,18 @@ struct AudioTrimEditorSheet: View {
         switch event.keyCode {
         case Key.space where !isCommand:
             model.togglePreview()
+        case Key.home:
+            model.jumpToFileStart()
+        case Key.end:
+            model.jumpToFileEnd()
+        case Key.letterM where modifiers.contains(.shift):
+            model.jumpToMarker()
+        case Key.letterM where !isCommand:
+            model.dropMarker()
         case Key.leftArrow where isCommand:
-            model.movePlayheadToStart()
+            model.movePlayheadToInPoint()
         case Key.rightArrow where isCommand:
-            model.movePlayheadToEnd()
+            model.movePlayheadToOutPoint()
         case Key.leftArrow:
             model.nudgePlayhead(by: -nudgeStep(for: modifiers))
         case Key.rightArrow:
@@ -810,6 +996,9 @@ private struct TrimWaveformView: View {
     let startSeconds: Double
     let endSeconds: Double
     let playheadSeconds: Double
+    /// A dropped cue, drawn distinctly from the playhead so the two don't read
+    /// as the same thing when they happen to sit near each other.
+    let markerSeconds: Double?
     /// The slice of the track currently on screen. At zoom 1 this is the whole
     /// file; zoomed in, everything below maps against this window instead.
     let windowStart: Double
@@ -864,6 +1053,17 @@ private struct TrimWaveformView: View {
                 }
                 if isVisible(endSeconds) {
                     handle(at: endX, height: height, systemImage: "arrow.left.to.line")
+                }
+
+                if let markerSeconds, isVisible(markerSeconds) {
+                    Rectangle()
+                        .fill(Color.orange)
+                        .frame(width: 1, height: height)
+                        .offset(x: xPosition(for: markerSeconds, width: width))
+                    Image(systemName: "mappin")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(Color.orange)
+                        .offset(x: xPosition(for: markerSeconds, width: width) - 3, y: height - 14)
                 }
 
                 if isVisible(playheadSeconds) {
