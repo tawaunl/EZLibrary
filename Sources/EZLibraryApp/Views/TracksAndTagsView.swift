@@ -71,11 +71,15 @@ struct TracksAndTagsView: View {
     /// Renames the selected files from their tags using the Settings
     /// template. Optional so previews and other call sites can omit it.
     var onBulkRename: (([Track]) -> Void)?
+    /// Reloads the library after a trim changed a file or added a new one.
+    var onAudioEdited: (() -> Void)?
 
     @AppStorage("SeratoToolsConfirmTrackDeleteActions") private var confirmDeleteActions = true
     @State private var selectedScopeID: String = Self.allTracksID
     @State private var selectedTracks: [Track] = []
     @State private var metadataLookupTrack: Track?
+    @State private var audioEditTrack: Track?
+    @State private var audioEditMessage: String?
     @State private var searchText = ""
     @State private var selectedGenreFilter: String?
     @State private var fillFilter: FillField?
@@ -255,6 +259,17 @@ struct TracksAndTagsView: View {
         .sheet(item: $metadataLookupTrack) { track in
             TrackMetadataEditorSheet(track: track) { metadata in
                 try onApplyMetadata(track, metadata)
+            }
+        }
+        .sheet(item: $audioEditTrack) { track in
+            AudioTrimEditorSheet(
+                track: track,
+                libraryDirectory: libraryService.libraryDirectory
+            ) { summary in
+                audioEditMessage = summary
+                // The file's length changed and a save-as adds a new record, so
+                // the in-memory library is stale either way.
+                onAudioEdited?()
             }
         }
         .confirmationDialog(
@@ -474,7 +489,25 @@ struct TracksAndTagsView: View {
                         + "(\(SeratoFeatureFlags.filenameFormatTemplate())), and update Serato to match. "
                         + "Shows what will change before anything is renamed.")
                 }
+
+                Divider()
+                    .frame(height: 16)
+
+                Button("Edit Audio…") {
+                    audioEditTrack = selectedTracks.first
+                }
+                .disabled(selectedTracks.count != 1)
+                .help(
+                    "Trim silence or unwanted sections off the selected track. "
+                    + "Save over the file or write a new one. Select exactly one track.")
+
                 Spacer(minLength: 0)
+            }
+
+            if let audioEditMessage {
+                Text(audioEditMessage)
+                    .font(.caption)
+                    .foregroundStyle(.green)
             }
 
             if let bulkLookupMessage {

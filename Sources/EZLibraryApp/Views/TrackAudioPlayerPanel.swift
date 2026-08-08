@@ -299,6 +299,12 @@ struct TrackAudioPlayerPanel: View {
                 return event
             }
 
+            // A sheet on top owns the keyboard while it's up — the trim editor
+            // also binds Space, and both firing would toggle two players at once.
+            if NSApp.keyWindow?.isSheet == true {
+                return event
+            }
+
             if !event.modifierFlags.intersection([.command, .option, .control]).isEmpty {
                 return event
             }

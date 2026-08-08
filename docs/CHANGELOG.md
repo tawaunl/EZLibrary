@@ -9,6 +9,38 @@ version (`CFBundleShortVersionString.CFBundleVersion`) and are used verbatim by
 > the highest priority — see [SECURITY.md](../SECURITY.md). This changelog is kept
 > up to date so you can see exactly what changed and when.
 
+## Unreleased
+
+### Audio trim editor
+- New **Edit Audio…** button in the Tracks & Tags bar opens a waveform editor
+  for the selected track. Drag the in/out handles, type-check the times, and
+  preview only the part you're keeping before committing.
+- **Detect Silence** snaps the selection just inside the leading and trailing
+  silence, so cutting dead air off a rip is one click.
+- **Zoom** for precise cuts: the `+`/`−` buttons and keys, a pinch gesture over
+  the waveform, **Fit**, and **Zoom to Selection**, with a scrubber for moving
+  through the track while zoomed. The waveform is sampled at 400 points per
+  second, so zooming reveals real detail instead of stretching the same columns.
+- **Keyboard marker control**: `←`/`→` step the marker by 0.1s (`⇧` for 1s, `⌥`
+  for 0.01s), `⌘←`/`⌘→` jump to the in/out points, and `Space` plays or pauses.
+  The view follows the marker automatically when zoomed in.
+- **Set In Here** / **Set Out Here** (or `I` / `O`) make the marker's position
+  the new trim point — so you can nudge to the exact spot, set the in point
+  there, and play straight from the new start.
+- Two ways to save: **Save In Place** overwrites the file (keeping a timestamped
+  backup of the original in EZLibrary's pre-write backup folder), and **Save As
+  New File** writes a second copy, registers it in `database V2`, and files it
+  next to the original in every plain crate that holds it.
+- The cut is a stream copy — no re-encode, so audio quality is untouched and
+  text tags plus embedded cover art survive.
+- Trimming shifts the whole timeline, which invalidates Serato's cue points,
+  saved loops, beatgrid and waveform overview. Those are cleared so Serato
+  re-analyzes the track cleanly rather than showing cues in the wrong places;
+  the editor reads the file first and tells you exactly how many cues and loops
+  you'd lose before you save.
+- Both save paths refuse while Serato is running, since Serato rewrites its
+  library from memory on quit and would undo the change.
+
 ## 1.0.0
 
 ### Renaming a file no longer loses it in Serato

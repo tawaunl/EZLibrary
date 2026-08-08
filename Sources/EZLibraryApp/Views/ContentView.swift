@@ -450,6 +450,9 @@ struct ContentView: View {
                     },
                     onBulkRename: { selected in
                         prepareBulkRename(for: selected)
+                    },
+                    onAudioEdited: {
+                        reloadLibrary()
                     }
                 )
             }

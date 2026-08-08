@@ -102,6 +102,24 @@ hasn't been touched in months.
 - Perform quick actions with confirmation controls
 - Edit metadata with online lookup and fingerprint-assisted suggestions
 
+### Audio Trim Editor
+
+- Trim a track from a waveform: drag the in/out handles, or let **Detect
+  Silence** snap them just inside the leading and trailing silence
+- Zoom in to place a cut precisely — buttons, `+`/`−`, pinch, or **Zoom to
+  Selection** — and scroll through the track while zoomed
+- Nudge the marker with `←`/`→` (hold `⇧` for 1s steps, `⌥` for 0.01s), then
+  press `I` or `O` to make that exact spot the new in or out point
+- Preview only what you're keeping before committing, including a two-second
+  **Preview Out Point** to check the cut lands cleanly
+- **Save In Place** overwrites the file and keeps a timestamped backup of the
+  original; **Save As New File** writes a second copy and adds it to your
+  library beside the original, in every crate the original belongs to
+- Cuts are a stream copy, so nothing is re-encoded — a 320kbps MP3 stays a
+  320kbps MP3, with tags and cover art intact
+- Trimming shifts the timeline, so Serato's cue points, loops and beatgrid are
+  cleared and re-analyzed. The editor counts what you'd lose and warns first
+
 ### PlaylistMatch
 
 - Paste Spotify playlist URLs, CSV rows, or plain text track lists
