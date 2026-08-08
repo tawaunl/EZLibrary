@@ -11,6 +11,27 @@ version (`CFBundleShortVersionString.CFBundleVersion`) and are used verbatim by
 
 ## Unreleased
 
+### YouTube downloads no longer tag the channel as the artist
+- Downloads took the **channel name** as both the artist and the album, and the
+  raw video title as the title. A video titled "E-40 & Too $hort - Dump Truck
+  ft. …" uploaded by "E40TV" was tagged artist `E40TV`, album `E40TV`, title
+  "E-40 & Too $hort - Dump Truck ft. …".
+- With auto-rename from metadata switched on, those wrong values were then baked
+  into the **file name** — and stayed there, because bulk tag operations (Fill
+  Missing Genre/Year, Apply Top Hit) deliberately never rename. So correcting
+  the tags later left the file name stuck on the channel name.
+- The artist and title are now read out of the video title, which is where they
+  actually live, and the channel's format decoration (`(Official Video)`,
+  `[HD]`, `(Lyrics)`, …) is dropped. DJ-meaningful annotations —
+  `(Dirty)`, `(Clean)`, `(Intro)`, `(Extended Mix)`, `(feat. …)` — are kept.
+- When the title has no `Artist - Title` split, the artist is left **empty**
+  rather than guessed. An empty field is easy to fill from a lookup; a wrong one
+  silently corrupts the tag and the file name.
+- Album is no longer seeded from the channel at all — the channel is never an
+  album. It stays empty for a metadata lookup to fill.
+- Existing files keep their old names. **Rename Files From Tags** in Tracks &
+  Tags re-derives them from the corrected tags.
+
 ### Audio trim editor
 - New **Edit Audio…** button in the Tracks & Tags bar opens a waveform editor
   for the selected track. Drag the in/out handles, type-check the times, and
