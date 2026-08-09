@@ -96,6 +96,66 @@ private actor OnlineMetadataLookupCache {
     }
 }
 
+/// Paces outbound requests to a single source and backs off when that source
+/// starts throttling us.
+///
+/// The iTunes Search API is undocumented about its exact budget but starts
+/// answering with an empty-bodied 403/429 after roughly 20-60 requests a
+/// minute. The bulk tag actions blow through that in seconds, so without
+/// pacing a bulk run fails nearly every lookup. The interval adapts: it doubles
+/// on each throttled response and relaxes back toward the floor as requests
+/// succeed, so a single lookup stays fast while a long bulk run settles at
+/// whatever rate the source actually allows.
+actor RequestPacer {
+    static let itunes = RequestPacer(floor: 0.25)
+    /// MusicBrainz documents a hard 1 request/second limit.
+    static let musicBrainz = RequestPacer(floor: 1.0)
+    /// Discogs allows 60 authenticated requests a minute.
+    static let discogs = RequestPacer(floor: 1.0)
+
+    /// Scales every wait this pacer hands out. Tests set it to 0 so they exercise
+    /// the retry and backoff logic without sleeping through the real intervals.
+    nonisolated(unsafe) static var delayScale: Double = 1.0
+
+    private let floor: TimeInterval
+    private let ceiling: TimeInterval = 8.0
+    private var interval: TimeInterval
+    private var nextSlot = Date.distantPast
+
+    init(floor: TimeInterval) {
+        self.floor = floor
+        self.interval = floor
+    }
+
+    /// Clears the adaptive state so one test's backoff doesn't slow the next.
+    func resetForTesting() {
+        interval = floor
+        nextSlot = .distantPast
+    }
+
+    /// Claims the next send slot and returns how long the caller must wait
+    /// before sending. The caller sleeps outside the actor so reserving a slot
+    /// never blocks other callers.
+    func reserveSlot() -> TimeInterval {
+        let now = Date()
+        let slot = max(now, nextSlot)
+        nextSlot = slot.addingTimeInterval(interval)
+        return slot.timeIntervalSince(now) * Self.delayScale
+    }
+
+    func recordThrottled(retryAfter: TimeInterval?) {
+        interval = min(ceiling, max(interval * 2, floor))
+        // Honor Retry-After when the source sends one, but never let a stray
+        // large value stall the queue past the ceiling.
+        let cooldown = min(retryAfter ?? interval, ceiling) * Self.delayScale
+        nextSlot = max(nextSlot, Date().addingTimeInterval(cooldown))
+    }
+
+    func recordSuccess() {
+        interval = max(floor, interval * 0.8)
+    }
+}
+
 public enum OnlineTrackMetadataLookupService {
     public static let discogsTokenEnvironmentKey = "EZLIBRARY_DISCOGS_TOKEN"
     /// Legacy environment key, still honored for backward compatibility.
@@ -162,6 +222,7 @@ public enum OnlineTrackMetadataLookupService {
         case missingSearchTerms
         case missingDiscogsToken
         case sourceRequestFailed(OnlineMetadataSource, String)
+        case rateLimited(OnlineMetadataSource)
 
         public var errorDescription: String? {
             switch self {
@@ -171,8 +232,72 @@ public enum OnlineTrackMetadataLookupService {
                 return "Discogs lookup requires an API token. Set EZLIBRARY_DISCOGS_TOKEN or save a Discogs token in the app settings."
             case let .sourceRequestFailed(source, message):
                 return "\(source.displayName) lookup failed: \(message)"
+            case let .rateLimited(source):
+                return "\(source.displayName) is rate limiting requests right now. Wait a minute and try again, or look up fewer tracks at a time."
             }
         }
+
+        /// True when the failure is a throttle the user can simply wait out.
+        public var isRateLimit: Bool {
+            if case .rateLimited = self { return true }
+            return false
+        }
+    }
+
+    /// Status codes that mean "you are asking too often" for a given source.
+    /// iTunes answers a throttled search with a 403, where the same code from
+    /// Discogs means the token is bad and retrying would not help.
+    private static func throttleStatuses(for source: OnlineMetadataSource) -> Set<Int> {
+        switch source {
+        case .itunes:
+            return [403, 429, 503]
+        case .musicBrainz, .discogs:
+            return [429, 503]
+        }
+    }
+
+    /// Sends a request through the source's pacer, checks the HTTP status, and
+    /// retries throttled responses with backoff.
+    ///
+    /// Checking the status matters more than it looks: a throttled iTunes reply
+    /// is a 403 with a zero-byte body, so without this the JSON decode failed
+    /// and the empty result was reported as "no matches found" rather than as
+    /// the rate limit it actually was.
+    private static func performRequest(
+        _ request: URLRequest,
+        source: OnlineMetadataSource,
+        pacer: RequestPacer,
+        session: URLSession,
+        maxAttempts: Int = 3,
+        errorMessage: (@Sendable (Data) -> String?)? = nil
+    ) async throws -> Data {
+        var lastThrottle: LookupError?
+
+        for attempt in 1...maxAttempts {
+            let delay = await pacer.reserveSlot()
+            if delay > 0 {
+                try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            }
+
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse else { return data }
+
+            switch http.statusCode {
+            case 200...299:
+                await pacer.recordSuccess()
+                return data
+            case let code where throttleStatuses(for: source).contains(code):
+                let retryAfter = (http.value(forHTTPHeaderField: "Retry-After")).flatMap(TimeInterval.init)
+                await pacer.recordThrottled(retryAfter: retryAfter)
+                lastThrottle = .rateLimited(source)
+                if attempt == maxAttempts { throw LookupError.rateLimited(source) }
+            default:
+                let detail = errorMessage?(data) ?? "HTTP \(http.statusCode)"
+                throw LookupError.sourceRequestFailed(source, detail)
+            }
+        }
+
+        throw lastThrottle ?? .rateLimited(source)
     }
 
     public static func lookup(
@@ -192,31 +317,45 @@ public enum OnlineTrackMetadataLookupService {
         }
 
         let result: [OnlineTrackMetadataCandidate]
+        // Only a run where every source answered is worth caching: caching a
+        // partial result would keep serving the sources that happened to
+        // succeed for the next five minutes.
+        var isComplete = true
         if sourceSelection == .all {
             let token = discogsToken()
-            let combined = await withTaskGroup(of: [OnlineTrackMetadataCandidate].self) { group in
+            let outcomes = await withTaskGroup(of: Result<[OnlineTrackMetadataCandidate], Error>.self) { group in
                 for source in sourceSelection.enabledSources {
                     group.addTask {
                         do {
-                            return try await fetchCandidates(
+                            return .success(try await fetchCandidates(
                                 from: source,
                                 query: normalized,
                                 maxResults: maxResultsPerSource,
                                 session: session,
                                 discogsToken: token,
                                 sourceSelection: sourceSelection
-                            )
+                            ))
                         } catch {
-                            return []
+                            return .failure(error)
                         }
                     }
                 }
 
-                var all: [OnlineTrackMetadataCandidate] = []
-                for await sourceResults in group {
-                    all.append(contentsOf: sourceResults)
+                var all: [Result<[OnlineTrackMetadataCandidate], Error>] = []
+                for await outcome in group {
+                    all.append(outcome)
                 }
                 return all
+            }
+
+            let combined = outcomes.flatMap { (try? $0.get()) ?? [] }
+            isComplete = primaryFailure(in: outcomes) == nil
+            // A source failing while another returns matches is not worth
+            // surfacing, but every source failing must not look like "no
+            // matches found" — that reads as a missing track rather than as
+            // the rate limit or outage it usually is.
+            if combined.isEmpty, let failure = primaryFailure(in: outcomes) {
+                throw failure
             }
 
             result = deduplicated(candidates: combined)
@@ -233,8 +372,29 @@ public enum OnlineTrackMetadataLookupService {
             result = deduplicated(candidates: results)
         }
 
-        await OnlineMetadataLookupCache.shared.set(cacheKey, results: result)
+        // Only cache hits. Caching an empty result meant one throttled or
+        // interrupted search kept answering "no matches" from memory for the
+        // next five minutes, so retrying appeared to do nothing.
+        if !result.isEmpty, isComplete {
+            await OnlineMetadataLookupCache.shared.set(cacheKey, results: result)
+        }
         return result
+    }
+
+    /// Picks the most useful error to report when every source failed,
+    /// preferring a rate limit since that is the one the user can act on.
+    private static func primaryFailure(
+        in outcomes: [Result<[OnlineTrackMetadataCandidate], Error>]
+    ) -> Error? {
+        let errors = outcomes.compactMap { outcome -> Error? in
+            if case let .failure(error) = outcome { return error }
+            return nil
+        }
+
+        if let throttled = errors.first(where: { ($0 as? LookupError)?.isRateLimit == true }) {
+            return throttled
+        }
+        return errors.first
     }
 
     /// Same lookup as `lookup(query:sourceSelection:maxResultsPerSource:session:)`,
@@ -274,7 +434,9 @@ public enum OnlineTrackMetadataLookupService {
                             sourceSelection: sourceSelection
                         )
                         let deduped = deduplicated(candidates: results)
-                        await OnlineMetadataLookupCache.shared.set(cacheKey, results: deduped)
+                        if !deduped.isEmpty {
+                            await OnlineMetadataLookupCache.shared.set(cacheKey, results: deduped)
+                        }
                         continuation.yield(deduped)
                         continuation.finish()
                     } catch {
@@ -285,28 +447,53 @@ public enum OnlineTrackMetadataLookupService {
 
                 let token = discogsToken()
                 var accumulated: [OnlineTrackMetadataCandidate] = []
-                await withTaskGroup(of: [OnlineTrackMetadataCandidate].self) { group in
+                var failures: [Result<[OnlineTrackMetadataCandidate], Error>] = []
+                await withTaskGroup(of: Result<[OnlineTrackMetadataCandidate], Error>.self) { group in
                     for source in sourceSelection.enabledSources {
                         group.addTask {
-                            (try? await fetchCandidates(
-                                from: source,
-                                query: normalized,
-                                maxResults: maxResultsPerSource,
-                                session: session,
-                                discogsToken: token,
-                                sourceSelection: sourceSelection
-                            )) ?? []
+                            do {
+                                return .success(try await fetchCandidates(
+                                    from: source,
+                                    query: normalized,
+                                    maxResults: maxResultsPerSource,
+                                    session: session,
+                                    discogsToken: token,
+                                    sourceSelection: sourceSelection
+                                ))
+                            } catch {
+                                return .failure(error)
+                            }
                         }
                     }
 
-                    for await sourceResults in group {
-                        guard !sourceResults.isEmpty else { continue }
+                    for await outcome in group {
+                        failures.append(outcome)
+                        guard let sourceResults = try? outcome.get(), !sourceResults.isEmpty else { continue }
                         accumulated.append(contentsOf: sourceResults)
                         continuation.yield(deduplicated(candidates: accumulated))
                     }
                 }
 
-                await OnlineMetadataLookupCache.shared.set(cacheKey, results: deduplicated(candidates: accumulated))
+                // Cancellation (the user closing the sheet or starting a new
+                // search) must not write the partial results it got so far into
+                // the cache, or the next search for this track serves them.
+                guard !Task.isCancelled else {
+                    continuation.finish()
+                    return
+                }
+
+                let failure = primaryFailure(in: failures)
+                if accumulated.isEmpty, let failure {
+                    continuation.finish(throwing: failure)
+                    return
+                }
+
+                // As above: a partial result (say iTunes throttled but
+                // MusicBrainz answered) must not be cached as if it were the
+                // full answer.
+                if !accumulated.isEmpty, failure == nil {
+                    await OnlineMetadataLookupCache.shared.set(cacheKey, results: deduplicated(candidates: accumulated))
+                }
                 continuation.finish()
             }
 
@@ -476,8 +663,16 @@ public enum OnlineTrackMetadataLookupService {
 
         guard let url = components?.url else { return [] }
 
-        let (data, _) = try await session.data(from: url)
-        let decoded = try JSONDecoder().decode(ITunesSearchResponse.self, from: data)
+        var request = URLRequest(url: url)
+        request.setValue("EZLibrary/1.0 (metadata lookup)", forHTTPHeaderField: "User-Agent")
+
+        let data = try await performRequest(request, source: .itunes, pacer: .itunes, session: session)
+        let decoded: ITunesSearchResponse
+        do {
+            decoded = try JSONDecoder().decode(ITunesSearchResponse.self, from: data)
+        } catch {
+            throw LookupError.sourceRequestFailed(.itunes, "Received an unexpected response format from iTunes.")
+        }
 
         return decoded.results.map { item in
             OnlineTrackMetadataCandidate(
@@ -525,8 +720,13 @@ public enum OnlineTrackMetadataLookupService {
         var request = URLRequest(url: url)
         request.setValue("EZLibrary/1.0 (metadata lookup)", forHTTPHeaderField: "User-Agent")
 
-        let (data, _) = try await session.data(for: request)
-        let decoded = try JSONDecoder().decode(MusicBrainzResponse.self, from: data)
+        let data = try await performRequest(request, source: .musicBrainz, pacer: .musicBrainz, session: session)
+        let decoded: MusicBrainzResponse
+        do {
+            decoded = try JSONDecoder().decode(MusicBrainzResponse.self, from: data)
+        } catch {
+            throw LookupError.sourceRequestFailed(.musicBrainz, "Received an unexpected response format from MusicBrainz.")
+        }
 
         return decoded.recordings.map { recording in
             let artist = recording.artistCredit?.first?.name ?? ""
@@ -599,12 +799,15 @@ public enum OnlineTrackMetadataLookupService {
         request.setValue("EZLibrary/1.0 (metadata lookup)", forHTTPHeaderField: "User-Agent")
         request.setValue("Discogs token=\(token)", forHTTPHeaderField: "Authorization")
 
-        let (data, response) = try await session.data(for: request)
-        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-            let apiError = (try? JSONDecoder().decode(DiscogsErrorResponse.self, from: data))?.message
-            let message = apiError ?? "HTTP \(http.statusCode)"
-            throw LookupError.sourceRequestFailed(.discogs, message)
-        }
+        let data = try await performRequest(
+            request,
+            source: .discogs,
+            pacer: .discogs,
+            session: session,
+            errorMessage: { body in
+                (try? JSONDecoder().decode(DiscogsErrorResponse.self, from: body))?.message
+            }
+        )
 
         let decoded: DiscogsSearchResponse
         do {

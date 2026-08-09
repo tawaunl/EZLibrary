@@ -733,7 +733,7 @@ struct TracksAndTagsView: View {
 
         Task.detached(priority: .userInitiated) {
             do {
-                let candidateMap = try await Self.fetchBulkLookupCandidates(
+                let lookupOutcome = try await Self.fetchBulkLookupCandidates(
                     for: lookupItems.map { ($0.key, $0.query) }
                 )
 
@@ -742,7 +742,7 @@ struct TracksAndTagsView: View {
                     let needsGenre = item.track.genre.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     let needsYear = item.track.year == nil
 
-                    guard let candidate = candidateMap[item.key] else {
+                    guard let candidate = lookupOutcome.candidates[item.key] else {
                         continue
                     }
 
@@ -786,9 +786,10 @@ struct TracksAndTagsView: View {
 
                 await MainActor.run {
                     isBulkLookupRunning = false
-                    bulkLookupMessage = updatedCount > 0
+                    let summary = updatedCount > 0
                         ? "Updated genre/year for \(updatedCount) track\(updatedCount == 1 ? "" : "s")."
                         : "No missing genre/year values were filled."
+                    bulkLookupMessage = summary + (lookupOutcome.failureNote ?? "")
                 }
             } catch {
                 await MainActor.run {
@@ -822,13 +823,13 @@ struct TracksAndTagsView: View {
 
         Task.detached(priority: .userInitiated) {
             do {
-                let candidateMap = try await Self.fetchBulkLookupCandidates(
+                let lookupOutcome = try await Self.fetchBulkLookupCandidates(
                     for: lookupItems.map { ($0.key, $0.query) }
                 )
 
                 var updates: [(Track, SeratoTrackMetadataUpdate)] = []
                 for item in lookupItems {
-                    guard let candidate = candidateMap[item.key] else {
+                    guard let candidate = lookupOutcome.candidates[item.key] else {
                         continue
                     }
 
@@ -875,6 +876,7 @@ struct TracksAndTagsView: View {
                     isBulkLookupRunning = false
                     if updates.isEmpty {
                         bulkLookupMessage = "No top-hit metadata updates were applied."
+                            + (lookupOutcome.failureNote ?? "")
                         pendingTopHitUpdates = []
                     } else {
                         pendingTopHitUpdates = updates
@@ -974,16 +976,35 @@ struct TracksAndTagsView: View {
         }
     }
 
+    struct BulkLookupOutcome {
+        var candidates: [String: OnlineTrackMetadataCandidate] = [:]
+        /// Lookups that failed outright, as opposed to simply finding no match.
+        var failureCount = 0
+        var wasRateLimited = false
+
+        /// Trailing sentence for the completion message, so a run that mostly
+        /// failed doesn't read as a library with no matches online.
+        var failureNote: String? {
+            guard failureCount > 0 else { return nil }
+            let tracks = "\(failureCount) track\(failureCount == 1 ? "" : "s")"
+            return wasRateLimited
+                ? " \(tracks) could not be looked up because the online source is rate limiting — wait a minute and run it again."
+                : " \(tracks) could not be looked up because the online source could not be reached."
+        }
+    }
+
     private static func fetchBulkLookupCandidates(
         for lookups: [(key: String, query: OnlineTrackMetadataLookupService.Query)]
-    ) async throws -> [String: OnlineTrackMetadataCandidate] {
-        guard !lookups.isEmpty else { return [:] }
+    ) async throws -> BulkLookupOutcome {
+        guard !lookups.isEmpty else { return BulkLookupOutcome() }
 
-        var results: [String: OnlineTrackMetadataCandidate] = [:]
+        var outcome = BulkLookupOutcome()
         var iterator = lookups.makeIterator()
-        let parallelism = min(8, lookups.count)
+        // The service paces its own requests, so this only needs to be wide
+        // enough to keep that queue fed.
+        let parallelism = min(4, lookups.count)
 
-        await withTaskGroup(of: (String, OnlineTrackMetadataCandidate?).self) { group in
+        await withTaskGroup(of: (String, Result<OnlineTrackMetadataCandidate?, Error>).self) { group in
             func addNextTask() {
                 guard let item = iterator.next() else { return }
                 group.addTask {
@@ -992,9 +1013,9 @@ struct TracksAndTagsView: View {
                             query: item.query,
                             sourceSelection: .itunes
                         )
-                        return (item.key, lookupResults.first)
+                        return (item.key, .success(lookupResults.first))
                     } catch {
-                        return (item.key, nil)
+                        return (item.key, .failure(error))
                     }
                 }
             }
@@ -1003,15 +1024,24 @@ struct TracksAndTagsView: View {
                 addNextTask()
             }
 
-            while let (key, candidate) = await group.next() {
-                if let candidate {
-                    results[key] = candidate
+            while let (key, result) = await group.next() {
+                switch result {
+                case let .success(candidate):
+                    if let candidate {
+                        outcome.candidates[key] = candidate
+                    }
+                case let .failure(error):
+                    outcome.failureCount += 1
+                    if let lookupError = error as? OnlineTrackMetadataLookupService.LookupError,
+                       lookupError.isRateLimit {
+                        outcome.wasRateLimited = true
+                    }
                 }
                 addNextTask()
             }
         }
 
-        return results
+        return outcome
     }
 
     private func bulkLookupKey(for track: Track) -> String {
