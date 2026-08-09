@@ -191,6 +191,9 @@ public enum LibraryFolderSyncService {
                     do {
                         try fileManager.moveItem(at: fileURL, to: proposed)
                         renamedFiles.append(Rename(from: fileURL, to: proposed))
+                        renamedStoredPaths[
+                            SeratoLibraryLocator.seratoStoredPath(for: fileURL, rootDirectory: rootDirectory)
+                        ] = SeratoLibraryLocator.seratoStoredPath(for: proposed, rootDirectory: rootDirectory)
                         finalURL = proposed
                     } catch {
                         renameSkipped += 1
@@ -211,6 +214,15 @@ public enum LibraryFolderSyncService {
         if inserted > 0 {
             try AtomicFileWriter.write(data, to: databaseFileURL)
         }
+
+        // A crate can list a track that `database V2` doesn't have — that is
+        // exactly the file this sync treats as new. Renaming it without
+        // repointing the crate would drop it out of that crate, so the crates
+        // are repointed for every rename.
+        try rewriteCratePaths(
+            renamedStoredPaths,
+            libraryDirectory: databaseFileURL.deletingLastPathComponent()
+        )
 
         return SyncResult(
             scannedAudioFiles: normalizedAudioFiles.count,
@@ -320,6 +332,31 @@ public enum LibraryFolderSyncService {
             bpm: nil,
             year: nil
         )
+    }
+
+    /// Repoints every crate that lists a renamed file at its new path.
+    ///
+    /// Smart crates are included: a `.scrate` keeps a materialized list of
+    /// member paths next to its rules, and a stale entry there is what makes
+    /// Serato log "Adding track not found in database … but found in crate"
+    /// and re-add the file as a second, missing entry.
+    private static func rewriteCratePaths(
+        _ renamedStoredPaths: [String: String],
+        libraryDirectory: URL
+    ) throws {
+        guard !renamedStoredPaths.isEmpty else { return }
+
+        let entries = SeratoLibraryLocator.subcrateFiles(in: libraryDirectory)
+            + SeratoLibraryLocator.smartCrateFiles(in: libraryDirectory)
+
+        for entry in entries {
+            let crateData = try Data(contentsOf: entry.url)
+            let rewritten = SeratoCrateWriter.rewritingTrackPaths(renamedStoredPaths, in: crateData)
+            guard rewritten.rewrittenCount > 0 else { continue }
+
+            try SeratoBackupBeforeWrite.snapshot(of: entry.url)
+            try AtomicFileWriter.write(rewritten.data, to: entry.url)
+        }
     }
 
     /// The name `metadata` renders under `template`, or nil when the template

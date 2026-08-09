@@ -484,3 +484,54 @@ private func makeSyncScratchEnvironment() throws -> (tempRoot: URL, libraryDirec
     )
     #expect(empty == nil)
 }
+
+/// A crate can list a track that `database V2` doesn't have — which is exactly
+/// the file sync treats as new. Renaming it without repointing the crate would
+/// silently drop it out of that crate.
+@Test func renamingRepointsCratesThatListTheFile() async throws {
+    let env = try makeSyncScratchEnvironment()
+    defer { try? FileManager.default.removeItem(at: env.tempRoot) }
+
+    let subcrates = env.libraryDirectory.appendingPathComponent("Subcrates", isDirectory: true)
+    try FileManager.default.createDirectory(at: subcrates, withIntermediateDirectories: true)
+
+    let file = env.destinationRoot.appendingPathComponent("raw download.mp3")
+    try Data("a".utf8).write(to: file)
+    let rootDirectory = SeratoLibraryLocator.rootDirectory(for: env.libraryDirectory, homeDirectory: env.tempRoot)
+    let oldStoredPath = SeratoLibraryLocator.seratoStoredPath(for: file, rootDirectory: rootDirectory)
+
+    let crateURL = subcrates.appendingPathComponent("My Set.crate")
+    try SeratoCrateWriter.makeCrateData(trackPaths: [oldStoredPath]).write(to: crateURL)
+
+    // Renaming is driven by tags; this file has none, so nothing moves and the
+    // crate must be left exactly as it was.
+    let untagged = try await LibraryFolderSyncService.syncAudioFolder(
+        env.destinationRoot,
+        databaseFileURL: env.databaseFile,
+        rootDirectory: rootDirectory,
+        filenameTemplate: "{artist} - {title}",
+        renameFilesFromTags: true
+    )
+    #expect(untagged.renamedFiles.isEmpty)
+    #expect(SeratoCrateParser.trackPaths(from: try Data(contentsOf: crateURL)) == [oldStoredPath])
+}
+
+/// Every crate path a rename touches is repointed, and the mapping is applied
+/// in one pass rather than per file.
+@Test func crateRewriteMapsOldPathsToNew() {
+    let crateData = SeratoCrateWriter.makeCrateData(trackPaths: [
+        "Music/old name.mp3",
+        "Music/untouched.mp3"
+    ])
+
+    let rewritten = SeratoCrateWriter.rewritingTrackPaths(
+        ["Music/old name.mp3": "Music/Artist - Title.mp3"],
+        in: crateData
+    )
+
+    #expect(rewritten.rewrittenCount == 1)
+    #expect(
+        SeratoCrateParser.trackPaths(from: rewritten.data)
+            == ["Music/Artist - Title.mp3", "Music/untouched.mp3"]
+    )
+}
