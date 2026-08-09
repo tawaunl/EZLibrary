@@ -11,6 +11,15 @@ version (`CFBundleShortVersionString.CFBundleVersion`) and are used verbatim by
 
 ## Unreleased
 
+### All Tracks browser in the Crates view
+- The Crates section now has a **Crate Contents / All Tracks** switch beside the
+  tree. All Tracks lists the whole library with the same search and sorting as
+  the Tracks view, so a song can be found and dragged straight onto a crate
+  without leaving the section — the tree stays visible as the drop target.
+- Dropping a track a crate already contains no longer files it twice. Serato
+  reads a repeated path as a second copy, and dropping something already filed
+  is the easiest mistake to make when dragging from a full-library list.
+
 ### Tag values are trimmed on save
 - Every text field written to `database V2` and to a file's ID3 frames — title,
   artist, album, genre, comment, key — is now whitespace-trimmed.

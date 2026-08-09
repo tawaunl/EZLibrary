@@ -586,9 +586,18 @@ struct CrateTreeView: View {
             do {
                 guard let fileURL = targetCrate.fileURL else { return }
                 let latestCrate = try SeratoCrateParser.parseCrate(at: fileURL)
+
+                // Skip paths the crate already lists. Serato treats a repeated
+                // path as a second copy of the track, and dropping something
+                // that's already filed is the easiest mistake to make when
+                // dragging from a full-library list.
+                let existing = Set(latestCrate.trackPaths)
+                let additions = uniqueDropped.filter { !existing.contains($0) }
+                guard !additions.isEmpty else { return }
+
                 _ = try SeratoCrateEditor.rewriteTrackPaths(
                     in: latestCrate,
-                    to: latestCrate.trackPaths + uniqueDropped
+                    to: latestCrate.trackPaths + additions
                 )
                 onCratesChanged()
             } catch {

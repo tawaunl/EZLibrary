@@ -61,6 +61,25 @@ struct ContentView: View {
     @State private var loadErrorMessage: String?
     @State private var libraryPathDraft = ""
 
+    /// Which browser the Crates section shows beside the tree. All Tracks is
+    /// there so a track can be found and dragged onto a crate without leaving
+    /// the section — the tree stays visible as the drop target either way.
+    fileprivate enum CratesBrowserPane: String, CaseIterable, Identifiable {
+        case crateContents
+        case allTracks
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .crateContents: return "Crate Contents"
+            case .allTracks: return "All Tracks"
+            }
+        }
+    }
+
+    @State private var cratesBrowserPane: CratesBrowserPane = .crateContents
+
     @State private var pendingTrackDeleteSelection: [Track] = []
     @State private var showTrackDeleteDialog = false
     /// Wrapped so the sheet can be driven by `.sheet(item:)`, which hands the
@@ -490,19 +509,44 @@ struct ContentView: View {
                     )
                     .frame(minWidth: middlePaneWidth, idealWidth: middlePaneWidth, maxWidth: middlePaneWidth)
 
-                    Group {
-                        if let node = selectedCrateNode {
-                            CrateDetailView(
-                                node: node,
-                                filterMode: crateListFilterMode,
-                                onCratesChanged: reloadLibrary,
+                    VStack(alignment: .leading, spacing: 8) {
+                        Picker("", selection: $cratesBrowserPane) {
+                            ForEach(CratesBrowserPane.allCases) { pane in
+                                Text(pane.title).tag(pane)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .frame(maxWidth: 280)
+                        .help("Switch between the selected crate's contents and the whole library.")
+
+                        switch cratesBrowserPane {
+                        case .crateContents:
+                            if let node = selectedCrateNode {
+                                CrateDetailView(
+                                    node: node,
+                                    filterMode: crateListFilterMode,
+                                    onCratesChanged: reloadLibrary,
+                                    onTrackActivated: { track, list in
+                                        activateAudioTrack(track, in: list)
+                                    }
+                                )
+                            } else {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text("Select a crate to see what's in it.")
+                                        .foregroundStyle(.secondary)
+                                    Button("Browse All Tracks") {
+                                        cratesBrowserPane = .allTracks
+                                    }
+                                    .buttonStyle(.link)
+                                }
+                            }
+                        case .allTracks:
+                            AllTracksBrowserView(
                                 onTrackActivated: { track, list in
                                     activateAudioTrack(track, in: list)
                                 }
                             )
-                        } else {
-                            Text("Select an item")
-                                .foregroundStyle(.secondary)
                         }
                     }
                     .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
