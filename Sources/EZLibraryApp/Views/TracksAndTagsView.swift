@@ -92,6 +92,8 @@ struct TracksAndTagsView: View {
     @State private var bulkLookupMessage: String?
     @State private var operationErrorMessage: String?
     @State private var pendingTopHitUpdates: [(Track, SeratoTrackMetadataUpdate)] = []
+    @State private var pendingTagRefreshPlan: LibraryTagRefreshService.Plan?
+    @State private var showTagRefreshConfirmation = false
     @State private var showTopHitConfirmation = false
     @State private var pendingWhitespaceFindings: [TagWhitespaceCleanupService.Finding] = []
     @State private var showWhitespaceCleanupConfirmation = false
@@ -298,6 +300,20 @@ struct TracksAndTagsView: View {
             }
         }
         .confirmationDialog(
+            "Re-read Tags From Files",
+            isPresented: $showTagRefreshConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Update \(pendingTagRefreshPlan?.changes.count ?? 0) Track\((pendingTagRefreshPlan?.changes.count ?? 0) == 1 ? "" : "s")") {
+                applyPendingTagRefresh()
+            }
+            Button("Cancel", role: .cancel) {
+                pendingTagRefreshPlan = nil
+            }
+        } message: {
+            Text(tagRefreshConfirmationMessage)
+        }
+        .confirmationDialog(
             "Apply Top-Hit Metadata",
             isPresented: $showTopHitConfirmation,
             titleVisibility: .visible
@@ -479,6 +495,11 @@ struct TracksAndTagsView: View {
                 }
                 .disabled(selectedTracks.count != 1)
                 .help("Search online sources for metadata for the selected track. Select exactly one track.")
+                Button("Re-read Tags From Files") {
+                    prepareTagRefresh()
+                }
+                .disabled(selectedTracks.isEmpty || isBulkLookupRunning)
+                .help("Read each selected file's own tags and correct the library where it disagrees. Nothing is written until you confirm, and a field is only replaced when the file actually has a value for it.")
                 Button("Fill Missing Genre/Year") {
                     lookupMissingGenreAndYear()
                 }
@@ -705,6 +726,79 @@ struct TracksAndTagsView: View {
 
         let updatedCount = updates.count
         bulkLookupMessage = "Applied changes to \(updatedCount) track\(updatedCount == 1 ? "" : "s")."
+    }
+
+    // MARK: - Re-read tags from files
+
+    private var tagRefreshConfirmationMessage: String {
+        guard let plan = pendingTagRefreshPlan else { return "" }
+
+        var fieldCounts: [String: Int] = [:]
+        for change in plan.changes {
+            for field in change.fields {
+                fieldCounts[field.field, default: 0] += 1
+            }
+        }
+        let breakdown = fieldCounts
+            .sorted { $0.value > $1.value }
+            .map { "\($0.key) \($0.value)" }
+            .joined(separator: ", ")
+
+        var message = "\(plan.changes.count) track\(plan.changes.count == 1 ? "" : "s") disagree with their file's tags"
+        message += breakdown.isEmpty ? "." : " (\(breakdown))."
+        message += " \(plan.unchangedCount) already match."
+        if !plan.missingFiles.isEmpty {
+            message += " \(plan.missingFiles.count) file\(plan.missingFiles.count == 1 ? " is" : "s are") missing from disk and will be skipped."
+        }
+        if !plan.untaggedFiles.isEmpty {
+            message += " \(plan.untaggedFiles.count) file\(plan.untaggedFiles.count == 1 ? " has" : "s have") no tags to read and will be skipped."
+        }
+        message += " The database is backed up before anything is written."
+        return message
+    }
+
+    private func prepareTagRefresh() {
+        guard !selectedTracks.isEmpty else { return }
+
+        bulkLookupMessage = nil
+        operationErrorMessage = nil
+        isBulkLookupRunning = true
+
+        let tracksSnapshot = selectedTracks
+
+        Task {
+            let plan = await LibraryTagRefreshService.plan(for: tracksSnapshot)
+
+            await MainActor.run {
+                isBulkLookupRunning = false
+                guard !plan.isEmpty else {
+                    pendingTagRefreshPlan = nil
+                    bulkLookupMessage = "Every selected track already matches its file's tags."
+                    return
+                }
+                pendingTagRefreshPlan = plan
+                showTagRefreshConfirmation = true
+            }
+        }
+    }
+
+    private func applyPendingTagRefresh() {
+        guard let plan = pendingTagRefreshPlan else { return }
+        pendingTagRefreshPlan = nil
+
+        let updates = plan.changes.map { ($0.track, $0.metadata) }
+        do {
+            if let onApplyMetadataBatch {
+                try onApplyMetadataBatch(updates)
+            } else {
+                for (track, metadata) in updates {
+                    try onApplyMetadata(track, metadata)
+                }
+            }
+            bulkLookupMessage = "Updated \(updates.count) track\(updates.count == 1 ? "" : "s") from their files' tags."
+        } catch {
+            operationErrorMessage = error.localizedDescription
+        }
     }
 
     private func lookupMissingGenreAndYear() {

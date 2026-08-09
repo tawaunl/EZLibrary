@@ -390,12 +390,28 @@ public enum LibraryFolderSyncService {
         return (artist: "", title: normalizeTitleGuess(baseName))
     }
 
-    private static func normalizeFilenameComponent(_ raw: String) -> String {
+    static func normalizeFilenameComponent(_ raw: String) -> String {
         var value = raw.replacingOccurrences(of: "_", with: " ")
 
-        // Strip common leading index prefixes like "01 - " or "1. ".
-        let indexPattern = #"^\s*\d{1,3}(?:\s*[-._)]\s*|\s+)"#
-        value = value.replacingOccurrences(of: indexPattern, with: "", options: .regularExpression)
+        // Strip a leading track-index prefix, but only in the forms an index
+        // actually takes — a zero-padded number ("01 - ", "007 ") or a number
+        // followed by "." / ")" ("1. ", "3) ").
+        //
+        // Matching any leading number ate artists whose names start with
+        // digits: "50 Cent" became "Cent", "2 Pac" became "Pac", and "112 -
+        // Its Over Now" lost its artist entirely. Those are far more common in
+        // a DJ library than a bare "3 - " index, so an unpadded number with
+        // only a space or dash after it is now left alone.
+        let indexPatterns = [
+            #"^\s*0\d{1,2}(?:\s*[-._)]\s*|\s+)"#,
+            #"^\s*\d{1,3}\s*[.)]\s*"#
+        ]
+        for pattern in indexPatterns {
+            if let range = value.range(of: pattern, options: .regularExpression) {
+                value.removeSubrange(range)
+                break
+            }
+        }
 
         value = value.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
         return value.trimmingCharacters(in: .whitespacesAndNewlines)
