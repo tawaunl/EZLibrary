@@ -593,6 +593,10 @@ struct AddMusicView: View {
         let usesCentralCrate = usesCentralCrate
         let selectedCentralCrate = selectedCentralCrate
         let filenameTemplate = SeratoFeatureFlags.filenameFormatTemplate()
+        // Same preference that governs renaming after a tag edit: it is the
+        // "name files from their metadata" switch, and sync is another place
+        // that metadata becomes known.
+        let renameFilesFromTags = SeratoFeatureFlags.isAutoRenameFromMetadataEnabled()
 
         isSyncingFolder = true
         errorMessage = nil
@@ -605,7 +609,8 @@ struct AddMusicView: View {
                         folderURL,
                         databaseFileURL: databaseFileURL,
                         rootDirectory: rootDirectory,
-                        filenameTemplate: filenameTemplate
+                        filenameTemplate: filenameTemplate,
+                        renameFilesFromTags: renameFilesFromTags
                     )
                 }.value
 
@@ -626,7 +631,13 @@ struct AddMusicView: View {
                     )
                 }
 
-                let baseMessage = "Scanned \(result.scannedAudioFiles) files. Inserted \(result.insertedTracks), already in library \(result.alreadyPresentTracks)."
+                var baseMessage = "Scanned \(result.scannedAudioFiles) files. Inserted \(result.insertedTracks), already in library \(result.alreadyPresentTracks)."
+                if !result.renamedFiles.isEmpty {
+                    baseMessage += " Renamed \(result.renamedFiles.count) file\(result.renamedFiles.count == 1 ? "" : "s") from their tags."
+                }
+                if result.renameSkippedCount > 0 {
+                    baseMessage += " \(result.renameSkippedCount) kept its existing name because the new one was already taken."
+                }
                 if let crateName = crateResults.first?.crateName {
                     successMessage = "\(baseMessage) Added tracks to crate \(crateName)."
                 } else {

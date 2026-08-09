@@ -11,6 +11,16 @@
 import Foundation
 
 public enum LibraryFolderSyncService {
+    public struct Rename: Sendable {
+        public let from: URL
+        public let to: URL
+
+        public init(from: URL, to: URL) {
+            self.from = from
+            self.to = to
+        }
+    }
+
     public struct SyncResult: Sendable {
         public let scannedAudioFiles: Int
         public let insertedTracks: Int
@@ -18,17 +28,25 @@ public enum LibraryFolderSyncService {
         /// The files that were actually added to the database, so a caller can
         /// act on just those rather than on everything it scanned.
         public let insertedFileURLs: [URL]
+        /// Files renamed to match the naming template.
+        public let renamedFiles: [Rename]
+        /// Files that would have been renamed but whose target name was taken.
+        public let renameSkippedCount: Int
 
         public init(
             scannedAudioFiles: Int,
             insertedTracks: Int,
             alreadyPresentTracks: Int,
-            insertedFileURLs: [URL] = []
+            insertedFileURLs: [URL] = [],
+            renamedFiles: [Rename] = [],
+            renameSkippedCount: Int = 0
         ) {
             self.scannedAudioFiles = scannedAudioFiles
             self.insertedTracks = insertedTracks
             self.alreadyPresentTracks = alreadyPresentTracks
             self.insertedFileURLs = insertedFileURLs
+            self.renamedFiles = renamedFiles
+            self.renameSkippedCount = renameSkippedCount
         }
     }
 
@@ -65,6 +83,7 @@ public enum LibraryFolderSyncService {
         databaseFileURL: URL,
         rootDirectory: URL,
         filenameTemplate: String = TrackFilenameFormatter.defaultTemplate,
+        renameFilesFromTags: Bool = false,
         fileManager: FileManager = .default
     ) async throws -> SyncResult {
         var isDirectory: ObjCBool = false
@@ -86,6 +105,7 @@ public enum LibraryFolderSyncService {
             databaseFileURL: databaseFileURL,
             rootDirectory: rootDirectory,
             filenameTemplate: filenameTemplate,
+            renameFilesFromTags: renameFilesFromTags,
             fileManager: fileManager
         )
     }
@@ -95,6 +115,7 @@ public enum LibraryFolderSyncService {
         databaseFileURL: URL,
         rootDirectory: URL,
         filenameTemplate: String = TrackFilenameFormatter.defaultTemplate,
+        renameFilesFromTags: Bool = false,
         fileManager: FileManager = .default
     ) async throws -> SyncResult {
         guard fileManager.fileExists(atPath: databaseFileURL.path) else {
@@ -142,13 +163,48 @@ public enum LibraryFolderSyncService {
         // and the database is appended to afterwards in the original order.
         let metadataByPath = await metadata(for: missingFiles, template: filenameTemplate)
 
+        var renamedFiles: [Rename] = []
+        var renameSkipped = 0
+        var insertedFiles: [URL] = []
+        // Old -> new stored path for every rename, applied to the crates in one
+        // pass afterwards.
+        var renamedStoredPaths: [String: String] = [:]
+
         for fileURL in missingFiles {
-            let storedPath = SeratoLibraryLocator.seratoStoredPath(for: fileURL, rootDirectory: rootDirectory)
+            let resolved = metadataByPath[fileURL.path]
+            var finalURL = fileURL
+
+            // Rename only when the file's own tags produced the name. Renaming
+            // from a filename guess would just rewrite a guess as if it were
+            // fact, and the guess came from the very name being replaced.
+            if renameFilesFromTags, let resolved, resolved.hasUsableTags,
+               let proposed = proposedRenameURL(
+                   for: fileURL,
+                   metadata: resolved.metadata,
+                   template: filenameTemplate
+               ) {
+                if fileManager.fileExists(atPath: proposed.path) {
+                    // Something already owns that name; keep ours rather than
+                    // inventing a "(2)" variant.
+                    renameSkipped += 1
+                } else {
+                    do {
+                        try fileManager.moveItem(at: fileURL, to: proposed)
+                        renamedFiles.append(Rename(from: fileURL, to: proposed))
+                        finalURL = proposed
+                    } catch {
+                        renameSkipped += 1
+                    }
+                }
+            }
+
+            let storedPath = SeratoLibraryLocator.seratoStoredPath(for: finalURL, rootDirectory: rootDirectory)
             data = SeratoDatabaseWriter.appendingTrack(
                 storedPath: storedPath,
-                metadata: metadataByPath[fileURL.path],
+                metadata: resolved?.metadata,
                 to: data
             )
+            insertedFiles.append(finalURL)
             inserted += 1
         }
 
@@ -160,8 +216,18 @@ public enum LibraryFolderSyncService {
             scannedAudioFiles: normalizedAudioFiles.count,
             insertedTracks: inserted,
             alreadyPresentTracks: alreadyPresent,
-            insertedFileURLs: missingFiles
+            insertedFileURLs: insertedFiles,
+            renamedFiles: renamedFiles,
+            renameSkippedCount: renameSkipped
         )
+    }
+
+    /// Metadata for one file, and whether the file's own tags supplied the
+    /// fields a filename is built from. Renaming is only ever allowed on the
+    /// strength of real tags, never on a filename guess.
+    struct ResolvedMetadata: Sendable {
+        let metadata: SeratoTrackMetadataUpdate
+        let hasUsableTags: Bool
     }
 
     /// Resolves metadata for several files at once, reading their tags
@@ -170,13 +236,13 @@ public enum LibraryFolderSyncService {
         for fileURLs: [URL],
         template: String,
         maxConcurrentReads: Int = 8
-    ) async -> [String: SeratoTrackMetadataUpdate] {
+    ) async -> [String: ResolvedMetadata] {
         guard !fileURLs.isEmpty else { return [:] }
 
-        var resolved: [String: SeratoTrackMetadataUpdate] = [:]
+        var resolved: [String: ResolvedMetadata] = [:]
         var iterator = fileURLs.makeIterator()
 
-        await withTaskGroup(of: (String, SeratoTrackMetadataUpdate).self) { group in
+        await withTaskGroup(of: (String, ResolvedMetadata).self) { group in
             func addNext() {
                 guard let fileURL = iterator.next() else { return }
                 group.addTask {
@@ -202,11 +268,11 @@ public enum LibraryFolderSyncService {
     /// name didn't follow the "Artist - Title" shape got a mangled artist and
     /// title written into Serato, and with auto-rename-from-metadata enabled
     /// that guess then renamed the file itself.
-    static func metadata(for fileURL: URL, template: String) async -> SeratoTrackMetadataUpdate {
+    static func metadata(for fileURL: URL, template: String) async -> ResolvedMetadata {
         let tags = await AudioFileTagReader.readTags(from: fileURL)
         let guessed = filenameMetadata(for: fileURL, template: template)
 
-        return SeratoTrackMetadataUpdate(
+        let metadata = SeratoTrackMetadataUpdate(
             title: nonEmpty(tags.title) ?? guessed.title,
             artist: nonEmpty(tags.artist) ?? guessed.artist,
             album: nonEmpty(tags.album) ?? guessed.album,
@@ -215,6 +281,13 @@ public enum LibraryFolderSyncService {
             key: guessed.key,
             bpm: guessed.bpm,
             year: tags.year ?? guessed.year
+        )
+
+        // A name is built from title/artist, so those are the tags that decide
+        // whether renaming this file is grounded in the file itself.
+        return ResolvedMetadata(
+            metadata: metadata,
+            hasUsableTags: nonEmpty(tags.title) != nil || nonEmpty(tags.artist) != nil
         )
     }
 
@@ -247,6 +320,26 @@ public enum LibraryFolderSyncService {
             bpm: nil,
             year: nil
         )
+    }
+
+    /// The name `metadata` renders under `template`, or nil when the template
+    /// produces nothing or the file already has that name.
+    static func proposedRenameURL(
+        for fileURL: URL,
+        metadata: SeratoTrackMetadataUpdate,
+        template: String
+    ) -> URL? {
+        let stem = TrackFilenameFormatter.renderStem(for: metadata, template: template)
+        guard !stem.isEmpty else { return nil }
+
+        let pathExtension = fileURL.pathExtension
+        var candidate = fileURL.deletingLastPathComponent().appendingPathComponent(stem)
+        if !pathExtension.isEmpty {
+            candidate.appendPathExtension(pathExtension)
+        }
+
+        guard candidate.lastPathComponent != fileURL.lastPathComponent else { return nil }
+        return candidate
     }
 
     /// Drops the `(2)` that importing adds when a filename is already taken

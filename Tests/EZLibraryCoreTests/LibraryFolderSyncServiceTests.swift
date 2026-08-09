@@ -407,3 +407,80 @@ private func makeSyncScratchEnvironment() throws -> (tempRoot: URL, libraryDirec
     #expect(second.alreadyPresentTracks == 1)
     #expect(second.insertedFileURLs.map(\.lastPathComponent) == ["Brand New.mp3"])
 }
+
+// MARK: - Renaming from tags
+
+/// Renaming is off unless asked for, so a plain sync never touches filenames.
+@Test func syncLeavesFilenamesAloneByDefault() async throws {
+    let env = try makeSyncScratchEnvironment()
+    defer { try? FileManager.default.removeItem(at: env.tempRoot) }
+
+    let file = env.destinationRoot.appendingPathComponent("whatever.mp3")
+    try Data("a".utf8).write(to: file)
+    let rootDirectory = SeratoLibraryLocator.rootDirectory(for: env.libraryDirectory, homeDirectory: env.tempRoot)
+
+    let result = try await LibraryFolderSyncService.syncAudioFolder(
+        env.destinationRoot, databaseFileURL: env.databaseFile, rootDirectory: rootDirectory
+    )
+
+    #expect(result.renamedFiles.isEmpty)
+    #expect(FileManager.default.fileExists(atPath: file.path))
+}
+
+/// A file with no readable tags is never renamed, even with renaming on: the
+/// only name available would come from the filename being replaced.
+@Test func syncDoesNotRenameFilesWithoutTags() async throws {
+    let env = try makeSyncScratchEnvironment()
+    defer { try? FileManager.default.removeItem(at: env.tempRoot) }
+
+    // Not real audio, so there are no tags to read.
+    let file = env.destinationRoot.appendingPathComponent("Some Artist - Some Title.mp3")
+    try Data("not audio".utf8).write(to: file)
+    let rootDirectory = SeratoLibraryLocator.rootDirectory(for: env.libraryDirectory, homeDirectory: env.tempRoot)
+
+    let result = try await LibraryFolderSyncService.syncAudioFolder(
+        env.destinationRoot,
+        databaseFileURL: env.databaseFile,
+        rootDirectory: rootDirectory,
+        filenameTemplate: "{artist}-{title}",
+        renameFilesFromTags: true
+    )
+
+    #expect(result.insertedTracks == 1)
+    #expect(result.renamedFiles.isEmpty)
+    #expect(FileManager.default.fileExists(atPath: file.path))
+}
+
+/// The proposed name follows the template, and a file already named correctly
+/// is left alone rather than being "renamed" to itself.
+@Test func proposedRenameFollowsTheTemplate() {
+    let metadata = SeratoTrackMetadataUpdate(
+        title: "Feel So Close", artist: "Calvin Harris", album: "18 Months",
+        genre: "Dance", comment: "", key: "", bpm: nil, year: 2012
+    )
+
+    let proposed = LibraryFolderSyncService.proposedRenameURL(
+        for: URL(fileURLWithPath: "/tmp/junk name.mp3"),
+        metadata: metadata,
+        template: "{artist} - {title}"
+    )
+    #expect(proposed?.lastPathComponent == "Calvin Harris - Feel So Close.mp3")
+
+    // Already correct -> nothing proposed.
+    let noop = LibraryFolderSyncService.proposedRenameURL(
+        for: URL(fileURLWithPath: "/tmp/Calvin Harris - Feel So Close.mp3"),
+        metadata: metadata,
+        template: "{artist} - {title}"
+    )
+    #expect(noop == nil)
+
+    // Nothing to build a name from -> nothing proposed.
+    let empty = LibraryFolderSyncService.proposedRenameURL(
+        for: URL(fileURLWithPath: "/tmp/x.mp3"),
+        metadata: SeratoTrackMetadataUpdate(
+            title: "", artist: "", album: "", genre: "", comment: "", key: "", bpm: nil, year: nil
+        ),
+        template: "{artist} - {title}"
+    )
+    #expect(empty == nil)
+}
