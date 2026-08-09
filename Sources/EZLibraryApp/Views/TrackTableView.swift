@@ -165,7 +165,6 @@ struct TrackTableView: View {
         let sortColumn: SortColumn
         let sortAscending: Bool
         let numberingMode: NumberingMode
-        let playCountSignature: Int
     }
 
     private var recomputeKey: RecomputeKey {
@@ -176,8 +175,7 @@ struct TrackTableView: View {
             lastID: tracks.last?.id,
             sortColumn: sortColumn,
             sortAscending: sortAscending,
-            numberingMode: numberingMode,
-            playCountSignature: playCountSignature
+            numberingMode: numberingMode
         )
     }
 
@@ -186,17 +184,13 @@ struct TrackTableView: View {
         onSelectionChanged(selectedDisplayedTracks())
     }
 
-    /// A cheap value that changes whenever any track's play count changes, used
-    /// to trigger a recompute when background play-count loading fills them in
-    /// (the track identities and count stay the same, so the other `onChange`
-    /// hooks wouldn't notice).
-    private var playCountSignature: Int {
-        var sum = 0
-        for track in tracks {
-            sum = sum &+ (track.playCount ?? 0)
-        }
-        return sum
-    }
+    // A `playCountSignature` — an O(n) sum over every track — used to live in
+    // `RecomputeKey`, to catch background play-count loading filling in values
+    // without changing any track's identity. `tracksVersion` already covers
+    // that: both call sites bump it in response to `LibraryService.revision`,
+    // which bumps whenever `tracks` is reassigned, and the play-count merge
+    // reassigns `tracks`. So the sum ran on every body evaluation to produce a
+    // key component that could never change on its own.
 
     private func selectedDisplayedTracks() -> [Track] {
         zip(displayedTracks, displayedKeys).compactMap { track, key in

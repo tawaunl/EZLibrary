@@ -139,6 +139,11 @@ struct TrackAudioPlayerPanel: View {
 
     @StateObject private var player = TrackAudioPlayerViewModel()
     @State private var keyMonitor: Any?
+
+    /// Held in `@State` rather than built inline in `.onReceive`, which would
+    /// create a new publisher and tear down the old subscription on every body
+    /// evaluation — i.e. several times a second while the progress bar moves.
+    @State private var ticker = Timer.publish(every: 0.12, on: .main, in: .common).autoconnect()
     @AppStorage("TrackAudioPlayerMiniModeEnabled") private var miniModeEnabled = false
 
     init(
@@ -286,7 +291,7 @@ struct TrackAudioPlayerPanel: View {
             guard player.loadedTrackPath != nil else { return }
             player.startPlayback()
         }
-        .onReceive(Timer.publish(every: 0.12, on: .main, in: .common).autoconnect()) { _ in
+        .onReceive(ticker) { _ in
             player.refreshProgress()
         }
     }
@@ -296,6 +301,12 @@ struct TrackAudioPlayerPanel: View {
 
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { event in
             if isTextInputActive() {
+                return event
+            }
+
+            // A sheet on top owns the keyboard while it's up — the trim editor
+            // also binds Space, and both firing would toggle two players at once.
+            if NSApp.keyWindow?.isSheet == true {
                 return event
             }
 

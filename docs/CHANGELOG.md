@@ -9,6 +9,117 @@ version (`CFBundleShortVersionString.CFBundleVersion`) and are used verbatim by
 > the highest priority — see [SECURITY.md](../SECURITY.md). This changelog is kept
 > up to date so you can see exactly what changed and when.
 
+## Unreleased
+
+### Tag values are trimmed on save
+- Every text field written to `database V2` and to a file's ID3 frames — title,
+  artist, album, genre, comment, key — is now whitespace-trimmed.
+- Stray padding is easy to pick up (a pasted artist name, a scraped video title,
+  a hand-typed field) and close to invisible once written, while quietly
+  breaking anything that compares or sorts on the value: `"Drake "` and
+  `"Drake"` are two different artists to Serato, sort apart, and render
+  different file names.
+- Both ends are trimmed, not just the trailing side. A leading space does more
+  visible damage — it sorts the track to the top of the list, away from the rest
+  of that artist. Interior spacing is left alone.
+- Trimming lives on `SeratoTrackMetadataUpdate`, the one type every writer goes
+  through, so it applies whether the value came from a manual edit, an online
+  lookup, a bulk fill, or a YouTube download.
+- Existing files keep their current tags until something re-saves them, or
+  until you run the cleanup action below.
+
+### Clean Tag Whitespace
+- New button in the Tracks & Tags bar. It scans the current scope (All Tracks,
+  or whichever crate is selected) for tag values padded with leading or
+  trailing spaces, and re-saves them trimmed.
+- Nothing is written until you confirm. The prompt reports how many tracks are
+  affected and which fields — e.g. "70 tracks have tag values padded with
+  spaces: Artist (48), Title (23)" — with a few example file names.
+- A field that is *only* whitespace is left alone: trimming it to empty would
+  erase a value rather than tidy one.
+- File names are not changed, only the tag values. Filenames were already
+  trimmed by the renamer's own sanitising, so they never carried the padding.
+
+### Performance
+- The trim editor's waveform no longer re-slices the whole envelope on every
+  redraw. During playback at a fixed zoom the visible columns don't change, so
+  the result is memoized — 2.2ms of work per second of playback drops to 0.1ms
+  on a 6-minute track.
+- Moving the mouse across the waveform no longer forces a full redraw. The
+  pointer position (used only to anchor pinch-zoom) was stored in `@State`,
+  which invalidated the view — and re-sliced the envelope — on every pointer
+  event.
+- Slicing the envelope no longer copies it first, removing a ~500KB allocation
+  per redraw when zoomed out over a long track. (Neutral on wall-clock; the
+  `max()` scan dominates.)
+- The playhead timers in the trim editor and the mini player were built inline
+  in `.onReceive`, which creates a new publisher and tears down the old
+  subscription on every body evaluation — around 20 timers a second during
+  playback. Both are now held across renders.
+- Benchmarks for the waveform paths were added to `EZLibraryBench`; pass
+  `EZBENCH_AUDIO=/path/to/track.mp3` to also time a real decode.
+
+### YouTube downloads no longer tag the channel as the artist
+- Downloads took the **channel name** as both the artist and the album, and the
+  raw video title as the title. A video titled "E-40 & Too $hort - Dump Truck
+  ft. …" uploaded by "E40TV" was tagged artist `E40TV`, album `E40TV`, title
+  "E-40 & Too $hort - Dump Truck ft. …".
+- With auto-rename from metadata switched on, those wrong values were then baked
+  into the **file name** — and stayed there, because bulk tag operations (Fill
+  Missing Genre/Year, Apply Top Hit) deliberately never rename. So correcting
+  the tags later left the file name stuck on the channel name.
+- The artist and title are now read out of the video title, which is where they
+  actually live, and the channel's format decoration (`(Official Video)`,
+  `[HD]`, `(Lyrics)`, …) is dropped. DJ-meaningful annotations —
+  `(Dirty)`, `(Clean)`, `(Intro)`, `(Extended Mix)`, `(feat. …)` — are kept.
+- When the title has no `Artist - Title` split, the artist is left **empty**
+  rather than guessed. An empty field is easy to fill from a lookup; a wrong one
+  silently corrupts the tag and the file name.
+- Album is no longer seeded from the channel at all — the channel is never an
+  album. It stays empty for a metadata lookup to fill.
+- Existing files keep their old names. **Rename Files From Tags** in Tracks &
+  Tags re-derives them from the corrected tags.
+
+### Audio trim editor
+- New **Edit Audio…** button in the Tracks & Tags bar opens a waveform editor
+  for the selected track. Drag the in/out handles, type-check the times, and
+  preview only the part you're keeping before committing.
+- **Detect Silence** snaps the selection just inside the leading and trailing
+  silence, so cutting dead air off a rip is one click.
+- **Zoom** for precise cuts: the `+`/`−` buttons and keys, a pinch gesture over
+  the waveform, **Fit**, and **Zoom to Selection**, with a scrubber for moving
+  through the track while zoomed. The waveform is sampled at 400 points per
+  second, so zooming reveals real detail instead of stretching the same columns.
+- **Transport controls**: play/pause, skip back and forward 5 seconds, and jump
+  to the start or end of the track, plus a fast-forward button cycling
+  1× → 1.5× → 2× → 4× that scans at real speed rather than skipping.
+- **Jumps and markers**: one-click jumps to the in and out points, and a
+  droppable marker (`M`) you can return to (`⇧M`) while hunting for a cut —
+  distinct from the playhead and drawn separately on the waveform.
+- Playing from inside the selection stops at the out point, so you hear exactly
+  what you'd keep. Playing from past it runs to the end of the file instead, so
+  the tail you're about to cut can be auditioned before you commit to losing it.
+- **Keyboard playhead control**: `←`/`→` step by 0.1s (`⇧` for 1s, `⌥` for
+  0.01s), `⌘←`/`⌘→` jump to the in/out points, `Home`/`End` to the track
+  boundaries, and `Space` plays or pauses. The view follows the playhead
+  automatically when zoomed in.
+- **Set In Here** / **Set Out Here** (or `I` / `O`) make the marker's position
+  the new trim point — so you can nudge to the exact spot, set the in point
+  there, and play straight from the new start.
+- Two ways to save: **Save In Place** overwrites the file (keeping a timestamped
+  backup of the original in EZLibrary's pre-write backup folder), and **Save As
+  New File** writes a second copy, registers it in `database V2`, and files it
+  next to the original in every plain crate that holds it.
+- The cut is a stream copy — no re-encode, so audio quality is untouched and
+  text tags plus embedded cover art survive.
+- Trimming shifts the whole timeline, which invalidates Serato's cue points,
+  saved loops, beatgrid and waveform overview. Those are cleared so Serato
+  re-analyzes the track cleanly rather than showing cues in the wrong places;
+  the editor reads the file first and tells you exactly how many cues and loops
+  you'd lose before you save.
+- Both save paths refuse while Serato is running, since Serato rewrites its
+  library from memory on quit and would undo the change.
+
 ## 1.0.0
 
 ### Renaming a file no longer loses it in Serato

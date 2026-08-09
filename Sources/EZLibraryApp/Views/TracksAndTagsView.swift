@@ -71,11 +71,15 @@ struct TracksAndTagsView: View {
     /// Renames the selected files from their tags using the Settings
     /// template. Optional so previews and other call sites can omit it.
     var onBulkRename: (([Track]) -> Void)?
+    /// Reloads the library after a trim changed a file or added a new one.
+    var onAudioEdited: (() -> Void)?
 
     @AppStorage("SeratoToolsConfirmTrackDeleteActions") private var confirmDeleteActions = true
     @State private var selectedScopeID: String = Self.allTracksID
     @State private var selectedTracks: [Track] = []
     @State private var metadataLookupTrack: Track?
+    @State private var audioEditTrack: Track?
+    @State private var audioEditMessage: String?
     @State private var searchText = ""
     @State private var selectedGenreFilter: String?
     @State private var fillFilter: FillField?
@@ -89,6 +93,8 @@ struct TracksAndTagsView: View {
     @State private var operationErrorMessage: String?
     @State private var pendingTopHitUpdates: [(Track, SeratoTrackMetadataUpdate)] = []
     @State private var showTopHitConfirmation = false
+    @State private var pendingWhitespaceFindings: [TagWhitespaceCleanupService.Finding] = []
+    @State private var showWhitespaceCleanupConfirmation = false
     @State private var showOnlyFillEmptyPrompt = false
 
     /// Snapshot of everything derived from `tracks` + the active scope/filters,
@@ -101,28 +107,41 @@ struct TracksAndTagsView: View {
     /// it only on real data changes.
     @State private var tableTracksVersion = 0
 
-    private var regularTree: [CrateNode] {
-        CrateHierarchy.build(from: libraryService.crates)
+    /// Everything the sidebar derives from the crate lists, built once per
+    /// crate change instead of per read.
+    ///
+    /// These used to be computed properties. A single body evaluation read them
+    /// several times over, and `smartNodeIDs` was read inside the
+    /// `OutlineGroup` row builder — so the whole smart-crate hierarchy was
+    /// rebuilt and flattened *once per visible row*. At 800 crates that was
+    /// ~0.5ms a row, around 15ms of rebuild per render of a 30-row sidebar.
+    private struct CrateTrees {
+        var combined: [CrateNode] = []
+        var nodesByID: [String: CrateNode] = [:]
+        var smartNodeIDs: Set<String> = []
     }
 
-    private var smartTree: [CrateNode] {
-        CrateHierarchy.build(from: libraryService.smartCrates)
-    }
+    @State private var crateTrees = CrateTrees()
 
-    private var combinedTree: [CrateNode] {
-        mergedTrees(regularTree, smartTree)
-    }
+    private var combinedTree: [CrateNode] { crateTrees.combined }
+    private var allNodesByID: [String: CrateNode] { crateTrees.nodesByID }
+    private var smartNodeIDs: Set<String> { crateTrees.smartNodeIDs }
 
-    private var allNodesByID: [String: CrateNode] {
-        var map: [String: CrateNode] = [:]
-        flatten(combinedTree, into: &map)
-        return map
-    }
+    private func rebuildCrateTrees() {
+        let smart = CrateHierarchy.build(from: libraryService.smartCrates)
+        let combined = mergedTrees(CrateHierarchy.build(from: libraryService.crates), smart)
 
-    private var smartNodeIDs: Set<String> {
-        var map: [String: CrateNode] = [:]
-        flatten(smartTree, into: &map)
-        return Set(map.keys)
+        var nodesByID: [String: CrateNode] = [:]
+        flatten(combined, into: &nodesByID)
+
+        var smartNodes: [String: CrateNode] = [:]
+        flatten(smart, into: &smartNodes)
+
+        crateTrees = CrateTrees(
+            combined: combined,
+            nodesByID: nodesByID,
+            smartNodeIDs: Set(smartNodes.keys)
+        )
     }
 
     private var selectedNode: CrateNode? {
@@ -214,10 +233,20 @@ struct TracksAndTagsView: View {
             }
         }
         .onAppear {
+            rebuildCrateTrees()
             if selectedScopeID != Self.allTracksID, allNodesByID[selectedScopeID] == nil {
                 selectedScopeID = Self.allTracksID
             }
             scheduleDerivedRecompute()
+        }
+        // Keyed on the counter rather than the arrays: `onChange(of:)` would
+        // compare several hundred `Crate` values, track-path lists included, on
+        // every update pass.
+        .onChange(of: libraryService.cratesRevision) {
+            rebuildCrateTrees()
+            if selectedScopeID != Self.allTracksID, allNodesByID[selectedScopeID] == nil {
+                selectedScopeID = Self.allTracksID
+            }
         }
         .onChange(of: libraryService.revision) {
             scheduleDerivedRecompute()
@@ -257,6 +286,17 @@ struct TracksAndTagsView: View {
                 try onApplyMetadata(track, metadata)
             }
         }
+        .sheet(item: $audioEditTrack) { track in
+            AudioTrimEditorSheet(
+                track: track,
+                libraryDirectory: libraryService.libraryDirectory
+            ) { summary in
+                audioEditMessage = summary
+                // The file's length changed and a save-as adds a new record, so
+                // the in-memory library is stale either way.
+                onAudioEdited?()
+            }
+        }
         .confirmationDialog(
             "Apply Top-Hit Metadata",
             isPresented: $showTopHitConfirmation,
@@ -270,6 +310,20 @@ struct TracksAndTagsView: View {
             }
         } message: {
             Text("Top search-hit metadata will be applied for Artist, Album, Genre, and Year on \(pendingTopHitUpdates.count) selected track\(pendingTopHitUpdates.count == 1 ? "" : "s").")
+        }
+        .confirmationDialog(
+            "Clean Tag Whitespace",
+            isPresented: $showWhitespaceCleanupConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Clean \(pendingWhitespaceFindings.count) Track\(pendingWhitespaceFindings.count == 1 ? "" : "s")") {
+                applyWhitespaceCleanup()
+            }
+            Button("Cancel", role: .cancel) {
+                pendingWhitespaceFindings = []
+            }
+        } message: {
+            Text(whitespaceCleanupMessage)
         }
         .confirmationDialog(
             "“Only Fill Empty” is On",
@@ -474,7 +528,38 @@ struct TracksAndTagsView: View {
                         + "(\(SeratoFeatureFlags.filenameFormatTemplate())), and update Serato to match. "
                         + "Shows what will change before anything is renamed.")
                 }
+
+                Divider()
+                    .frame(height: 16)
+
+                // Scoped, not selection-based: this is a sweep, and the point
+                // is to find padding you can't see well enough to select.
+                Button("Clean Tag Whitespace") {
+                    prepareWhitespaceCleanup()
+                }
+                .disabled(scopeTracks.isEmpty || isBulkLookupRunning)
+                .help(
+                    "Find tag values in \(selectedScopeTitle) with leading or trailing spaces "
+                    + "and re-save them trimmed. Shows what will change first.")
+
+                Divider()
+                    .frame(height: 16)
+
+                Button("Edit Audio…") {
+                    audioEditTrack = selectedTracks.first
+                }
+                .disabled(selectedTracks.count != 1)
+                .help(
+                    "Trim silence or unwanted sections off the selected track. "
+                    + "Save over the file or write a new one. Select exactly one track.")
+
                 Spacer(minLength: 0)
+            }
+
+            if let audioEditMessage {
+                Text(audioEditMessage)
+                    .font(.caption)
+                    .foregroundStyle(.green)
             }
 
             if let bulkLookupMessage {
@@ -802,6 +887,64 @@ struct TracksAndTagsView: View {
                     operationErrorMessage = error.localizedDescription
                 }
             }
+        }
+    }
+
+    // MARK: - Tag whitespace cleanup
+
+    private var whitespaceCleanupMessage: String {
+        var message = TagWhitespaceCleanupService.summary(for: pendingWhitespaceFindings)
+        let sample = pendingWhitespaceFindings.prefix(3).map { finding in
+            "\(finding.track.fileURL.lastPathComponent) — \(finding.fields.joined(separator: ", "))"
+        }
+        if !sample.isEmpty {
+            message += "\n\n" + sample.joined(separator: "\n")
+            if pendingWhitespaceFindings.count > sample.count {
+                message += "\n…and \(pendingWhitespaceFindings.count - sample.count) more."
+            }
+        }
+        message += "\n\nFile names aren't changed — only the tag values."
+        return message
+    }
+
+    /// Scans the current scope and asks before writing anything.
+    private func prepareWhitespaceCleanup() {
+        operationErrorMessage = nil
+
+        let findings = TagWhitespaceCleanupService.findings(in: scopeTracks)
+        guard !findings.isEmpty else {
+            pendingWhitespaceFindings = []
+            bulkLookupMessage = "No padded tag values in \(selectedScopeTitle)."
+            return
+        }
+
+        pendingWhitespaceFindings = findings
+        showWhitespaceCleanupConfirmation = true
+    }
+
+    private func applyWhitespaceCleanup() {
+        guard !pendingWhitespaceFindings.isEmpty else { return }
+
+        let updates = TagWhitespaceCleanupService.updates(for: pendingWhitespaceFindings)
+        let cleanedCount = updates.count
+        pendingWhitespaceFindings = []
+        bulkLookupMessage = nil
+        operationErrorMessage = nil
+
+        do {
+            if let onApplyMetadataBatch {
+                try onApplyMetadataBatch(updates)
+            } else {
+                for (track, metadata) in updates {
+                    try onApplyMetadata(track, metadata)
+                }
+            }
+        } catch {
+            operationErrorMessage = error.localizedDescription
+        }
+
+        if operationErrorMessage == nil {
+            bulkLookupMessage = "Trimmed tag whitespace on \(cleanedCount) track\(cleanedCount == 1 ? "" : "s")."
         }
     }
 

@@ -27,7 +27,7 @@ public enum SeratoPlayCountReader {
     /// file is unsupported, has no ID3 tag, or carries no play-count frame.
     public static func playCount(forFileAt url: URL) -> Int? {
         guard url.pathExtension.lowercased() == "mp3" else { return nil }
-        guard let tag = readID3TagBytes(at: url) else { return nil }
+        guard let tag = ID3ArtworkCodec.readID3TagBytes(at: url) else { return nil }
 
         for description in playCountDescriptions {
             guard let value = ID3ArtworkCodec.userTextValue(fromID3TagBytes: tag, description: description) else {
@@ -38,25 +38,6 @@ public enum SeratoPlayCountReader {
             }
         }
         return nil
-    }
-
-    /// Reads just the leading ID3v2 tag (header + declared size) rather than
-    /// the entire file, so scanning thousands of tracks stays fast.
-    private static func readID3TagBytes(at url: URL) -> Data? {
-        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
-        defer { try? handle.close() }
-
-        guard let headerData = try? handle.read(upToCount: 10), headerData.count == 10 else { return nil }
-        let header = [UInt8](headerData)
-        guard header[0] == 0x49, header[1] == 0x44, header[2] == 0x33 else { return nil } // "ID3"
-
-        let size = decodeSyncSafe(Array(header[6..<10]))
-        guard size > 0 else { return headerData }
-        guard let body = try? handle.read(upToCount: size) else { return nil }
-
-        var data = Data(headerData)
-        data.append(body)
-        return data
     }
 
     private static func parseCount(_ value: String) -> Int? {
@@ -70,13 +51,5 @@ public enum SeratoPlayCountReader {
             return max(0, Int(doubleValue))
         }
         return nil
-    }
-
-    private static func decodeSyncSafe(_ bytes: [UInt8]) -> Int {
-        guard bytes.count == 4 else { return 0 }
-        return (Int(bytes[0] & 0x7F) << 21)
-            | (Int(bytes[1] & 0x7F) << 14)
-            | (Int(bytes[2] & 0x7F) << 7)
-            | Int(bytes[3] & 0x7F)
     }
 }

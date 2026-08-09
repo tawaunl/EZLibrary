@@ -940,9 +940,14 @@ struct YouTubeRipView: View {
                 await MainActor.run {
                     loadedInfo = info
                     previewInfoByURL[videoURL.absoluteString] = info
-                    id3Title = info.title
-                    id3Artist = info.uploader
-                    id3Album = info.channel
+                    // The channel name is not the artist and never an album —
+                    // read both out of the video title instead, and leave a
+                    // field blank rather than prefilling it wrongly.
+                    let parsed = YouTubeTitleParser.parse(
+                        videoTitle: info.title, uploader: info.uploader)
+                    id3Title = parsed.title
+                    id3Artist = parsed.artist
+                    id3Album = ""
                     id3Comment = info.webpageURL?.absoluteString ?? ""
                     if info.uploadDate.count >= 4 {
                         id3Year = String(info.uploadDate.prefix(4))
@@ -993,12 +998,18 @@ struct YouTubeRipView: View {
         let crateAssignmentMode = crateAssignmentMode
         let selectedExistingCrate = selectedExistingCrate
         let loadedInfoSnapshot = loadedInfo
+        // Artist and title come out of the video title, not the channel name.
+        // Album has no honest source here at all, so it stays empty for a
+        // lookup to fill rather than being seeded with the channel.
+        let parsedInfo = loadedInfoSnapshot.map {
+            YouTubeTitleParser.parse(videoTitle: $0.title, uploader: $0.uploader)
+        }
         let baseMetadata = isBulkDownload
             ? emptyMetadataTemplate()
             : buildMetadataForSave(
-                fallbackTitle: loadedInfoSnapshot?.title,
-                fallbackArtist: loadedInfoSnapshot?.uploader,
-                fallbackAlbum: loadedInfoSnapshot?.channel,
+                fallbackTitle: parsedInfo?.title,
+                fallbackArtist: parsedInfo?.artist,
+                fallbackAlbum: nil,
                 fallbackComment: loadedInfoSnapshot?.webpageURL?.absoluteString
             )
         let metadataForDownload = baseMetadata
@@ -1219,18 +1230,25 @@ struct YouTubeRipView: View {
         var out = metadata
 
         if out.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            out.title = fallbackInfo?.title.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if out.title.isEmpty {
-                out.title = downloadedTitle
-            }
+            // The raw video title carries the artist and the channel's format
+            // decoration ("… (Official Video)"); keep only the song part.
+            let rawTitle = fallbackInfo?.title.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let parsed = YouTubeTitleParser.parse(
+                videoTitle: rawTitle.isEmpty ? downloadedTitle : rawTitle,
+                uploader: fallbackInfo?.uploader)
+            out.title = parsed.title.isEmpty ? downloadedTitle : parsed.title
         }
 
+        // The channel name is not the artist ("E40TV" uploads E-40 records) and
+        // is never an album. Read the artist out of the video title instead,
+        // and leave the field empty when there's nothing to read — a wrong
+        // value here propagates into the file name once auto-rename runs, and
+        // survives long after the tags themselves get corrected.
         if out.artist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            out.artist = fallbackInfo?.uploader.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        }
-
-        if out.album.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            out.album = fallbackInfo?.channel.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            out.artist = YouTubeTitleParser.parse(
+                videoTitle: fallbackInfo?.title ?? downloadedTitle,
+                uploader: fallbackInfo?.uploader
+            ).artist
         }
 
         if out.comment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {

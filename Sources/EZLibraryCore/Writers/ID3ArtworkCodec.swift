@@ -107,6 +107,54 @@ public enum ID3ArtworkCodec {
         return nil
     }
 
+    /// One `GEOB` (general encapsulated object) frame: the description that
+    /// names it, plus its opaque payload. Serato parks its cue points,
+    /// beatgrid and waveform overview in these.
+    public struct GeneralObject: Sendable, Equatable {
+        public let description: String
+        public let payload: [UInt8]
+
+        public init(description: String, payload: [UInt8]) {
+            self.description = description
+            self.payload = payload
+        }
+    }
+
+    /// Returns every `GEOB` frame in the tag. ID3v2.2 (`GEO`) is included too,
+    /// so an older tag still reports the Serato objects it carries.
+    public static func generalObjects(fromID3TagBytes tagData: Data) -> [GeneralObject] {
+        guard let parsed = parseFrames(tagData) else { return [] }
+
+        var objects: [GeneralObject] = []
+        for frame in parsed.frames where frame.canReemit {
+            let isGeneralObject = (parsed.version == 2 && frame.id == "GEO")
+                || (parsed.version >= 3 && frame.id == "GEOB")
+            guard isGeneralObject, let object = parseGEOB(frame.body) else { continue }
+            objects.append(object)
+        }
+        return objects
+    }
+
+    /// Reads just the leading ID3v2 tag (header + declared size) rather than
+    /// the whole file, so inspecting thousands of tracks stays cheap. Returns
+    /// nil when the file is unreadable or carries no ID3v2 tag.
+    public static func readID3TagBytes(at url: URL) -> Data? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+
+        guard let headerData = try? handle.read(upToCount: 10), headerData.count == 10 else { return nil }
+        let header = [UInt8](headerData)
+        guard header[0] == 0x49, header[1] == 0x44, header[2] == 0x33 else { return nil } // "ID3"
+
+        let size = decodeSyncSafe(Array(header[6..<10]))
+        guard size > 0 else { return headerData }
+        guard let body = try? handle.read(upToCount: size) else { return nil }
+
+        var data = Data(headerData)
+        data.append(body)
+        return data
+    }
+
     /// Best-effort MIME sniffing from image magic bytes; defaults to JPEG.
     public static func mimeType(forImageData data: Data) -> String {
         let bytes = [UInt8](data.prefix(8))
@@ -251,6 +299,24 @@ public enum ID3ArtworkCodec {
             mime = mimeType(forImageData: Data(image))
         }
         return ID3Artwork(mimeType: mime, pictureType: pictureType, imageData: Data(image))
+    }
+
+    /// Splits a `GEOB` body into its description and payload. Layout is
+    /// encoding byte, MIME type (always ISO-8859-1 per spec), filename, then
+    /// description — the last two in the frame's declared encoding — followed
+    /// by the object bytes.
+    private static func parseGEOB(_ body: [UInt8]) -> GeneralObject? {
+        guard let encoding = body.first else { return nil }
+
+        let afterEncoding = Array(body.dropFirst())
+        let mime = splitFirstString(afterEncoding, encoding: 0x00)
+        let filename = splitFirstString(mime.rest, encoding: encoding)
+        let description = splitFirstString(filename.rest, encoding: encoding)
+
+        return GeneralObject(
+            description: decodeText(description.string, encoding: encoding),
+            payload: description.rest
+        )
     }
 
     /// Splits a user-defined text frame (`TXXX`) body into its description and
