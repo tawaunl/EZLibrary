@@ -299,7 +299,13 @@ struct AudioWaveformSamplerTests {
         #expect(abs(waveform.duration - 6) < 0.2)
         // Leading silence is quiet, the tone that follows is not.
         #expect((waveform.peaks.first ?? 1) < 0.05)
-        #expect((waveform.peaks.last ?? 0) > 0.5)
+
+        // Sampled across the tone rather than at the very last bucket. MP3
+        // encoders append padding silence, so the final bucket decodes to ~0
+        // often enough to make a last-element assertion flaky — which it was,
+        // failing about one run in six.
+        let toneRegion = waveform.peaks[(waveform.peaks.count / 2)..<(waveform.peaks.count - 10)]
+        #expect((toneRegion.max() ?? 0) > 0.5)
 
         let bounds = try #require(AudioWaveformSampler.loudBounds(in: waveform, paddingSeconds: 0))
         #expect(abs(bounds.start - 2) < 0.25)

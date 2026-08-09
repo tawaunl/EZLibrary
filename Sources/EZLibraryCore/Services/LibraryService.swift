@@ -49,6 +49,11 @@ public final class LibraryService: ObservableObject {
     /// every crate on every body evaluation.
     @Published public private(set) var tracksInCratesCount: Int = 0
 
+    /// Tracks filed in no crate at all. Recomputed alongside the other derived
+    /// stats rather than on demand — it's an O(n) pass against every crate's
+    /// contents, which is far too much to run on each body evaluation.
+    @Published public private(set) var tracksNotInCratesCount: Int = 0
+
     @Published public private(set) var libraryDirectory: URL
 
     /// Background scan that fills each track's `playCount` from its ID3 tag.
@@ -209,6 +214,8 @@ public final class LibraryService: ObservableObject {
     private func refreshDerivedTrackStats() {
         trackGenres = Array(Set(tracks.map(\.genre).filter { !$0.isEmpty })).sorted()
         totalArtistCount = Set(tracks.map(\.artist).filter { !$0.isEmpty }).count
+        tracksNotInCratesCount = UnfiledTracksService.countOfTracksNotInAnyCrate(
+            tracks, crates: crates)
     }
 
     /// Reads each track's play count off the main actor and merges the results

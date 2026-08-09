@@ -11,6 +11,33 @@ version (`CFBundleShortVersionString.CFBundleVersion`) and are used verbatim by
 
 ## Unreleased
 
+### Add and remove crate membership from a track's right-click menu
+- Secondary-clicking a track now offers **Add … to Crate**, with a submenu of
+  every crate, and — when a crate is on screen — **Remove … from "<crate>"**.
+- Acts on the whole selection when the clicked row is part of it, otherwise on
+  just the row under the pointer, the way Finder behaves.
+- Adding skips tracks the crate already lists, and both operations re-read the
+  crate from disk first, so a change made since the view loaded isn't undone.
+- Smart crates are left out of the menu: their membership comes from rules, so
+  a hand-added track would be discarded on the next re-evaluation.
+
+### All Tracks and Not In Crates in the Crates view
+- The crate list now starts with **All Tracks** and **Not In Crates**, selected
+  the same way as a crate — the way All Tracks already works in Tracks & Tags.
+  Both list tracks with the Tracks view's search and sorting, and the tree stays
+  visible beside them, so songs can be dragged straight onto a crate.
+- **Not In Crates** shows every track filed in no crate at all — the ones easy
+  to forget and never play. It's also a clickable stat at the top of the
+  section, next to Tracks In Crates, with a live count.
+- Smart crates don't count as filing, since their membership is rule-derived
+  rather than something you filed. That keeps the number consistent with the
+  Tracks In Crates stat beside it.
+- Crate membership is matched on normalised paths (separators, leading slash,
+  case), so a track already filed isn't wrongly listed as unfiled.
+- Dropping a track a crate already contains no longer files it twice. Serato
+  reads a repeated path as a second copy, and dropping something already filed
+  is the easiest mistake to make when dragging from a full-library list.
+
 ### Tag values are trimmed on save
 - Every text field written to `database V2` and to a file's ID3 frames — title,
   artist, album, genre, comment, key — is now whitespace-trimmed.

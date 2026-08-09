@@ -55,6 +55,11 @@ struct CrateDetailView: View {
     /// genre filter) change, so `TrackTableView` can cache its search index.
     @State private var tableTracksVersion = 0
 
+    /// Built once per crate change rather than per body evaluation — it maps
+    /// and sorts every crate in the library.
+    @State private var crateTargets: [TrackContextMenuActions.CrateTarget] = []
+    @State private var membershipErrorMessage: String?
+
     /// Everything derived from `node` + the library that's expensive to
     /// compute: resolving every crate path against a freshly-built library
     /// index. Cached in `@State` and rebuilt only when the node, filter
@@ -109,7 +114,17 @@ struct CrateDetailView: View {
                         },
                         onTrackActivated: { track, list in
                             onTrackActivated?(track, list)
-                        }
+                        },
+                        contextActions: TrackContextMenuActions(
+                            currentCrateName: crate.name,
+                            onRemoveFromCurrentCrate: { selected in
+                                removeFromCurrentCrate(selected, crate: crate)
+                            },
+                            addToCrateTargets: crateTargets,
+                            onAddToCrate: { selected, target in
+                                addToCrate(selected, target: target)
+                            }
+                        )
                     )
 
                     // Confirmed to happen legitimately for some Smart Crate
@@ -512,6 +527,35 @@ struct CrateDetailView: View {
         .buttonStyle(.plain)
     }
 
+    // MARK: - Secondary-click crate membership
+
+    private func removeFromCurrentCrate(_ selected: [Track], crate: Crate) {
+        do {
+            let change = try CrateMembershipService.remove(
+                storedPaths: selected.map(\.seratoStoredPath), from: crate)
+            guard change.didChange else { return }
+            onCratesChanged()
+        } catch {
+            membershipErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func addToCrate(_ selected: [Track], target: TrackContextMenuActions.CrateTarget) {
+        guard let destination = CrateContextMenuSupport.crate(
+            withID: target.id, in: libraryService.crates) else { return }
+
+        do {
+            let change = try CrateMembershipService.add(
+                storedPaths: selected.map(\.seratoStoredPath), to: destination)
+            // Nothing moved when every track was already filed there, and a
+            // reload would just churn the table for no visible change.
+            guard change.didChange else { return }
+            onCratesChanged()
+        } catch {
+            membershipErrorMessage = error.localizedDescription
+        }
+    }
+
     private func rebuildContent() {
         let trackPaths = effectiveTrackPaths(for: node)
         guard let crate = node.crate ?? synthesizedCrateForAggregate(node: node, trackPaths: trackPaths) else {
@@ -538,6 +582,7 @@ struct CrateDetailView: View {
             genreTags: Array(Set(matchedTracks.lazy.map(\.genre).filter { !$0.isEmpty })).sorted(),
             artistCount: Set(matchedTracks.lazy.map(\.artist).filter { !$0.isEmpty }).count
         )
+        crateTargets = CrateContextMenuSupport.targets(for: libraryService.crates)
         tableTracksVersion &+= 1
     }
 

@@ -57,9 +57,12 @@ struct ContentView: View {
     @ObservedObject var smartCrateHierarchy: CrateHierarchyViewModel
 
     @State private var selectedSection: SidebarSection? = .tracks
-    @State private var selectedCrateNode: CrateNode?
     @State private var loadErrorMessage: String?
     @State private var libraryPathDraft = ""
+
+    /// What the Crates section is pointed at. Defaults to All Tracks so the
+    /// section opens on something useful, matching Tracks & Tags.
+    @State private var crateScope: CrateBrowserScope = .allTracks
 
     @State private var pendingTrackDeleteSelection: [Track] = []
     @State private var showTrackDeleteDialog = false
@@ -93,6 +96,10 @@ struct ContentView: View {
 
     private var totalTracksInCratesCount: Int {
         libraryService.tracksInCratesCount
+    }
+
+    private var tracksNotInCratesCount: Int {
+        libraryService.tracksNotInCratesCount
     }
 
     private var centralMusicFolderStartURL: URL {
@@ -168,7 +175,7 @@ struct ContentView: View {
             .onChange(of: selectedSection) {
                 resetTransientFilters()
             }
-            .onChange(of: selectedCrateNode?.id) {
+            .onChange(of: crateScope.crateNode?.id) {
                 if selectedSection == .crates {
                     crateListFilterMode = .all
                 }
@@ -291,7 +298,7 @@ struct ContentView: View {
                 isActive: crateListFilterMode == .all,
                 action: {
                     crateListFilterMode = .all
-                    selectedCrateNode = nil
+                    crateScope = .allTracks
                 }
             )
             crateStatTag(
@@ -299,7 +306,16 @@ struct ContentView: View {
                 value: totalTracksInCratesCount,
                 action: {
                     crateListFilterMode = .all
-                    selectedCrateNode = nil
+                    crateScope = .allTracks
+                }
+            )
+            crateStatTag(
+                title: "Not In Crates",
+                value: tracksNotInCratesCount,
+                isActive: crateScope == .notInCrates,
+                action: {
+                    crateListFilterMode = .all
+                    crateScope = .notInCrates
                 }
             )
             crateStatTag(
@@ -308,7 +324,7 @@ struct ContentView: View {
                 isActive: crateListFilterMode == .smartOnly,
                 action: {
                     crateListFilterMode = crateListFilterMode == .smartOnly ? .all : .smartOnly
-                    selectedCrateNode = nil
+                    crateScope = .allTracks
                 }
             )
             crateStatTag(
@@ -317,7 +333,7 @@ struct ContentView: View {
                 isActive: crateListFilterMode == .hiddenOnly,
                 action: {
                     crateListFilterMode = crateListFilterMode == .hiddenOnly ? .all : .hiddenOnly
-                    selectedCrateNode = nil
+                    crateScope = .allTracks
                 }
             )
             Spacer(minLength: 0)
@@ -484,14 +500,31 @@ struct ContentView: View {
                     CrateTreeView(
                         crateHierarchy: crateHierarchy,
                         smartCrateHierarchy: smartCrateHierarchy,
-                        selectedNode: $selectedCrateNode,
+                        scope: $crateScope,
                         listFilterMode: crateListFilterMode,
                         onCratesChanged: reloadLibrary
                     )
                     .frame(minWidth: middlePaneWidth, idealWidth: middlePaneWidth, maxWidth: middlePaneWidth)
 
                     Group {
-                        if let node = selectedCrateNode {
+                        switch crateScope {
+                        case .allTracks:
+                            AllTracksBrowserView(
+                                source: .allTracks,
+                                onTrackActivated: { track, list in
+                                    activateAudioTrack(track, in: list)
+                                },
+                                onCratesChanged: reloadLibrary
+                            )
+                        case .notInCrates:
+                            AllTracksBrowserView(
+                                source: .notInCrates,
+                                onTrackActivated: { track, list in
+                                    activateAudioTrack(track, in: list)
+                                },
+                                onCratesChanged: reloadLibrary
+                            )
+                        case let .crate(node):
                             CrateDetailView(
                                 node: node,
                                 filterMode: crateListFilterMode,
@@ -500,9 +533,6 @@ struct ContentView: View {
                                     activateAudioTrack(track, in: list)
                                 }
                             )
-                        } else {
-                            Text("Select an item")
-                                .foregroundStyle(.secondary)
                         }
                     }
                     .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -555,7 +585,7 @@ struct ContentView: View {
     /// (see `LibraryService.reloadAsync`), then refreshes the crate trees and
     /// selection on the main actor once results arrive.
     private func reloadLibraryAsync() async {
-        let previousSelectedNodeID = selectedCrateNode?.id
+        let previousSelectedNodeID = crateScope.crateNode?.id
 
         await libraryService.reloadAsync()
 
@@ -563,20 +593,24 @@ struct ContentView: View {
             loadErrorMessage = message
             crateHierarchy.rebuild(from: [])
             smartCrateHierarchy.rebuild(from: [])
-            selectedCrateNode = nil
+            crateScope = .allTracks
         } else {
             loadErrorMessage = nil
             crateHierarchy.rebuild(from: libraryService.crates)
             smartCrateHierarchy.rebuild(from: libraryService.smartCrates)
-            selectedCrateNode = refreshedSelectedCrateNode(previousID: previousSelectedNodeID)
+            crateScope = refreshedCrateScope(previousID: previousSelectedNodeID)
         }
     }
 
-    private func refreshedSelectedCrateNode(previousID: String?) -> CrateNode? {
-        guard let previousID else { return nil }
+    /// Re-resolves the selected crate against the rebuilt tree after a reload.
+    /// A crate that no longer exists falls back to All Tracks rather than
+    /// leaving the pane pointed at a stale node.
+    private func refreshedCrateScope(previousID: String?) -> CrateBrowserScope {
+        guard let previousID else { return .allTracks }
 
         let rebuilt = CrateHierarchy.build(from: libraryService.crates + libraryService.smartCrates)
-        return findCrateNode(withID: previousID, in: rebuilt)
+        guard let node = findCrateNode(withID: previousID, in: rebuilt) else { return .allTracks }
+        return .crate(node)
     }
 
     private func findCrateNode(withID nodeID: String, in nodes: [CrateNode]) -> CrateNode? {
