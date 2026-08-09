@@ -16,8 +16,12 @@ public final class LibraryService: ObservableObject {
     @Published public private(set) var tracks: [Track] = [] {
         didSet { revision &+= 1 }
     }
-    @Published public private(set) var crates: [Crate] = []
-    @Published public private(set) var smartCrates: [Crate] = []
+    @Published public private(set) var crates: [Crate] = [] {
+        didSet { cratesRevision &+= 1 }
+    }
+    @Published public private(set) var smartCrates: [Crate] = [] {
+        didSet { cratesRevision &+= 1 }
+    }
     @Published public private(set) var reloadErrorMessage: String?
 
     /// Monotonic counter bumped whenever `tracks` is reassigned (reload,
@@ -25,6 +29,13 @@ public final class LibraryService: ObservableObject {
     /// this cheap `Int` instead of diffing the whole `[Track]` array to know
     /// when to recompute derived data.
     @Published public private(set) var revision: Int = 0
+
+    /// Monotonic counter bumped whenever `crates` or `smartCrates` is
+    /// reassigned. Views memoizing anything derived from the crate tree can
+    /// observe this `Int` rather than `onChange(of:)` on the arrays themselves,
+    /// which would compare several hundred `Crate` values — each carrying its
+    /// full track-path list — on every update pass.
+    @Published public private(set) var cratesRevision: Int = 0
 
     /// Sorted, deduplicated genres/artist count across `tracks`. Recomputed
     /// once whenever `tracks` is reassigned rather than on every read, since

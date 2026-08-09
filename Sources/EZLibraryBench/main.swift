@@ -500,3 +500,45 @@ timeIt("20Hz playback, 1s cached (zoomed out)") {
         _ = benchCache.peaks(of: envelope, from: 0, to: envelopeDuration, columns: columns)
     }
 }
+
+// MARK: - Crate sidebar tree
+//
+// Reference numbers for work the sidebar no longer does. These used to be
+// computed properties on TracksAndTagsView, rebuilt on every read — several
+// reads per body evaluation, and `smartNodeIDs` once per OutlineGroup row.
+// The view now memoizes all of it against `LibraryService.cratesRevision`, so
+// what follows is the cost that buys, not the cost still being paid.
+
+print("\nCrate sidebar tree — \(crates.count) crates (cost now memoized away)")
+
+func flattenNodes(_ nodes: [CrateNode], into map: inout [String: CrateNode]) {
+    for node in nodes {
+        map[node.id] = node
+        flattenNodes(node.children, into: &map)
+    }
+}
+
+timeIt("CrateHierarchy.build") {
+    _ = CrateHierarchy.build(from: crates)
+}
+
+let builtTree = CrateHierarchy.build(from: crates)
+var flatMap: [String: CrateNode] = [:]
+flattenNodes(builtTree, into: &flatMap)
+print("    (tree nodes: \(flatMap.count))")
+
+timeIt("build + flatten (one sidebar read)") {
+    let tree = CrateHierarchy.build(from: crates)
+    var map: [String: CrateNode] = [:]
+    flattenNodes(tree, into: &map)
+    _ = Set(map.keys)
+}
+
+timeIt("x30 rows (old per-row smartNodeIDs read)") {
+    for _ in 0..<30 {
+        let tree = CrateHierarchy.build(from: crates)
+        var map: [String: CrateNode] = [:]
+        flattenNodes(tree, into: &map)
+        _ = Set(map.keys)
+    }
+}

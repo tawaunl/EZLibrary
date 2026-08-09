@@ -105,28 +105,41 @@ struct TracksAndTagsView: View {
     /// it only on real data changes.
     @State private var tableTracksVersion = 0
 
-    private var regularTree: [CrateNode] {
-        CrateHierarchy.build(from: libraryService.crates)
+    /// Everything the sidebar derives from the crate lists, built once per
+    /// crate change instead of per read.
+    ///
+    /// These used to be computed properties. A single body evaluation read them
+    /// several times over, and `smartNodeIDs` was read inside the
+    /// `OutlineGroup` row builder — so the whole smart-crate hierarchy was
+    /// rebuilt and flattened *once per visible row*. At 800 crates that was
+    /// ~0.5ms a row, around 15ms of rebuild per render of a 30-row sidebar.
+    private struct CrateTrees {
+        var combined: [CrateNode] = []
+        var nodesByID: [String: CrateNode] = [:]
+        var smartNodeIDs: Set<String> = []
     }
 
-    private var smartTree: [CrateNode] {
-        CrateHierarchy.build(from: libraryService.smartCrates)
-    }
+    @State private var crateTrees = CrateTrees()
 
-    private var combinedTree: [CrateNode] {
-        mergedTrees(regularTree, smartTree)
-    }
+    private var combinedTree: [CrateNode] { crateTrees.combined }
+    private var allNodesByID: [String: CrateNode] { crateTrees.nodesByID }
+    private var smartNodeIDs: Set<String> { crateTrees.smartNodeIDs }
 
-    private var allNodesByID: [String: CrateNode] {
-        var map: [String: CrateNode] = [:]
-        flatten(combinedTree, into: &map)
-        return map
-    }
+    private func rebuildCrateTrees() {
+        let smart = CrateHierarchy.build(from: libraryService.smartCrates)
+        let combined = mergedTrees(CrateHierarchy.build(from: libraryService.crates), smart)
 
-    private var smartNodeIDs: Set<String> {
-        var map: [String: CrateNode] = [:]
-        flatten(smartTree, into: &map)
-        return Set(map.keys)
+        var nodesByID: [String: CrateNode] = [:]
+        flatten(combined, into: &nodesByID)
+
+        var smartNodes: [String: CrateNode] = [:]
+        flatten(smart, into: &smartNodes)
+
+        crateTrees = CrateTrees(
+            combined: combined,
+            nodesByID: nodesByID,
+            smartNodeIDs: Set(smartNodes.keys)
+        )
     }
 
     private var selectedNode: CrateNode? {
@@ -218,10 +231,20 @@ struct TracksAndTagsView: View {
             }
         }
         .onAppear {
+            rebuildCrateTrees()
             if selectedScopeID != Self.allTracksID, allNodesByID[selectedScopeID] == nil {
                 selectedScopeID = Self.allTracksID
             }
             scheduleDerivedRecompute()
+        }
+        // Keyed on the counter rather than the arrays: `onChange(of:)` would
+        // compare several hundred `Crate` values, track-path lists included, on
+        // every update pass.
+        .onChange(of: libraryService.cratesRevision) {
+            rebuildCrateTrees()
+            if selectedScopeID != Self.allTracksID, allNodesByID[selectedScopeID] == nil {
+                selectedScopeID = Self.allTracksID
+            }
         }
         .onChange(of: libraryService.revision) {
             scheduleDerivedRecompute()
