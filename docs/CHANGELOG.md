@@ -11,6 +11,21 @@ version (`CFBundleShortVersionString.CFBundleVersion`) and are used verbatim by
 
 ## 1.0.1
 
+### Fixed: Search Online stopped returning matches
+- A lookup that came back empty — a brief network drop, an online source
+  rate limiting us, or closing the sheet mid-search — was written into the
+  lookup cache, so **Search Online** kept answering "No matches found" from
+  memory for the next five minutes. Pressing it again appeared to do nothing.
+  Only complete results are cached now, so a retry actually retries.
+- Requests to each online source are paced, and a source that starts rate
+  limiting is retried with backoff instead of being reported as a track with
+  no matches. iTunes answers a throttled search with an empty response that
+  used to be indistinguishable from "nothing found".
+- When every source fails, the reason is shown rather than "No matches found",
+  which read as a track that isn't in the stores.
+- The bulk tag actions now say how many tracks could not be looked up, instead
+  of reporting only that nothing was filled in.
+
 ### Add and remove crate membership from a track's right-click menu
 - Secondary-clicking a track now offers **Add … to Crate**, with a submenu of
   every crate, and — when a crate is on screen — **Remove … from "<crate>"**.
