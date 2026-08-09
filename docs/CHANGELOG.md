@@ -11,6 +11,16 @@ version (`CFBundleShortVersionString.CFBundleVersion`) and are used verbatim by
 
 ## Unreleased
 
+### Add and remove crate membership from a track's right-click menu
+- Secondary-clicking a track now offers **Add … to Crate**, with a submenu of
+  every crate, and — when a crate is on screen — **Remove … from "<crate>"**.
+- Acts on the whole selection when the clicked row is part of it, otherwise on
+  just the row under the pointer, the way Finder behaves.
+- Adding skips tracks the crate already lists, and both operations re-read the
+  crate from disk first, so a change made since the view loaded isn't undone.
+- Smart crates are left out of the menu: their membership comes from rules, so
+  a hand-added track would be discarded on the next re-evaluation.
+
 ### All Tracks and Not In Crates in the Crates view
 - The crate list now starts with **All Tracks** and **Not In Crates**, selected
   the same way as a crate — the way All Tracks already works in Tracks & Tags.

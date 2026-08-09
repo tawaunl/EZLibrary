@@ -47,6 +47,7 @@ struct TrackTableView: View {
     let onSelectionChanged: (([Track]) -> Void)?
     let onTrackSingleClick: ((Track) -> Void)?
     let onTrackActivated: ((Track, [Track]) -> Void)?
+    let contextActions: TrackContextMenuActions
 
     @State private var searchText = ""
     @State private var selectedTrackKeys: Set<String> = []
@@ -91,7 +92,8 @@ struct TrackTableView: View {
         onMetadataEditRequested: ((Track, SeratoTrackMetadataUpdate) -> Void)? = nil,
         onSelectionChanged: (([Track]) -> Void)? = nil,
         onTrackSingleClick: ((Track) -> Void)? = nil,
-        onTrackActivated: ((Track, [Track]) -> Void)? = nil
+        onTrackActivated: ((Track, [Track]) -> Void)? = nil,
+        contextActions: TrackContextMenuActions = TrackContextMenuActions()
     ) {
         self.tracks = tracks
         self.tracksVersion = tracksVersion
@@ -101,6 +103,7 @@ struct TrackTableView: View {
         self.onSelectionChanged = onSelectionChanged
         self.onTrackSingleClick = onTrackSingleClick
         self.onTrackActivated = onTrackActivated
+        self.contextActions = contextActions
     }
 
     var body: some View {
@@ -142,7 +145,8 @@ struct TrackTableView: View {
                 },
                 onMetadataEditRequested: onMetadataEditRequested,
                 onTrackSingleClick: onTrackSingleClick,
-                onTrackActivated: onTrackActivated
+                onTrackActivated: onTrackActivated,
+                contextActions: contextActions
             )
         }
     }
@@ -393,6 +397,32 @@ struct TrackTableView: View {
     }
 }
 
+/// Secondary-click actions for the track table.
+///
+/// Grouped into one value rather than added as four more parameters — the
+/// table's initialiser already carries plenty, and these only make sense
+/// together.
+struct TrackContextMenuActions {
+    /// One crate the selection can be filed into.
+    struct CrateTarget: Identifiable, Hashable {
+        let id: String
+        /// Menu title, e.g. `"House ▸ Bangers"`.
+        let title: String
+    }
+
+    /// Name of the crate currently on screen, when the table is showing one.
+    /// Drives the "Remove from …" item; nil hides it.
+    var currentCrateName: String?
+    var onRemoveFromCurrentCrate: (([Track]) -> Void)?
+
+    var addToCrateTargets: [CrateTarget] = []
+    var onAddToCrate: (([Track], CrateTarget) -> Void)?
+
+    var canRemove: Bool { currentCrateName != nil && onRemoveFromCurrentCrate != nil }
+    var canAdd: Bool { !addToCrateTargets.isEmpty && onAddToCrate != nil }
+    var isEmpty: Bool { !canRemove && !canAdd }
+}
+
 private struct TrackNSTableView: NSViewRepresentable {
     let tracks: [Track]
     /// Selection key per row of `tracks`, precomputed by the parent so the
@@ -405,6 +435,7 @@ private struct TrackNSTableView: NSViewRepresentable {
     let onMetadataEditRequested: ((Track, SeratoTrackMetadataUpdate) -> Void)?
     let onTrackSingleClick: ((Track) -> Void)?
     let onTrackActivated: ((Track, [Track]) -> Void)?
+    let contextActions: TrackContextMenuActions
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -424,6 +455,12 @@ private struct TrackNSTableView: NSViewRepresentable {
         table.doubleAction = #selector(Coordinator.handleDoubleClick(_:))
         table.registerForDraggedTypes([.string])
         table.setDraggingSourceOperationMask(.copy, forLocal: false)
+
+        // Built fresh on each secondary click: the crate list and what's
+        // selected both change constantly.
+        let menu = NSMenu()
+        menu.delegate = context.coordinator
+        table.menu = menu
 
         for descriptor in ColumnDescriptor.all {
             let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(descriptor.id))
@@ -484,7 +521,7 @@ private struct TrackNSTableView: NSViewRepresentable {
     }
 
     @MainActor
-    final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate {
+    final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate, NSMenuDelegate {
         var parent: TrackNSTableView
         weak var tableView: NSTableView?
         private var applyingSortDescriptor = false
@@ -603,6 +640,83 @@ private struct TrackNSTableView: NSViewRepresentable {
                 return nil
             }
             return NSString(string: payload)
+        }
+
+        // MARK: - Secondary-click menu
+
+        /// Rebuilt on every secondary click: both the crate list and what's
+        /// selected change constantly, so a menu built once would go stale.
+        func menuNeedsUpdate(_ menu: NSMenu) {
+            menu.removeAllItems()
+
+            let actions = parent.contextActions
+            let targets = contextClickTracks()
+            guard !actions.isEmpty, !targets.isEmpty else { return }
+
+            let noun = targets.count == 1
+                ? "Track"
+                : "\(targets.count) Tracks"
+
+            if actions.canRemove, let crateName = actions.currentCrateName {
+                let item = NSMenuItem(
+                    title: "Remove \(noun) from “\(crateName)”",
+                    action: #selector(handleRemoveFromCrate(_:)),
+                    keyEquivalent: "")
+                item.target = self
+                menu.addItem(item)
+            }
+
+            guard actions.canAdd else { return }
+            if !menu.items.isEmpty {
+                menu.addItem(.separator())
+            }
+
+            let addItem = NSMenuItem(title: "Add \(noun) to Crate", action: nil, keyEquivalent: "")
+            let submenu = NSMenu()
+            for target in actions.addToCrateTargets {
+                let crateItem = NSMenuItem(
+                    title: target.title,
+                    action: #selector(handleAddToCrate(_:)),
+                    keyEquivalent: "")
+                crateItem.target = self
+                crateItem.representedObject = target
+                submenu.addItem(crateItem)
+            }
+            addItem.submenu = submenu
+            menu.addItem(addItem)
+        }
+
+        /// What a menu action applies to: the whole selection when the clicked
+        /// row is part of it, otherwise just the row under the pointer. This is
+        /// the standard Finder behaviour — right-clicking outside a selection
+        /// acts on the row you actually pointed at, not the old selection.
+        private func contextClickTracks() -> [Track] {
+            guard let table = tableView else { return [] }
+            let clicked = table.clickedRow
+            guard clicked >= 0, clicked < parent.tracks.count else { return [] }
+
+            if table.selectedRowIndexes.contains(clicked) {
+                let selected = table.selectedRowIndexes
+                    .filter { $0 >= 0 && $0 < parent.tracks.count }
+                    .map { parent.tracks[$0] }
+                if !selected.isEmpty { return selected }
+            }
+            return [parent.tracks[clicked]]
+        }
+
+        @objc private func handleRemoveFromCrate(_ sender: NSMenuItem) {
+            let targets = contextClickTracks()
+            guard !targets.isEmpty else { return }
+            parent.contextActions.onRemoveFromCurrentCrate?(targets)
+        }
+
+        @objc private func handleAddToCrate(_ sender: NSMenuItem) {
+            guard let target = sender.representedObject as? TrackContextMenuActions.CrateTarget else {
+                return
+            }
+            let targets = contextClickTracks()
+            guard !targets.isEmpty else { return }
+            parent.contextActions.onAddToCrate?(targets, target)
         }
 
         @objc func handleDoubleClick(_ sender: Any?) {

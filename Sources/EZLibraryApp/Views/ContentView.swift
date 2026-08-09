@@ -513,14 +513,16 @@ struct ContentView: View {
                                 source: .allTracks,
                                 onTrackActivated: { track, list in
                                     activateAudioTrack(track, in: list)
-                                }
+                                },
+                                onCratesChanged: reloadLibrary
                             )
                         case .notInCrates:
                             AllTracksBrowserView(
                                 source: .notInCrates,
                                 onTrackActivated: { track, list in
                                     activateAudioTrack(track, in: list)
-                                }
+                                },
+                                onCratesChanged: reloadLibrary
                             )
                         case let .crate(node):
                             CrateDetailView(

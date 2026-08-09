@@ -41,8 +41,16 @@ struct AllTracksBrowserView: View {
 
     let source: Source
     let onTrackActivated: ((Track, [Track]) -> Void)?
+    /// Called after a track is filed into a crate, so the library reloads and
+    /// the counts and Not In Crates list catch up.
+    let onCratesChanged: () -> Void
 
     @EnvironmentObject private var libraryService: LibraryService
+
+    /// Built once per crate change rather than per body evaluation — it maps
+    /// and sorts every crate in the library.
+    @State private var crateTargets: [TrackContextMenuActions.CrateTarget] = []
+    @State private var errorMessage: String?
 
     /// Filtering the library against every crate's contents is O(n); held here
     /// and refreshed only when the library changes rather than recomputed on
@@ -84,7 +92,13 @@ struct AllTracksBrowserView: View {
                     numberingMode: .listOrder,
                     onTrackActivated: { track, list in
                         onTrackActivated?(track, list)
-                    }
+                    },
+                    contextActions: TrackContextMenuActions(
+                        addToCrateTargets: crateTargets,
+                        onAddToCrate: { selected, target in
+                            addToCrate(selected, target: target)
+                        }
+                    )
                 )
             }
         }
@@ -92,6 +106,16 @@ struct AllTracksBrowserView: View {
         .onChange(of: source) { refresh() }
         .onChange(of: libraryService.revision) { refresh() }
         .onChange(of: libraryService.cratesRevision) { refresh() }
+        .alert(
+            "Couldn't Add to Crate",
+            isPresented: Binding(
+                get: { errorMessage != nil },
+                set: { if !$0 { errorMessage = nil } })
+        ) {
+            Button("OK") { errorMessage = nil }
+        } message: {
+            Text(errorMessage ?? "")
+        }
     }
 
     private func refresh() {
@@ -102,6 +126,23 @@ struct AllTracksBrowserView: View {
             tracks = UnfiledTracksService.tracksNotInAnyCrate(
                 libraryService.tracks, crates: libraryService.crates)
         }
+        crateTargets = CrateContextMenuSupport.targets(for: libraryService.crates)
         tableTracksVersion &+= 1
+    }
+
+    private func addToCrate(_ selected: [Track], target: TrackContextMenuActions.CrateTarget) {
+        guard let crate = CrateContextMenuSupport.crate(
+            withID: target.id, in: libraryService.crates) else { return }
+
+        do {
+            let change = try CrateMembershipService.add(
+                storedPaths: selected.map(\.seratoStoredPath), to: crate)
+            // Nothing moved when every track was already filed there, and a
+            // reload would just churn the table for no visible change.
+            guard change.didChange else { return }
+            onCratesChanged()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 }
