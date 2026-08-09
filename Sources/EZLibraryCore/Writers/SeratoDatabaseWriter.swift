@@ -10,13 +10,25 @@
 
 import Foundation
 
+/// Tag values on their way to `database V2` and to a file's ID3 frames.
+///
+/// Every text field is whitespace-trimmed, both here and on later assignment.
+/// Stray padding is easy to introduce — a copied-and-pasted artist name, a
+/// scraped video title, a hand-typed field — and once written it is close to
+/// invisible while quietly breaking things that compare or sort on the value:
+/// `"Drake "` and `"Drake"` are two artists to Serato, sort apart, and produce
+/// different file names. Normalising at the one type every writer goes through
+/// keeps that from depending on each call site remembering to trim.
 public struct SeratoTrackMetadataUpdate: Sendable {
-    public var title: String
-    public var artist: String
-    public var album: String
-    public var genre: String
-    public var comment: String
-    public var key: String
+    // `didSet` covers direct mutation (`metadata.artist = …`), which several
+    // callers do; it does not fire during `init`, so the initialiser trims too.
+    // Assigning inside an observer doesn't re-enter it, so there's no recursion.
+    public var title: String { didSet { title = Self.trimmed(title) } }
+    public var artist: String { didSet { artist = Self.trimmed(artist) } }
+    public var album: String { didSet { album = Self.trimmed(album) } }
+    public var genre: String { didSet { genre = Self.trimmed(genre) } }
+    public var comment: String { didSet { comment = Self.trimmed(comment) } }
+    public var key: String { didSet { key = Self.trimmed(key) } }
     public var bpm: Double?
     public var year: Int?
     /// Optional new cover art to embed in the file's ID3 tag. When nil, any
@@ -35,15 +47,25 @@ public struct SeratoTrackMetadataUpdate: Sendable {
         year: Int?,
         artwork: ID3Artwork? = nil
     ) {
-        self.title = title
-        self.artist = artist
-        self.album = album
-        self.genre = genre
-        self.comment = comment
-        self.key = key
+        self.title = Self.trimmed(title)
+        self.artist = Self.trimmed(artist)
+        self.album = Self.trimmed(album)
+        self.genre = Self.trimmed(genre)
+        self.comment = Self.trimmed(comment)
+        self.key = Self.trimmed(key)
         self.bpm = bpm
         self.year = year
         self.artwork = artwork
+    }
+
+    /// Trims both ends rather than only the trailing side. A leading space is
+    /// the same class of mistake and does more visible damage — it sorts the
+    /// track to the top of the list, away from the rest of that artist.
+    ///
+    /// `.whitespacesAndNewlines` covers tabs, newlines and non-breaking spaces,
+    /// which is what actually turns up in tags pasted from web pages.
+    static func trimmed(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 

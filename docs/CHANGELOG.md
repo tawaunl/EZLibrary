@@ -11,6 +11,22 @@ version (`CFBundleShortVersionString.CFBundleVersion`) and are used verbatim by
 
 ## Unreleased
 
+### Tag values are trimmed on save
+- Every text field written to `database V2` and to a file's ID3 frames — title,
+  artist, album, genre, comment, key — is now whitespace-trimmed.
+- Stray padding is easy to pick up (a pasted artist name, a scraped video title,
+  a hand-typed field) and close to invisible once written, while quietly
+  breaking anything that compares or sorts on the value: `"Drake "` and
+  `"Drake"` are two different artists to Serato, sort apart, and render
+  different file names.
+- Both ends are trimmed, not just the trailing side. A leading space does more
+  visible damage — it sorts the track to the top of the list, away from the rest
+  of that artist. Interior spacing is left alone.
+- Trimming lives on `SeratoTrackMetadataUpdate`, the one type every writer goes
+  through, so it applies whether the value came from a manual edit, an online
+  lookup, a bulk fill, or a YouTube download.
+- Existing files keep their current tags until something re-saves them.
+
 ### Performance
 - The trim editor's waveform no longer re-slices the whole envelope on every
   redraw. During playback at a fixed zoom the visible columns don't change, so
