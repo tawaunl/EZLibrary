@@ -59,6 +59,8 @@
           <li><strong>DJ-safe titles.</strong> Version markers like (Intro), (Clean) and (Extended Mix) are preserved when an online title is applied, instead of being flattened to the radio edit.</li>
           <li><strong>Listen before you commit.</strong> The built-in player has full transport controls and follows the order of the list you are looking at, filters and sort included.</li>
           <li><strong>Copy anything.</strong> Every value in the app is selectable text, so you can lift an ISRC or a path straight out of the window.</li>
+          <li><strong>Clean Tag Whitespace.</strong> Sweeps the current scope for tag values padded with stray spaces — invisible in the field, but enough to make <code>"Drake "</code> and <code>"Drake"</code> two different artists — and re-saves them trimmed.</li>
+          <li><strong>Edit Audio.</strong> Opens the selected track in the <a href="audio-editor.html">trim editor</a> to cut dead air or an unwanted intro without leaving the table.</li>
         </ul>
 
         <h2>How to use it</h2>
@@ -85,6 +87,10 @@
 
         <h2>Related</h2>
         <div class="grid grid-2">
+          <a class="card" href="audio-editor.html">
+            <h3>Audio Editor</h3>
+            <p>Trim dead air, long intros and unwanted tails off a track — without re-encoding it.</p>
+          </a>
           <a class="card" href="rename.html">
             <h3>Rename From Tags</h3>
             <p>Consistent filenames across your whole library — and Serato still finds every one of them.</p>
@@ -93,16 +99,13 @@
             <h3>Find Duplicates</h3>
             <p>Catch the same song saved five times, even when every copy is named differently.</p>
           </a>
-          <a class="card" href="crates.html">
-            <h3>Crates</h3>
-            <p>Your whole crate tree, including smart crates and the hidden ones, with real stats.</p>
-          </a>
         </div>
       </div>
       <aside class="aside">
         <h4>All features</h4>
         <ul>
           <li><a href="tracks-and-tags.html" aria-current="page">Tracks &amp; Tags</a></li>
+          <li><a href="audio-editor.html">Audio Editor</a></li>
           <li><a href="duplicates.html">Find Duplicates</a></li>
           <li><a href="missing-tracks.html">Missing Tracks</a></li>
           <li><a href="crates.html">Crates</a></li>
@@ -131,7 +134,7 @@
         Download for macOS
       </a>
     </div>
-    <p class="meta-line">v<span data-latest-version>1.0</span> · <span data-latest-size>8.2 MB</span> · macOS 13+ · Apple Silicon &amp; Intel</p>
+    <p class="meta-line">v<span data-latest-version>1.0.1</span> · <span data-latest-size>8.2 MB</span> · macOS 13+ · Apple Silicon &amp; Intel</p>
   </div>
 </section>
 </main>

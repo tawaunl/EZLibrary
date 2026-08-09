@@ -9,7 +9,7 @@ version (`CFBundleShortVersionString.CFBundleVersion`) and are used verbatim by
 > the highest priority — see [SECURITY.md](../SECURITY.md). This changelog is kept
 > up to date so you can see exactly what changed and when.
 
-## Unreleased
+## 1.0.1
 
 ### Add and remove crate membership from a track's right-click menu
 - Secondary-clicking a track now offers **Add … to Crate**, with a submenu of

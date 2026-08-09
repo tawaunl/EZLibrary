@@ -72,6 +72,7 @@ ICON = {
     "history": '<path d="M12 3a9 9 0 108.5 6"/><path d="M21 3v6h-6"/><path d="M12 8v4l3 2"/>',
     "pencil": '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4 12.5-12.5z"/>',
     "terminal": '<path d="M4 17l6-5-6-5"/><path d="M12 19h8"/>',
+    "waveform": '<path d="M3 12h2M8 6v12M12 3v18M16 8v8M20 11h1"/>',
 }
 
 
@@ -101,6 +102,8 @@ FEATURES: list[Feature] = [
             ("DJ-safe titles", "Version markers like (Intro), (Clean) and (Extended Mix) are preserved when an online title is applied, instead of being flattened to the radio edit."),
             ("Listen before you commit", "The built-in player has full transport controls and follows the order of the list you are looking at, filters and sort included."),
             ("Copy anything", "Every value in the app is selectable text, so you can lift an ISRC or a path straight out of the window."),
+            ("Clean Tag Whitespace", "Sweeps the current scope for tag values padded with stray spaces — invisible in the field, but enough to make <code>\"Drake \"</code> and <code>\"Drake\"</code> two different artists — and re-saves them trimmed."),
+            ("Edit Audio", "Opens the selected track in the <a href=\"audio-editor.html\">trim editor</a> to cut dead air or an unwanted intro without leaving the table."),
         ),
         steps=(
             ("Pick your scope", "Choose <em>All Tracks</em> or a specific crate at the top of the view."),
@@ -111,7 +114,43 @@ FEATURES: list[Feature] = [
         note="Serato rewrites its library from memory when it quits, so it would overwrite anything "
              "changed underneath it. EZLibrary refuses to write while Serato is running rather than "
              "let that happen.",
-        related=("rename", "duplicates", "crates"),
+        related=("audio-editor", "rename", "duplicates"),
+    ),
+    Feature(
+        slug="audio-editor",
+        name="Audio Editor",
+        nav="Audio Editor",
+        icon="waveform",
+        tagline="Trim dead air, long intros and unwanted tails off a track — without re-encoding it.",
+        intro=(
+            "Some files are not wrong, just badly cut: eight seconds of silence at the front, a "
+            "DJ drop you never wanted, a minute of crowd noise on the end. Until now that meant "
+            "leaving your library for an audio editor and hoping it gave the file back intact.",
+            "<strong>Edit Audio…</strong> in the Tracks &amp; Tags bar opens the selected track as a "
+            "waveform. Set an in and an out point, listen to exactly what you would keep, and save "
+            "— over the original, or as a second copy filed beside it.",
+        ),
+        does=(
+            ("No re-encode", "The cut is a stream copy, so a 320kbps MP3 stays a 320kbps MP3. Your tags and embedded cover art come through untouched."),
+            ("Detect Silence", "Snaps the selection just inside the leading and trailing silence, so topping and tailing a rip is one click."),
+            ("Zoom for precision", "The <code>+</code>/<code>−</code> keys, a pinch over the waveform, <strong>Fit</strong> and <strong>Zoom to Selection</strong>, with a scrubber for moving through the track while zoomed in. The waveform is sampled finely enough that zooming reveals real detail rather than stretching the same columns."),
+            ("Full transport", "Play/pause, skip back and forward 5 seconds, jump to the start or end, and a fast-forward cycling 1× → 1.5× → 2× → 4× that scans at real speed rather than skipping."),
+            ("A droppable marker", "Drop a marker with <code>M</code> and return to it with <code>⇧M</code> while you hunt for the right cut — separate from the playhead, and drawn separately on the waveform."),
+            ("Audition either side", "Playing from inside the selection stops at the out point, so you hear what you'd keep. Playing from past it runs to the end of the file, so you can hear the tail before committing to losing it."),
+            ("Keyboard control", "<code>←</code>/<code>→</code> step by 0.1s (<code>⇧</code> for 1s, <code>⌥</code> for 0.01s), <code>⌘←</code>/<code>⌘→</code> jump to the in/out points, <code>Home</code>/<code>End</code> to the track boundaries, <code>I</code>/<code>O</code> set the trim points, <code>Space</code> plays."),
+            ("Two ways to save", "<strong>Save In Place</strong> overwrites the file and keeps a timestamped backup of the original. <strong>Save As New File</strong> writes a second copy, registers it with Serato, and files it next to the original in every plain crate that holds it."),
+        ),
+        steps=(
+            ("Select a track", "In Tracks &amp; Tags, select one track and click <strong>Edit Audio…</strong>."),
+            ("Set the in and out points", "Drag the handles, or use <strong>Detect Silence</strong> and nudge from there. Zoom in for a precise cut."),
+            ("Listen to it", "Play from inside the selection to hear the keeper, and from past the out point to hear the tail you're cutting."),
+            ("Save", "Overwrite the original, or save a second copy. Serato has to be closed either way."),
+        ),
+        note="Trimming shifts the whole timeline, which invalidates Serato's cue points, saved loops, "
+             "beatgrid and waveform overview. EZLibrary clears them so Serato re-analyzes the track "
+             "cleanly rather than showing cues in the wrong places — and it reads the file first and "
+             "tells you exactly how many cues and loops you'd lose, before you save.",
+        related=("tracks-and-tags", "duplicates", "backup"),
     ),
     Feature(
         slug="duplicates",
@@ -195,13 +234,20 @@ FEATURES: list[Feature] = [
         intro=(
             "The Crates workspace reads your crate structure straight off disk — nested crates, "
             "smart crates and the crates Serato keeps out of sight — and shows them as one tree.",
-            "It is also the scope selector for the rest of the app. Pick a crate here and tag "
+            "It is also where crates get filled. The list starts with <strong>All Tracks</strong> "
+            "and <strong>Not In Crates</strong>, so the rest of your library is right beside the "
+            "tree and a track can be dragged onto a crate without leaving the view.",
+            "And it is the scope selector for the rest of the app. Pick a crate here and tag "
             "editing, duplicate detection and backup can all be pointed at just that crate.",
         ),
         does=(
             ("The full tree", "Nested crates are rebuilt from Serato's naming scheme, so you see the hierarchy you actually built."),
             ("Smart crates too", "Rule-based crates are read alongside regular ones, and their rules are preserved whenever EZLibrary rewrites a path inside them."),
             ("Hidden crates", "Crates Serato hides are still shown, because they still hold tracks and still break."),
+            ("Browse the whole library here", "<strong>All Tracks</strong> sits at the top of the crate list and lists everything, with the same search and sorting as Tracks &amp; Tags — and the tree stays visible next to it, so filling a crate is a drag."),
+            ("Find what you never filed", "<strong>Not In Crates</strong> shows every track that isn't in a single crate — the ones easy to forget and never play. It's a live count at the top of the section too, next to Tracks In Crates."),
+            ("File from the right-click menu", "Secondary-click a track for <strong>Add … to Crate</strong> and, when a crate is open, <strong>Remove … from</strong> it. Acts on the whole selection, or on just the row you pointed at, the way Finder does."),
+            ("No accidental doubles", "Adding a track a crate already lists does nothing, rather than filing it twice — Serato reads a repeated path as a second copy of the track."),
             ("Fast filtering", "Filter within a crate and sort by any column to find what you are after."),
             ("Crate-scoped operations", "Use a crate as the scope for bulk tag edits, duplicate scans and single-crate backups."),
             ("Safe deletes", "Deleting a crate moves it to the Trash rather than destroying it."),
@@ -209,8 +255,13 @@ FEATURES: list[Feature] = [
         steps=(
             ("Open Crates", "The tree loads from your <code>_Serato_</code> folder — no import step."),
             ("Select a crate", "Its tracks appear on the right, with the same table and player as the main library view."),
+            ("Or start from All Tracks", "Pick <em>All Tracks</em> or <em>Not In Crates</em> at the top of the list, search for what you want, and drag the rows onto a crate in the tree."),
             ("Use it as a scope", "Switch to Tracks &amp; Tags, Duplicates or Backup and the crate stays selected as the scope."),
         ),
+        note="Smart crates are left out of the filing tools. Their membership comes from rules that "
+             "Serato re-evaluates, so a hand-added track would be discarded on the next pass — and "
+             "for the same reason a track that only appears in a smart crate still counts as "
+             "<em>Not In Crates</em>.",
         related=("playlistmatch", "tracks-and-tags", "backup"),
     ),
     Feature(
@@ -238,6 +289,7 @@ FEATURES: list[Feature] = [
             ("Buy links that are real", "Confirmed iTunes and Beatport listings, grouped by store with per-version options — not a search URL that might find nothing."),
             ("Import what you bought", "<strong>I bought it</strong> brings the purchased file into your library, and a Downloads-folder watcher offers to import finished downloads automatically."),
             ("Download fallback", "For tracks that cannot be bought, pull the audio from YouTube or SoundCloud, with music videos filtered out of the suggestions."),
+            ("Tagged from the title, not the channel", "Downloads read the artist and title out of the video title, where they actually live. A channel name is never used as the artist or the album, and an unparseable title leaves the field empty rather than guessing."),
         ),
         steps=(
             ("Paste the playlist", "Drop in a link, a CSV, or a plain list of tracks."),
@@ -615,7 +667,7 @@ def cta_band() -> str:
         Download for macOS
       </a>
     </div>
-    <p class="meta-line">v<span data-latest-version>1.0</span> · <span data-latest-size>8.2 MB</span> · macOS 13+ · Apple Silicon &amp; Intel</p>
+    <p class="meta-line">v<span data-latest-version>1.0.1</span> · <span data-latest-size>8.2 MB</span> · macOS 13+ · Apple Silicon &amp; Intel</p>
   </div>
 </section>"""
 
@@ -637,8 +689,9 @@ def features_index() -> str:
         [
             head(
                 "Features — EZLibrary",
-                "Every workspace in EZLibrary: tag editing, duplicate detection, missing-track "
-                "repair, crates, PlaylistMatch, imports, consolidation, backup and bulk renaming.",
+                "Every workspace in EZLibrary: tag editing, audio trimming, duplicate detection, "
+                "missing-track repair, crates, PlaylistMatch, imports, consolidation, backup and "
+                "bulk renaming.",
                 prefix,
                 "features/",
             ),
@@ -649,7 +702,7 @@ def features_index() -> str:
   <div class="wrap">
     <p class="crumbs"><a href="{prefix}">Home</a><span>/</span>Features</p>
     <h1>Everything EZLibrary does</h1>
-    <p>Ten workspaces over one Serato library. Each one reads and writes the same files,
+    <p>Eleven workspaces over one Serato library. Each one reads and writes the same files,
       takes a snapshot before it changes anything, and never guesses on your behalf.</p>
   </div>
 </section>

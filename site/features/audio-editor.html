@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Crates — EZLibrary</title>
-<meta name="description" content="Your whole crate tree, including smart crates and the hidden ones, with real stats.">
+<title>Audio Editor — EZLibrary</title>
+<meta name="description" content="Trim dead air, long intros and unwanted tails off a track — without re-encoding it.">
 <link rel="icon" href="../assets/img/icon.png">
-<link rel="canonical" href="https://tawaunl.github.io/EZLibrary/features/crates.html">
+<link rel="canonical" href="https://tawaunl.github.io/EZLibrary/features/audio-editor.html">
 <link rel="stylesheet" href="../assets/css/site.css">
 <meta property="og:type" content="website">
-<meta property="og:title" content="Crates — EZLibrary">
-<meta property="og:description" content="Your whole crate tree, including smart crates and the hidden ones, with real stats.">
+<meta property="og:title" content="Audio Editor — EZLibrary">
+<meta property="og:description" content="Trim dead air, long intros and unwanted tails off a track — without re-encoding it.">
 <meta property="og:image" content="https://tawaunl.github.io/EZLibrary/assets/img/icon.png">
 </head>
 <body>
@@ -32,9 +32,9 @@
 
 <section class="page-hero">
   <div class="wrap">
-    <p class="crumbs"><a href="../">Home</a><span>/</span><a href="../features/">Features</a><span>/</span>Crates</p>
-    <h1>Crates <span class="badge">Shipped</span></h1>
-    <p>Your whole crate tree, including smart crates and the hidden ones, with real stats.</p>
+    <p class="crumbs"><a href="../">Home</a><span>/</span><a href="../features/">Features</a><span>/</span>Audio Editor</p>
+    <h1>Audio Editor <span class="badge">Shipped</span></h1>
+    <p>Trim dead air, long intros and unwanted tails off a track — without re-encoding it.</p>
   </div>
 </section>
 
@@ -42,60 +42,52 @@
   <div class="wrap">
     <div class="two-col">
       <div class="prose">
-        <p>The Crates workspace reads your crate structure straight off disk — nested crates, smart crates and the crates Serato keeps out of sight — and shows them as one tree.</p>
-        <p>It is also where crates get filled. The list starts with <strong>All Tracks</strong> and <strong>Not In Crates</strong>, so the rest of your library is right beside the tree and a track can be dragged onto a crate without leaving the view.</p>
-        <p>And it is the scope selector for the rest of the app. Pick a crate here and tag editing, duplicate detection and backup can all be pointed at just that crate.</p>
-
-        <figure class="shot" style="margin:32px 0">
-          <div class="shot-bar"><i></i><i></i><i></i><span>Crates</span></div>
-          <img src="../assets/img/shot-crates.webp" alt="The Crates workspace with a nested crate tree on the left and the selected crate's tracks on the right." loading="lazy">
-        </figure>
+        <p>Some files are not wrong, just badly cut: eight seconds of silence at the front, a DJ drop you never wanted, a minute of crowd noise on the end. Until now that meant leaving your library for an audio editor and hoping it gave the file back intact.</p>
+        <p><strong>Edit Audio…</strong> in the Tracks &amp; Tags bar opens the selected track as a waveform. Set an in and an out point, listen to exactly what you would keep, and save — over the original, or as a second copy filed beside it.</p>
 
         <h2>What it does</h2>
         <ul class="ticks">
-          <li><strong>The full tree.</strong> Nested crates are rebuilt from Serato's naming scheme, so you see the hierarchy you actually built.</li>
-          <li><strong>Smart crates too.</strong> Rule-based crates are read alongside regular ones, and their rules are preserved whenever EZLibrary rewrites a path inside them.</li>
-          <li><strong>Hidden crates.</strong> Crates Serato hides are still shown, because they still hold tracks and still break.</li>
-          <li><strong>Browse the whole library here.</strong> <strong>All Tracks</strong> sits at the top of the crate list and lists everything, with the same search and sorting as Tracks &amp; Tags — and the tree stays visible next to it, so filling a crate is a drag.</li>
-          <li><strong>Find what you never filed.</strong> <strong>Not In Crates</strong> shows every track that isn't in a single crate — the ones easy to forget and never play. It's a live count at the top of the section too, next to Tracks In Crates.</li>
-          <li><strong>File from the right-click menu.</strong> Secondary-click a track for <strong>Add … to Crate</strong> and, when a crate is open, <strong>Remove … from</strong> it. Acts on the whole selection, or on just the row you pointed at, the way Finder does.</li>
-          <li><strong>No accidental doubles.</strong> Adding a track a crate already lists does nothing, rather than filing it twice — Serato reads a repeated path as a second copy of the track.</li>
-          <li><strong>Fast filtering.</strong> Filter within a crate and sort by any column to find what you are after.</li>
-          <li><strong>Crate-scoped operations.</strong> Use a crate as the scope for bulk tag edits, duplicate scans and single-crate backups.</li>
-          <li><strong>Safe deletes.</strong> Deleting a crate moves it to the Trash rather than destroying it.</li>
+          <li><strong>No re-encode.</strong> The cut is a stream copy, so a 320kbps MP3 stays a 320kbps MP3. Your tags and embedded cover art come through untouched.</li>
+          <li><strong>Detect Silence.</strong> Snaps the selection just inside the leading and trailing silence, so topping and tailing a rip is one click.</li>
+          <li><strong>Zoom for precision.</strong> The <code>+</code>/<code>−</code> keys, a pinch over the waveform, <strong>Fit</strong> and <strong>Zoom to Selection</strong>, with a scrubber for moving through the track while zoomed in. The waveform is sampled finely enough that zooming reveals real detail rather than stretching the same columns.</li>
+          <li><strong>Full transport.</strong> Play/pause, skip back and forward 5 seconds, jump to the start or end, and a fast-forward cycling 1× → 1.5× → 2× → 4× that scans at real speed rather than skipping.</li>
+          <li><strong>A droppable marker.</strong> Drop a marker with <code>M</code> and return to it with <code>⇧M</code> while you hunt for the right cut — separate from the playhead, and drawn separately on the waveform.</li>
+          <li><strong>Audition either side.</strong> Playing from inside the selection stops at the out point, so you hear what you'd keep. Playing from past it runs to the end of the file, so you can hear the tail before committing to losing it.</li>
+          <li><strong>Keyboard control.</strong> <code>←</code>/<code>→</code> step by 0.1s (<code>⇧</code> for 1s, <code>⌥</code> for 0.01s), <code>⌘←</code>/<code>⌘→</code> jump to the in/out points, <code>Home</code>/<code>End</code> to the track boundaries, <code>I</code>/<code>O</code> set the trim points, <code>Space</code> plays.</li>
+          <li><strong>Two ways to save.</strong> <strong>Save In Place</strong> overwrites the file and keeps a timestamped backup of the original. <strong>Save As New File</strong> writes a second copy, registers it with Serato, and files it next to the original in every plain crate that holds it.</li>
         </ul>
 
         <h2>How to use it</h2>
         <ol class="steps">
           <li>
-            <h3>Open Crates</h3>
-            <p>The tree loads from your <code>_Serato_</code> folder — no import step.</p>
+            <h3>Select a track</h3>
+            <p>In Tracks &amp; Tags, select one track and click <strong>Edit Audio…</strong>.</p>
           </li>
           <li>
-            <h3>Select a crate</h3>
-            <p>Its tracks appear on the right, with the same table and player as the main library view.</p>
+            <h3>Set the in and out points</h3>
+            <p>Drag the handles, or use <strong>Detect Silence</strong> and nudge from there. Zoom in for a precise cut.</p>
           </li>
           <li>
-            <h3>Or start from All Tracks</h3>
-            <p>Pick <em>All Tracks</em> or <em>Not In Crates</em> at the top of the list, search for what you want, and drag the rows onto a crate in the tree.</p>
+            <h3>Listen to it</h3>
+            <p>Play from inside the selection to hear the keeper, and from past the out point to hear the tail you're cutting.</p>
           </li>
           <li>
-            <h3>Use it as a scope</h3>
-            <p>Switch to Tracks &amp; Tags, Duplicates or Backup and the crate stays selected as the scope.</p>
+            <h3>Save</h3>
+            <p>Overwrite the original, or save a second copy. Serato has to be closed either way.</p>
           </li>
         </ol>
 
-        <div class="note"><p>Smart crates are left out of the filing tools. Their membership comes from rules that Serato re-evaluates, so a hand-added track would be discarded on the next pass — and for the same reason a track that only appears in a smart crate still counts as <em>Not In Crates</em>.</p></div>
+        <div class="note"><p>Trimming shifts the whole timeline, which invalidates Serato's cue points, saved loops, beatgrid and waveform overview. EZLibrary clears them so Serato re-analyzes the track cleanly rather than showing cues in the wrong places — and it reads the file first and tells you exactly how many cues and loops you'd lose, before you save.</p></div>
 
         <h2>Related</h2>
         <div class="grid grid-2">
-          <a class="card" href="playlistmatch.html">
-            <h3>PlaylistMatch</h3>
-            <p>Paste a playlist, find out what you already own, and get a crate out of it.</p>
-          </a>
           <a class="card" href="tracks-and-tags.html">
             <h3>Tracks &amp; Tags</h3>
             <p>Browse the whole library, fix metadata in place, and fill thousands of empty fields in one pass.</p>
+          </a>
+          <a class="card" href="duplicates.html">
+            <h3>Find Duplicates</h3>
+            <p>Catch the same song saved five times, even when every copy is named differently.</p>
           </a>
           <a class="card" href="backup.html">
             <h3>Backup</h3>
@@ -107,10 +99,10 @@
         <h4>All features</h4>
         <ul>
           <li><a href="tracks-and-tags.html">Tracks &amp; Tags</a></li>
-          <li><a href="audio-editor.html">Audio Editor</a></li>
+          <li><a href="audio-editor.html" aria-current="page">Audio Editor</a></li>
           <li><a href="duplicates.html">Find Duplicates</a></li>
           <li><a href="missing-tracks.html">Missing Tracks</a></li>
-          <li><a href="crates.html" aria-current="page">Crates</a></li>
+          <li><a href="crates.html">Crates</a></li>
           <li><a href="playlistmatch.html">PlaylistMatch</a></li>
           <li><a href="add-music.html">Add Music</a></li>
           <li><a href="consolidation.html">Consolidation</a></li>
