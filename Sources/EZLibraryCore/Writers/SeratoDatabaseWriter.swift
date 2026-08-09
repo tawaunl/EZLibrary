@@ -80,6 +80,21 @@ public struct SeratoTrackMetadataUpdate: Sendable {
 public enum SeratoDatabaseWriter {
     /// Ensures `database V2` has an `otrk` record for `storedPath`.
     /// Returns rewritten bytes and whether a new track record was inserted.
+    /// Appends a track record without checking whether one already exists.
+    ///
+    /// For callers that already know the track is missing — a bulk sync that
+    /// tracked which files it has seen — this avoids re-scanning the whole
+    /// database once per file, which made a large folder sync quadratic.
+    public static func appendingTrack(
+        storedPath: String,
+        metadata: SeratoTrackMetadataUpdate? = nil,
+        to fileData: Data
+    ) -> Data {
+        var newData = fileData
+        newData.append(SeratoChunkCodec.writeChunk(makeTrackChunk(storedPath: storedPath, metadata: metadata)))
+        return newData
+    }
+
     public static func ensuringTrackExists(
         forStoredPath storedPath: String,
         metadata: SeratoTrackMetadataUpdate? = nil,

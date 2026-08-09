@@ -30,7 +30,7 @@ private func makeSyncScratchEnvironment() throws -> (tempRoot: URL, libraryDirec
     return (tempRoot, libraryDirectory, destinationRoot, databaseFile)
 }
 
-@Test func syncAudioFolderInsertsMissingTracks() throws {
+@Test func syncAudioFolderInsertsMissingTracks() async throws {
     let env = try makeSyncScratchEnvironment()
     defer { try? FileManager.default.removeItem(at: env.tempRoot) }
 
@@ -41,7 +41,7 @@ private func makeSyncScratchEnvironment() throws -> (tempRoot: URL, libraryDirec
 
     let rootDirectory = SeratoLibraryLocator.rootDirectory(for: env.libraryDirectory, homeDirectory: env.tempRoot)
 
-    let result = try LibraryFolderSyncService.syncAudioFolder(
+    let result = try await LibraryFolderSyncService.syncAudioFolder(
         env.destinationRoot,
         databaseFileURL: env.databaseFile,
         rootDirectory: rootDirectory
@@ -52,7 +52,7 @@ private func makeSyncScratchEnvironment() throws -> (tempRoot: URL, libraryDirec
     #expect(result.alreadyPresentTracks == 0)
 }
 
-@Test func syncAudioFolderIsIdempotentOnSecondRun() throws {
+@Test func syncAudioFolderIsIdempotentOnSecondRun() async throws {
     let env = try makeSyncScratchEnvironment()
     defer { try? FileManager.default.removeItem(at: env.tempRoot) }
 
@@ -61,13 +61,13 @@ private func makeSyncScratchEnvironment() throws -> (tempRoot: URL, libraryDirec
 
     let rootDirectory = SeratoLibraryLocator.rootDirectory(for: env.libraryDirectory, homeDirectory: env.tempRoot)
 
-    _ = try LibraryFolderSyncService.syncAudioFolder(
+    _ = try await LibraryFolderSyncService.syncAudioFolder(
         env.destinationRoot,
         databaseFileURL: env.databaseFile,
         rootDirectory: rootDirectory
     )
 
-    let second = try LibraryFolderSyncService.syncAudioFolder(
+    let second = try await LibraryFolderSyncService.syncAudioFolder(
         env.destinationRoot,
         databaseFileURL: env.databaseFile,
         rootDirectory: rootDirectory
@@ -78,7 +78,7 @@ private func makeSyncScratchEnvironment() throws -> (tempRoot: URL, libraryDirec
     #expect(second.alreadyPresentTracks == 1)
 }
 
-@Test func syncAudioFolderUsesFilenameFallbackForArtistAndTitle() throws {
+@Test func syncAudioFolderUsesFilenameFallbackForArtistAndTitle() async throws {
     let env = try makeSyncScratchEnvironment()
     defer { try? FileManager.default.removeItem(at: env.tempRoot) }
 
@@ -87,7 +87,7 @@ private func makeSyncScratchEnvironment() throws -> (tempRoot: URL, libraryDirec
 
     let rootDirectory = SeratoLibraryLocator.rootDirectory(for: env.libraryDirectory, homeDirectory: env.tempRoot)
 
-    let result = try LibraryFolderSyncService.syncAudioFolder(
+    let result = try await LibraryFolderSyncService.syncAudioFolder(
         env.destinationRoot,
         databaseFileURL: env.databaseFile,
         rootDirectory: rootDirectory
@@ -103,7 +103,7 @@ private func makeSyncScratchEnvironment() throws -> (tempRoot: URL, libraryDirec
     #expect(insertedTrack.title == "Sunset Mix")
 }
 
-@Test func syncAudioFilesInsertsOnlyProvidedFiles() throws {
+@Test func syncAudioFilesInsertsOnlyProvidedFiles() async throws {
     let env = try makeSyncScratchEnvironment()
     defer { try? FileManager.default.removeItem(at: env.tempRoot) }
 
@@ -114,7 +114,7 @@ private func makeSyncScratchEnvironment() throws -> (tempRoot: URL, libraryDirec
 
     let rootDirectory = SeratoLibraryLocator.rootDirectory(for: env.libraryDirectory, homeDirectory: env.tempRoot)
 
-    let result = try LibraryFolderSyncService.syncAudioFiles(
+    let result = try await LibraryFolderSyncService.syncAudioFiles(
         [included],
         databaseFileURL: env.databaseFile,
         rootDirectory: rootDirectory
@@ -131,7 +131,7 @@ private func makeSyncScratchEnvironment() throws -> (tempRoot: URL, libraryDirec
     #expect(!tracks.contains(where: { $0.seratoStoredPath == excludedPath }))
 }
 
-@Test func syncAudioFolderParsesFeaturedArtistAndStripsTrailingDescriptors() throws {
+@Test func syncAudioFolderParsesFeaturedArtistAndStripsTrailingDescriptors() async throws {
     let env = try makeSyncScratchEnvironment()
     defer { try? FileManager.default.removeItem(at: env.tempRoot) }
 
@@ -140,7 +140,7 @@ private func makeSyncScratchEnvironment() throws -> (tempRoot: URL, libraryDirec
 
     let rootDirectory = SeratoLibraryLocator.rootDirectory(for: env.libraryDirectory, homeDirectory: env.tempRoot)
 
-    let result = try LibraryFolderSyncService.syncAudioFolder(
+    let result = try await LibraryFolderSyncService.syncAudioFolder(
         env.destinationRoot,
         databaseFileURL: env.databaseFile,
         rootDirectory: rootDirectory
@@ -156,7 +156,7 @@ private func makeSyncScratchEnvironment() throws -> (tempRoot: URL, libraryDirec
     #expect(insertedTrack.title == "Big Tune [Intro] (Extended Mix)")
 }
 
-@Test func syncAudioFolderStripsCommonVideoNoiseFromTitle() throws {
+@Test func syncAudioFolderStripsCommonVideoNoiseFromTitle() async throws {
     let env = try makeSyncScratchEnvironment()
     defer { try? FileManager.default.removeItem(at: env.tempRoot) }
 
@@ -164,7 +164,7 @@ private func makeSyncScratchEnvironment() throws -> (tempRoot: URL, libraryDirec
     try Data("track".utf8).write(to: file)
 
     let rootDirectory = SeratoLibraryLocator.rootDirectory(for: env.libraryDirectory, homeDirectory: env.tempRoot)
-    _ = try LibraryFolderSyncService.syncAudioFolder(
+    _ = try await LibraryFolderSyncService.syncAudioFolder(
         env.destinationRoot,
         databaseFileURL: env.databaseFile,
         rootDirectory: rootDirectory
@@ -178,7 +178,7 @@ private func makeSyncScratchEnvironment() throws -> (tempRoot: URL, libraryDirec
     #expect(insertedTrack.title == "Anthem")
 }
 
-@Test func syncAudioFolderParsesCompactArtistTitleSeparator() throws {
+@Test func syncAudioFolderParsesCompactArtistTitleSeparator() async throws {
     let env = try makeSyncScratchEnvironment()
     defer { try? FileManager.default.removeItem(at: env.tempRoot) }
 
@@ -186,7 +186,7 @@ private func makeSyncScratchEnvironment() throws -> (tempRoot: URL, libraryDirec
     try Data("track".utf8).write(to: file)
 
     let rootDirectory = SeratoLibraryLocator.rootDirectory(for: env.libraryDirectory, homeDirectory: env.tempRoot)
-    _ = try LibraryFolderSyncService.syncAudioFolder(
+    _ = try await LibraryFolderSyncService.syncAudioFolder(
         env.destinationRoot,
         databaseFileURL: env.databaseFile,
         rootDirectory: rootDirectory
@@ -200,7 +200,7 @@ private func makeSyncScratchEnvironment() throws -> (tempRoot: URL, libraryDirec
     #expect(insertedTrack.title == "SunriseCut")
 }
 
-@Test func syncAudioFolderPreservesDJDescriptorsInTitle() throws {
+@Test func syncAudioFolderPreservesDJDescriptorsInTitle() async throws {
     let env = try makeSyncScratchEnvironment()
     defer { try? FileManager.default.removeItem(at: env.tempRoot) }
 
@@ -208,7 +208,7 @@ private func makeSyncScratchEnvironment() throws -> (tempRoot: URL, libraryDirec
     try Data("track".utf8).write(to: file)
 
     let rootDirectory = SeratoLibraryLocator.rootDirectory(for: env.libraryDirectory, homeDirectory: env.tempRoot)
-    _ = try LibraryFolderSyncService.syncAudioFolder(
+    _ = try await LibraryFolderSyncService.syncAudioFolder(
         env.destinationRoot,
         databaseFileURL: env.databaseFile,
         rootDirectory: rootDirectory
@@ -222,7 +222,7 @@ private func makeSyncScratchEnvironment() throws -> (tempRoot: URL, libraryDirec
     #expect(insertedTrack.title == "Anthem [Quick Hit Intro] (Extended Remix Edit)")
 }
 
-@Test func syncAudioFolderPreservesAdditionalDJDescriptorsInTitle() throws {
+@Test func syncAudioFolderPreservesAdditionalDJDescriptorsInTitle() async throws {
     let env = try makeSyncScratchEnvironment()
     defer { try? FileManager.default.removeItem(at: env.tempRoot) }
 
@@ -230,7 +230,7 @@ private func makeSyncScratchEnvironment() throws -> (tempRoot: URL, libraryDirec
     try Data("track".utf8).write(to: file)
 
     let rootDirectory = SeratoLibraryLocator.rootDirectory(for: env.libraryDirectory, homeDirectory: env.tempRoot)
-    _ = try LibraryFolderSyncService.syncAudioFolder(
+    _ = try await LibraryFolderSyncService.syncAudioFolder(
         env.destinationRoot,
         databaseFileURL: env.databaseFile,
         rootDirectory: rootDirectory
@@ -242,4 +242,168 @@ private func makeSyncScratchEnvironment() throws -> (tempRoot: URL, libraryDirec
 
     #expect(insertedTrack.artist == "DJ Metro")
     #expect(insertedTrack.title == "Night Run [Transition] (Bootleg Mashup Acapella Edit)")
+}
+// MARK: - Path conventions, tags, and the naming template
+
+/// A library holds both stored-path conventions. Matching them as raw strings
+/// meant a track already in the database under the other convention was never
+/// recognised, so every sync appended a second entry for the same file — the
+/// duplicates users saw after syncing a folder on an external drive.
+@Test func syncDoesNotDuplicateTracksStoredInTheOtherPathConvention() async throws {
+    let env = try makeSyncScratchEnvironment()
+    defer { try? FileManager.default.removeItem(at: env.tempRoot) }
+
+    let file = env.destinationRoot.appendingPathComponent("Calvin Harris - Feel So Close.mp3")
+    try Data("a".utf8).write(to: file)
+
+    // A library kept on a volume: paths are stored relative to the mount point.
+    let rootDirectory = SeratoLibraryLocator.rootDirectory(
+        for: env.libraryDirectory,
+        homeDirectory: URL(fileURLWithPath: "/nonexistent-home")
+    )
+    #expect(rootDirectory.path != "/")
+
+    // Seed the entry in the *filesystem-root-relative* form instead.
+    var data = try Data(contentsOf: env.databaseFile)
+    data = SeratoDatabaseWriter.appendingTrack(
+        storedPath: String(file.standardizedFileURL.path.dropFirst()),
+        metadata: SeratoTrackMetadataUpdate(
+            title: "Feel So Close", artist: "Calvin Harris", album: "18 Months",
+            genre: "Dance", comment: "", key: "", bpm: 128, year: 2012
+        ),
+        to: data
+    )
+    try data.write(to: env.databaseFile)
+    let seededCount = SeratoDatabaseParser.storedPaths(from: data).count
+
+    let result = try await LibraryFolderSyncService.syncAudioFolder(
+        env.destinationRoot,
+        databaseFileURL: env.databaseFile,
+        rootDirectory: rootDirectory
+    )
+
+    #expect(result.insertedTracks == 0)
+    #expect(result.alreadyPresentTracks == 1)
+
+    let after = SeratoDatabaseParser.storedPaths(from: try Data(contentsOf: env.databaseFile))
+    #expect(after.count == seededCount)
+}
+
+/// The naming template the user configured is used to read a filename back,
+/// rather than the generic "Artist - Title" heuristic.
+@Test func filenameMetadataFollowsTheConfiguredTemplate() {
+    let parsed = LibraryFolderSyncService.metadataMatchingTemplate(
+        "Avicii-Levels-True-2011",
+        template: "{artist}-{title}-{album}-{year}"
+    )
+
+    #expect(parsed?.artist == "Avicii")
+    #expect(parsed?.title == "Levels")
+    #expect(parsed?.album == "True")
+    #expect(parsed?.year == 2011)
+}
+
+@Test func templateParsingHandlesADifferentTokenOrderAndSeparator() {
+    let parsed = LibraryFolderSyncService.metadataMatchingTemplate(
+        "Levels — Avicii",
+        template: "{title} — {artist}"
+    )
+
+    #expect(parsed?.title == "Levels")
+    #expect(parsed?.artist == "Avicii")
+}
+
+/// A name that doesn't fit the template must fall back rather than write a bad
+/// split into the database.
+@Test func templateParsingDeclinesNamesThatDoNotFit() {
+    let template = "{artist}-{title}-{album}-{year}"
+
+    // Too few segments.
+    #expect(LibraryFolderSyncService.metadataMatchingTemplate("Just A Name", template: template) == nil)
+    // The {year} slot isn't a number.
+    #expect(
+        LibraryFolderSyncService.metadataMatchingTemplate(
+            "Calvin Harris-Feel So Close-18 Months-notayear", template: template
+        ) == nil
+    )
+    // More segments than the template has tokens.
+    #expect(
+        LibraryFolderSyncService.metadataMatchingTemplate(
+            "A-B-C-2011-extra", template: template
+        ) == nil
+    )
+}
+
+/// Falls back to the heuristic when the name doesn't match the template, so
+/// the long-standing "Artist - Title" behaviour is preserved.
+@Test func filenameMetadataFallsBackToHeuristicWhenTemplateDoesNotMatch() {
+    let metadata = LibraryFolderSyncService.filenameMetadata(
+        for: URL(fileURLWithPath: "/tmp/Calvin Harris - Feel So Close (Official Video).mp3"),
+        template: "{artist}-{title}-{album}-{year}"
+    )
+
+    #expect(metadata.artist == "Calvin Harris")
+    #expect(metadata.title == "Feel So Close")
+}
+
+/// Importing a file whose name is already taken produces "Song (2).mp3". That
+/// suffix is a filesystem artifact, so it must not survive into a tag —
+/// tracks were ending up with a stray "2" in the title.
+@Test func collisionSuffixIsStrippedFromGuessedMetadata() {
+    #expect(LibraryFolderSyncService.strippingCollisionSuffix("Titanium - Sia (2)") == "Titanium - Sia")
+    #expect(LibraryFolderSyncService.strippingCollisionSuffix("Song (12)") == "Song")
+    // Repeated collisions.
+    #expect(LibraryFolderSyncService.strippingCollisionSuffix("Song (2) (3)") == "Song")
+    // A meaningful parenthetical is left alone.
+    #expect(LibraryFolderSyncService.strippingCollisionSuffix("Song (Intro)") == "Song (Intro)")
+    #expect(LibraryFolderSyncService.strippingCollisionSuffix("Song (2012)") == "Song (2012)")
+
+    // It is removed before parsing, so whichever field the template puts last
+    // doesn't inherit it either.
+    let metadata = LibraryFolderSyncService.filenameMetadata(
+        for: URL(fileURLWithPath: "/tmp/Titanium - Sia (2).mp3"),
+        template: "{title} - {artist}"
+    )
+    #expect(metadata.title == "Titanium")
+    #expect(metadata.artist == "Sia")
+}
+
+/// The heuristic assumed "Artist - Title" regardless of how the user actually
+/// names files, so a title-first library came out with the two swapped.
+@Test func titleFirstTemplateIsNotReadAsArtistFirst() {
+    let metadata = LibraryFolderSyncService.filenameMetadata(
+        for: URL(fileURLWithPath: "/tmp/Feel So Close - Calvin Harris.mp3"),
+        template: "{title} - {artist}"
+    )
+
+    #expect(metadata.title == "Feel So Close")
+    #expect(metadata.artist == "Calvin Harris")
+}
+
+/// The sync reports which files it added so the caller can file only those in
+/// a crate, rather than everything it scanned.
+@Test func syncReportsOnlyNewlyInsertedFiles() async throws {
+    let env = try makeSyncScratchEnvironment()
+    defer { try? FileManager.default.removeItem(at: env.tempRoot) }
+
+    let existing = env.destinationRoot.appendingPathComponent("Already There.mp3")
+    try Data("a".utf8).write(to: existing)
+    let rootDirectory = SeratoLibraryLocator.rootDirectory(for: env.libraryDirectory, homeDirectory: env.tempRoot)
+
+    let first = try await LibraryFolderSyncService.syncAudioFolder(
+        env.destinationRoot, databaseFileURL: env.databaseFile, rootDirectory: rootDirectory
+    )
+    #expect(first.insertedFileURLs.count == 1)
+
+    // A second file arrives; only it should be reported.
+    let arrival = env.destinationRoot.appendingPathComponent("Brand New.mp3")
+    try Data("b".utf8).write(to: arrival)
+
+    let second = try await LibraryFolderSyncService.syncAudioFolder(
+        env.destinationRoot, databaseFileURL: env.databaseFile, rootDirectory: rootDirectory
+    )
+
+    #expect(second.scannedAudioFiles == 2)
+    #expect(second.alreadyPresentTracks == 1)
+    #expect(second.insertedFileURLs.map(\.lastPathComponent) == ["Brand New.mp3"])
 }

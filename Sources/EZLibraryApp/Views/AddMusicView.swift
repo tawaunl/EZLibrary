@@ -197,13 +197,13 @@ struct AddMusicView: View {
                     syncDestinationFolderToSeratoLibrary()
                 }
                 .disabled(isRunning || isSyncingFolder)
-                .help("Scan the selected folder for audio files and add any missing tracks to the Serato database. Files are not moved, copied, or added to crates.")
+                .help("Scan the selected folder for audio files and add any missing tracks to the Serato database, reading each file's tags. Files are never moved or copied. Newly added tracks go to the central crate only when that option is switched on below.")
 
                 Image(systemName: "questionmark.circle")
                     .foregroundStyle(.secondary)
                     .overlay(alignment: .topTrailing) {
                         FastHoverHelp(
-                            text: "Scans the selected folder for audio files and inserts missing tracks into Serato database V2. Existing tracks are left unchanged. It does not move/copy files or create crates."
+                            text: "Scans the selected folder for audio files and inserts missing tracks into Serato database V2, taking title/artist/album/genre/year from each file's own tags and falling back to the filename only when a tag is missing. Existing tracks are left unchanged. It does not move or copy files or create crates; with \"Use central crate\" on, the tracks it adds are also filed there."
                         )
                         .offset(x: 2, y: -2)
                     }
@@ -561,10 +561,11 @@ struct AddMusicView: View {
                     rootDirectory: rootDirectory
                 )
 
-                let syncResult = try LibraryFolderSyncService.syncAudioFiles(
+                let syncResult = try await LibraryFolderSyncService.syncAudioFiles(
                     importedFiles.importedFileURLs,
                     databaseFileURL: databaseFileURL,
-                    rootDirectory: rootDirectory
+                    rootDirectory: rootDirectory,
+                    filenameTemplate: SeratoFeatureFlags.filenameFormatTemplate()
                 )
 
                 successMessage = successMessage(
@@ -591,6 +592,7 @@ struct AddMusicView: View {
         let subcratesDirectory = libraryService.subcratesDirectory
         let usesCentralCrate = usesCentralCrate
         let selectedCentralCrate = selectedCentralCrate
+        let filenameTemplate = SeratoFeatureFlags.filenameFormatTemplate()
 
         isSyncingFolder = true
         errorMessage = nil
@@ -598,23 +600,26 @@ struct AddMusicView: View {
 
         Task {
             do {
-                let discoveredAudioFiles = AddMusicImportService.discoverAudioFiles(from: [folderURL])
                 let result = try await Task.detached(priority: .userInitiated) {
-                    try LibraryFolderSyncService.syncAudioFolder(
+                    try await LibraryFolderSyncService.syncAudioFolder(
                         folderURL,
                         databaseFileURL: databaseFileURL,
-                        rootDirectory: rootDirectory
+                        rootDirectory: rootDirectory,
+                        filenameTemplate: filenameTemplate
                     )
                 }.value
 
                 var crateResults: [AddMusicImportService.CrateCreationResult] = []
-                if usesCentralCrate {
+                // Only the tracks this sync actually added. Filing everything
+                // it scanned meant re-syncing a folder dumped the whole folder
+                // into the crate again, not just the new arrivals.
+                if usesCentralCrate, !result.insertedFileURLs.isEmpty {
                     guard let selectedCentralCrate else {
                         throw AddMusicImportService.ImportError.missingCrateFileURL
                     }
 
                     crateResults = try AddMusicImportService.assignAudioFiles(
-                        discoveredAudioFiles,
+                        result.insertedFileURLs,
                         assignments: [.existing(selectedCentralCrate)],
                         subcratesDirectory: subcratesDirectory,
                         rootDirectory: rootDirectory

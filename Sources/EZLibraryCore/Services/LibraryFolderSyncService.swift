@@ -15,11 +15,20 @@ public enum LibraryFolderSyncService {
         public let scannedAudioFiles: Int
         public let insertedTracks: Int
         public let alreadyPresentTracks: Int
+        /// The files that were actually added to the database, so a caller can
+        /// act on just those rather than on everything it scanned.
+        public let insertedFileURLs: [URL]
 
-        public init(scannedAudioFiles: Int, insertedTracks: Int, alreadyPresentTracks: Int) {
+        public init(
+            scannedAudioFiles: Int,
+            insertedTracks: Int,
+            alreadyPresentTracks: Int,
+            insertedFileURLs: [URL] = []
+        ) {
             self.scannedAudioFiles = scannedAudioFiles
             self.insertedTracks = insertedTracks
             self.alreadyPresentTracks = alreadyPresentTracks
+            self.insertedFileURLs = insertedFileURLs
         }
     }
 
@@ -55,8 +64,9 @@ public enum LibraryFolderSyncService {
         _ folderURL: URL,
         databaseFileURL: URL,
         rootDirectory: URL,
+        filenameTemplate: String = TrackFilenameFormatter.defaultTemplate,
         fileManager: FileManager = .default
-    ) throws -> SyncResult {
+    ) async throws -> SyncResult {
         var isDirectory: ObjCBool = false
         guard fileManager.fileExists(atPath: folderURL.path, isDirectory: &isDirectory), isDirectory.boolValue else {
             throw SyncError.folderNotFound(folderURL)
@@ -71,10 +81,11 @@ public enum LibraryFolderSyncService {
             throw SyncError.noSupportedAudioFiles(folderURL)
         }
 
-        return try syncAudioFiles(
+        return try await syncAudioFiles(
             discovered,
             databaseFileURL: databaseFileURL,
             rootDirectory: rootDirectory,
+            filenameTemplate: filenameTemplate,
             fileManager: fileManager
         )
     }
@@ -83,8 +94,9 @@ public enum LibraryFolderSyncService {
         _ audioFiles: [URL],
         databaseFileURL: URL,
         rootDirectory: URL,
+        filenameTemplate: String = TrackFilenameFormatter.defaultTemplate,
         fileManager: FileManager = .default
-    ) throws -> SyncResult {
+    ) async throws -> SyncResult {
         guard fileManager.fileExists(atPath: databaseFileURL.path) else {
             throw SyncError.databaseNotFound(databaseFileURL)
         }
@@ -100,19 +112,44 @@ public enum LibraryFolderSyncService {
         var inserted = 0
         var alreadyPresent = 0
 
+        // Match on the file each entry actually points at rather than on the
+        // raw stored string. A library holds both path conventions —
+        // volume-relative ("Music/x.mp3") and filesystem-root-relative
+        // ("Users/me/Music/x.mp3"), which `SeratoLibraryLocator.resolve`
+        // documents — and comparing the strings meant a track stored in the
+        // other convention was never recognised, so every sync appended a
+        // second entry for a file already in the library.
+        var presentFiles = Set(
+            SeratoDatabaseParser.storedPaths(from: data).map { storedPath in
+                SeratoLibraryLocator.resolve(
+                    seratoStoredPath: storedPath,
+                    rootDirectory: rootDirectory,
+                    fileManager: fileManager
+                ).standardizedFileURL.path
+            }
+        )
+
+        var missingFiles: [URL] = []
         for fileURL in normalizedAudioFiles {
-            let storedPath = SeratoLibraryLocator.seratoStoredPath(for: fileURL, rootDirectory: rootDirectory)
-            let ensured = SeratoDatabaseWriter.ensuringTrackExists(
-                forStoredPath: storedPath,
-                metadata: fallbackMetadata(fromFilename: fileURL),
-                in: data
-            )
-            data = ensured.data
-            if ensured.didInsert {
-                inserted += 1
+            if presentFiles.insert(fileURL.path).inserted {
+                missingFiles.append(fileURL)
             } else {
                 alreadyPresent += 1
             }
+        }
+
+        // Reading tags means opening every file, so the reads run concurrently
+        // and the database is appended to afterwards in the original order.
+        let metadataByPath = await metadata(for: missingFiles, template: filenameTemplate)
+
+        for fileURL in missingFiles {
+            let storedPath = SeratoLibraryLocator.seratoStoredPath(for: fileURL, rootDirectory: rootDirectory)
+            data = SeratoDatabaseWriter.appendingTrack(
+                storedPath: storedPath,
+                metadata: metadataByPath[fileURL.path],
+                to: data
+            )
+            inserted += 1
         }
 
         if inserted > 0 {
@@ -122,12 +159,81 @@ public enum LibraryFolderSyncService {
         return SyncResult(
             scannedAudioFiles: normalizedAudioFiles.count,
             insertedTracks: inserted,
-            alreadyPresentTracks: alreadyPresent
+            alreadyPresentTracks: alreadyPresent,
+            insertedFileURLs: missingFiles
         )
     }
 
-    private static func fallbackMetadata(fromFilename fileURL: URL) -> SeratoTrackMetadataUpdate {
-        let rawBaseName = fileURL.deletingPathExtension().lastPathComponent
+    /// Resolves metadata for several files at once, reading their tags
+    /// concurrently. Keyed by `URL.path` so the caller can append in order.
+    private static func metadata(
+        for fileURLs: [URL],
+        template: String,
+        maxConcurrentReads: Int = 8
+    ) async -> [String: SeratoTrackMetadataUpdate] {
+        guard !fileURLs.isEmpty else { return [:] }
+
+        var resolved: [String: SeratoTrackMetadataUpdate] = [:]
+        var iterator = fileURLs.makeIterator()
+
+        await withTaskGroup(of: (String, SeratoTrackMetadataUpdate).self) { group in
+            func addNext() {
+                guard let fileURL = iterator.next() else { return }
+                group.addTask {
+                    (fileURL.path, await metadata(for: fileURL, template: template))
+                }
+            }
+
+            for _ in 0..<min(maxConcurrentReads, fileURLs.count) { addNext() }
+
+            while let (path, metadata) = await group.next() {
+                resolved[path] = metadata
+                addNext()
+            }
+        }
+
+        return resolved
+    }
+
+    /// The track's own tags win; the filename is only ever a fallback for the
+    /// fields the file doesn't carry.
+    ///
+    /// Guessing first was the bug users hit: a correctly tagged file whose
+    /// name didn't follow the "Artist - Title" shape got a mangled artist and
+    /// title written into Serato, and with auto-rename-from-metadata enabled
+    /// that guess then renamed the file itself.
+    static func metadata(for fileURL: URL, template: String) async -> SeratoTrackMetadataUpdate {
+        let tags = await AudioFileTagReader.readTags(from: fileURL)
+        let guessed = filenameMetadata(for: fileURL, template: template)
+
+        return SeratoTrackMetadataUpdate(
+            title: nonEmpty(tags.title) ?? guessed.title,
+            artist: nonEmpty(tags.artist) ?? guessed.artist,
+            album: nonEmpty(tags.album) ?? guessed.album,
+            genre: nonEmpty(tags.genre) ?? guessed.genre,
+            comment: "",
+            key: guessed.key,
+            bpm: guessed.bpm,
+            year: tags.year ?? guessed.year
+        )
+    }
+
+    private static func nonEmpty(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+            return nil
+        }
+        return trimmed
+    }
+
+    /// Everything that can be recovered from the filename alone: the configured
+    /// naming template first, then the generic "Artist - Title" heuristic.
+    static func filenameMetadata(for fileURL: URL, template: String) -> SeratoTrackMetadataUpdate {
+        let rawBaseName = strippingCollisionSuffix(fileURL.deletingPathExtension().lastPathComponent)
+
+        if let fromTemplate = metadataMatchingTemplate(rawBaseName, template: template) {
+            return fromTemplate
+        }
+
         let normalized = normalizeFilenameComponent(rawBaseName)
         let (artistGuess, titleGuess) = splitArtistAndTitle(from: normalized)
 
@@ -141,6 +247,120 @@ public enum LibraryFolderSyncService {
             bpm: nil,
             year: nil
         )
+    }
+
+    /// Drops the `(2)` that importing adds when a filename is already taken
+    /// (see `AddMusicImportService.uniquedDestinationURL`).
+    ///
+    /// Stripped before any parsing rather than inside the title cleanup: it is
+    /// a filesystem artifact, and whichever field the template puts last would
+    /// otherwise inherit it — which is how tracks ended up tagged with a
+    /// stray "2".
+    static func strippingCollisionSuffix(_ baseName: String) -> String {
+        var value = baseName.trimmingCharacters(in: .whitespacesAndNewlines)
+        while let range = value.range(of: #"\s*\(\d{1,3}\)$"#, options: .regularExpression) {
+            value.removeSubrange(range)
+            value = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return value.isEmpty ? baseName : value
+    }
+
+    /// Reads a filename back through the naming template the user configured,
+    /// so a library named `{artist}-{title}-{album}-{year}` is understood as
+    /// those fields instead of being run through the generic heuristic.
+    ///
+    /// Returns nil whenever the name doesn't confidently fit the template —
+    /// a differing separator count, or a `{year}`/`{bpm}` slot holding
+    /// something that isn't a number — so the caller falls back rather than
+    /// writing a bad split into the database.
+    static func metadataMatchingTemplate(_ baseName: String, template: String) -> SeratoTrackMetadataUpdate? {
+        let parsed = parseTemplate(template)
+        guard parsed.tokens.count >= 2 else { return nil }
+
+        var values: [TrackFilenameFormatter.Token: String] = [:]
+        var remainder = baseName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !remainder.isEmpty else { return nil }
+
+        for (index, token) in parsed.tokens.enumerated() {
+            let separator = index < parsed.separators.count ? parsed.separators[index] : nil
+
+            guard let separator, !separator.isEmpty else {
+                // Last token (or an empty separator): it takes what is left.
+                values[token] = remainder.trimmingCharacters(in: .whitespacesAndNewlines)
+                remainder = ""
+                continue
+            }
+
+            guard let range = remainder.range(of: separator) else { return nil }
+            values[token] = String(remainder[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+            remainder = String(remainder[range.upperBound...])
+        }
+
+        // Leftover text means the name has more segments than the template.
+        guard remainder.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+
+        // A numeric slot holding something non-numeric means the split landed
+        // in the wrong place, so the whole parse is abandoned rather than
+        // silently treated as "no value".
+        var resolvedYear: Int?
+        if let raw = values[.year], !raw.isEmpty {
+            guard let parsed = Int(raw), (1000...9999).contains(parsed) else { return nil }
+            resolvedYear = parsed
+        }
+
+        var resolvedBPM: Double?
+        if let raw = values[.bpm], !raw.isEmpty {
+            guard let parsed = Double(raw) else { return nil }
+            resolvedBPM = parsed
+        }
+
+        let title = values[.title] ?? ""
+        let artist = values[.artist] ?? ""
+        guard !title.isEmpty || !artist.isEmpty else { return nil }
+
+        return SeratoTrackMetadataUpdate(
+            title: title,
+            artist: artist,
+            album: values[.album] ?? "",
+            genre: values[.genre] ?? "",
+            comment: "",
+            key: values[.key] ?? "",
+            bpm: resolvedBPM,
+            year: resolvedYear
+        )
+    }
+
+    /// Splits a template into its tokens and the literal text between them.
+    /// `separators[i]` is the literal that follows `tokens[i]`, or nil for the
+    /// final token.
+    private static func parseTemplate(
+        _ template: String
+    ) -> (tokens: [TrackFilenameFormatter.Token], separators: [String?]) {
+        var tokens: [TrackFilenameFormatter.Token] = []
+        var separators: [String?] = []
+        var literal = ""
+        var index = template.startIndex
+
+        outer: while index < template.endIndex {
+            for token in TrackFilenameFormatter.Token.allCases
+            where template[index...].hasPrefix(token.rawValue) {
+                if !tokens.isEmpty {
+                    separators.append(literal.isEmpty ? nil : literal)
+                }
+                literal = ""
+                tokens.append(token)
+                index = template.index(index, offsetBy: token.rawValue.count)
+                continue outer
+            }
+            literal.append(template[index])
+            index = template.index(after: index)
+        }
+
+        if !tokens.isEmpty {
+            separators.append(literal.isEmpty ? nil : literal)
+        }
+
+        return (tokens, separators)
     }
 
     private static func splitArtistAndTitle(from baseName: String) -> (artist: String, title: String) {
@@ -275,6 +495,14 @@ public enum LibraryFolderSyncService {
             .lowercased()
 
         if normalized.isEmpty {
+            return true
+        }
+
+        // A bare number is the collision suffix `uniquedDestinationURL` adds
+        // when importing a file whose name is already taken ("Song (2).mp3").
+        // It is never part of a title, and leaving it in tagged tracks with a
+        // stray "2".
+        if normalized.range(of: #"^\d{1,3}$"#, options: .regularExpression) != nil {
             return true
         }
 
