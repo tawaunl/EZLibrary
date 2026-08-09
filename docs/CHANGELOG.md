@@ -25,7 +25,20 @@ version (`CFBundleShortVersionString.CFBundleVersion`) and are used verbatim by
 - Trimming lives on `SeratoTrackMetadataUpdate`, the one type every writer goes
   through, so it applies whether the value came from a manual edit, an online
   lookup, a bulk fill, or a YouTube download.
-- Existing files keep their current tags until something re-saves them.
+- Existing files keep their current tags until something re-saves them, or
+  until you run the cleanup action below.
+
+### Clean Tag Whitespace
+- New button in the Tracks & Tags bar. It scans the current scope (All Tracks,
+  or whichever crate is selected) for tag values padded with leading or
+  trailing spaces, and re-saves them trimmed.
+- Nothing is written until you confirm. The prompt reports how many tracks are
+  affected and which fields — e.g. "70 tracks have tag values padded with
+  spaces: Artist (48), Title (23)" — with a few example file names.
+- A field that is *only* whitespace is left alone: trimming it to empty would
+  erase a value rather than tidy one.
+- File names are not changed, only the tag values. Filenames were already
+  trimmed by the renamer's own sanitising, so they never carried the padding.
 
 ### Performance
 - The trim editor's waveform no longer re-slices the whole envelope on every

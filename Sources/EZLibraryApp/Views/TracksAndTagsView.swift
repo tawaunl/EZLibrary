@@ -93,6 +93,8 @@ struct TracksAndTagsView: View {
     @State private var operationErrorMessage: String?
     @State private var pendingTopHitUpdates: [(Track, SeratoTrackMetadataUpdate)] = []
     @State private var showTopHitConfirmation = false
+    @State private var pendingWhitespaceFindings: [TagWhitespaceCleanupService.Finding] = []
+    @State private var showWhitespaceCleanupConfirmation = false
     @State private var showOnlyFillEmptyPrompt = false
 
     /// Snapshot of everything derived from `tracks` + the active scope/filters,
@@ -310,6 +312,20 @@ struct TracksAndTagsView: View {
             Text("Top search-hit metadata will be applied for Artist, Album, Genre, and Year on \(pendingTopHitUpdates.count) selected track\(pendingTopHitUpdates.count == 1 ? "" : "s").")
         }
         .confirmationDialog(
+            "Clean Tag Whitespace",
+            isPresented: $showWhitespaceCleanupConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Clean \(pendingWhitespaceFindings.count) Track\(pendingWhitespaceFindings.count == 1 ? "" : "s")") {
+                applyWhitespaceCleanup()
+            }
+            Button("Cancel", role: .cancel) {
+                pendingWhitespaceFindings = []
+            }
+        } message: {
+            Text(whitespaceCleanupMessage)
+        }
+        .confirmationDialog(
             "“Only Fill Empty” is On",
             isPresented: $showOnlyFillEmptyPrompt,
             titleVisibility: .visible
@@ -512,6 +528,19 @@ struct TracksAndTagsView: View {
                         + "(\(SeratoFeatureFlags.filenameFormatTemplate())), and update Serato to match. "
                         + "Shows what will change before anything is renamed.")
                 }
+
+                Divider()
+                    .frame(height: 16)
+
+                // Scoped, not selection-based: this is a sweep, and the point
+                // is to find padding you can't see well enough to select.
+                Button("Clean Tag Whitespace") {
+                    prepareWhitespaceCleanup()
+                }
+                .disabled(scopeTracks.isEmpty || isBulkLookupRunning)
+                .help(
+                    "Find tag values in \(selectedScopeTitle) with leading or trailing spaces "
+                    + "and re-save them trimmed. Shows what will change first.")
 
                 Divider()
                     .frame(height: 16)
@@ -858,6 +887,64 @@ struct TracksAndTagsView: View {
                     operationErrorMessage = error.localizedDescription
                 }
             }
+        }
+    }
+
+    // MARK: - Tag whitespace cleanup
+
+    private var whitespaceCleanupMessage: String {
+        var message = TagWhitespaceCleanupService.summary(for: pendingWhitespaceFindings)
+        let sample = pendingWhitespaceFindings.prefix(3).map { finding in
+            "\(finding.track.fileURL.lastPathComponent) — \(finding.fields.joined(separator: ", "))"
+        }
+        if !sample.isEmpty {
+            message += "\n\n" + sample.joined(separator: "\n")
+            if pendingWhitespaceFindings.count > sample.count {
+                message += "\n…and \(pendingWhitespaceFindings.count - sample.count) more."
+            }
+        }
+        message += "\n\nFile names aren't changed — only the tag values."
+        return message
+    }
+
+    /// Scans the current scope and asks before writing anything.
+    private func prepareWhitespaceCleanup() {
+        operationErrorMessage = nil
+
+        let findings = TagWhitespaceCleanupService.findings(in: scopeTracks)
+        guard !findings.isEmpty else {
+            pendingWhitespaceFindings = []
+            bulkLookupMessage = "No padded tag values in \(selectedScopeTitle)."
+            return
+        }
+
+        pendingWhitespaceFindings = findings
+        showWhitespaceCleanupConfirmation = true
+    }
+
+    private func applyWhitespaceCleanup() {
+        guard !pendingWhitespaceFindings.isEmpty else { return }
+
+        let updates = TagWhitespaceCleanupService.updates(for: pendingWhitespaceFindings)
+        let cleanedCount = updates.count
+        pendingWhitespaceFindings = []
+        bulkLookupMessage = nil
+        operationErrorMessage = nil
+
+        do {
+            if let onApplyMetadataBatch {
+                try onApplyMetadataBatch(updates)
+            } else {
+                for (track, metadata) in updates {
+                    try onApplyMetadata(track, metadata)
+                }
+            }
+        } catch {
+            operationErrorMessage = error.localizedDescription
+        }
+
+        if operationErrorMessage == nil {
+            bulkLookupMessage = "Trimmed tag whitespace on \(cleanedCount) track\(cleanedCount == 1 ? "" : "s")."
         }
     }
 
