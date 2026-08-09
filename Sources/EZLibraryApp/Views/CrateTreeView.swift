@@ -19,6 +19,20 @@ enum CrateListFilterMode {
     case smartOnly
 }
 
+/// What the crate browser is currently pointed at.
+///
+/// "All Tracks" sits in the same list as the crates, the way it does in Tracks
+/// & Tags, so it is a peer of a crate selection rather than a separate mode.
+enum CrateBrowserScope: Hashable {
+    case allTracks
+    case crate(CrateNode)
+
+    var crateNode: CrateNode? {
+        if case let .crate(node) = self { return node }
+        return nil
+    }
+}
+
 struct CrateTreeView: View {
     private static let hiddenRootFolderName = "SeratoTools Hidden Crates"
     private static let hiddenSubcratesFolderName = "Subcrates"
@@ -28,7 +42,7 @@ struct CrateTreeView: View {
     @EnvironmentObject private var libraryService: LibraryService
     @ObservedObject var crateHierarchy: CrateHierarchyViewModel
     @ObservedObject var smartCrateHierarchy: CrateHierarchyViewModel
-    @Binding var selectedNode: CrateNode?
+    @Binding var scope: CrateBrowserScope
     let listFilterMode: CrateListFilterMode
     let onCratesChanged: () -> Void
 
@@ -63,6 +77,11 @@ struct CrateTreeView: View {
         guard !searchText.isEmpty else { return hiddenNodes }
         return hiddenNodes.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
     }
+
+    /// The crate the scope points at, or nil when it's on All Tracks. The
+    /// crate-specific actions below all key off this, so selecting All Tracks
+    /// disables them without needing a check of its own.
+    private var selectedNode: CrateNode? { scope.crateNode }
 
     private var selectedRegularNode: CrateNode? {
         guard let selectedNode else { return nil }
@@ -127,7 +146,12 @@ struct CrateTreeView: View {
                 .padding(.horizontal, 8)
             }
 
-            List(selection: $selectedNode) {
+            List(selection: $scope) {
+                // Kept outside the filter-mode branches: it's a scope, not a
+                // crate, so it stays reachable whichever filter is active.
+                Label("All Tracks", systemImage: "music.note.list")
+                    .tag(CrateBrowserScope.allTracks)
+
                 if listFilterMode == .hiddenOnly {
                     Section("Hidden Crates") {
                         ForEach(filteredHiddenNodes) { node in
@@ -143,13 +167,13 @@ struct CrateTreeView: View {
                 } else if listFilterMode == .smartOnly {
                     Section("Smart Crates") {
                         OutlineGroup(smartCrateHierarchy.visibleTree, children: \.outlineChildren) { node in
-                            row(for: node).tag(node)
+                            row(for: node).tag(CrateBrowserScope.crate(node))
                         }
                     }
                 } else {
                     Section("Crates") {
                         OutlineGroup(combinedVisibleTree, children: \.outlineChildren) { node in
-                            row(for: node).tag(node)
+                            row(for: node).tag(CrateBrowserScope.crate(node))
                         }
                     }
 
@@ -303,7 +327,8 @@ struct CrateTreeView: View {
         do {
             try pendingDelete.viewModel.delete(pendingDelete.node)
             if selectedNode == pendingDelete.node {
-                selectedNode = nil
+                // The crate that was showing is gone; fall back to All Tracks.
+                scope = .allTracks
             }
             onCratesChanged()
         } catch {
