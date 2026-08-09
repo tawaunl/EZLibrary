@@ -25,6 +25,8 @@ enum CrateListFilterMode {
 /// & Tags, so it is a peer of a crate selection rather than a separate mode.
 enum CrateBrowserScope: Hashable {
     case allTracks
+    /// Tracks filed in no crate at all — the ones easiest to forget about.
+    case notInCrates
     case crate(CrateNode)
 
     var crateNode: CrateNode? {
@@ -151,6 +153,8 @@ struct CrateTreeView: View {
                 // crate, so it stays reachable whichever filter is active.
                 Label("All Tracks", systemImage: "music.note.list")
                     .tag(CrateBrowserScope.allTracks)
+                Label("Not In Crates", systemImage: "tray")
+                    .tag(CrateBrowserScope.notInCrates)
 
                 if listFilterMode == .hiddenOnly {
                     Section("Hidden Crates") {

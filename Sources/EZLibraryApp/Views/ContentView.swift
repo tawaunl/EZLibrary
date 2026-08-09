@@ -98,6 +98,10 @@ struct ContentView: View {
         libraryService.tracksInCratesCount
     }
 
+    private var tracksNotInCratesCount: Int {
+        libraryService.tracksNotInCratesCount
+    }
+
     private var centralMusicFolderStartURL: URL {
         let trimmed = centralMusicFolderPath.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {
@@ -306,6 +310,15 @@ struct ContentView: View {
                 }
             )
             crateStatTag(
+                title: "Not In Crates",
+                value: tracksNotInCratesCount,
+                isActive: crateScope == .notInCrates,
+                action: {
+                    crateListFilterMode = .all
+                    crateScope = .notInCrates
+                }
+            )
+            crateStatTag(
                 title: "Smart Crates",
                 value: smartCratesCount,
                 isActive: crateListFilterMode == .smartOnly,
@@ -497,6 +510,14 @@ struct ContentView: View {
                         switch crateScope {
                         case .allTracks:
                             AllTracksBrowserView(
+                                source: .allTracks,
+                                onTrackActivated: { track, list in
+                                    activateAudioTrack(track, in: list)
+                                }
+                            )
+                        case .notInCrates:
+                            AllTracksBrowserView(
+                                source: .notInCrates,
                                 onTrackActivated: { track, list in
                                     activateAudioTrack(track, in: list)
                                 }

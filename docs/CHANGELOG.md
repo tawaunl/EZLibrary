@@ -11,11 +11,19 @@ version (`CFBundleShortVersionString.CFBundleVersion`) and are used verbatim by
 
 ## Unreleased
 
-### All Tracks browser in the Crates view
-- The Crates section now has a **Crate Contents / All Tracks** switch beside the
-  tree. All Tracks lists the whole library with the same search and sorting as
-  the Tracks view, so a song can be found and dragged straight onto a crate
-  without leaving the section — the tree stays visible as the drop target.
+### All Tracks and Not In Crates in the Crates view
+- The crate list now starts with **All Tracks** and **Not In Crates**, selected
+  the same way as a crate — the way All Tracks already works in Tracks & Tags.
+  Both list tracks with the Tracks view's search and sorting, and the tree stays
+  visible beside them, so songs can be dragged straight onto a crate.
+- **Not In Crates** shows every track filed in no crate at all — the ones easy
+  to forget and never play. It's also a clickable stat at the top of the
+  section, next to Tracks In Crates, with a live count.
+- Smart crates don't count as filing, since their membership is rule-derived
+  rather than something you filed. That keeps the number consistent with the
+  Tracks In Crates stat beside it.
+- Crate membership is matched on normalised paths (separators, leading slash,
+  case), so a track already filed isn't wrongly listed as unfiled.
 - Dropping a track a crate already contains no longer files it twice. Serato
   reads a repeated path as a second copy, and dropping something already filed
   is the easiest mistake to make when dragging from a full-library list.
