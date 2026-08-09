@@ -411,6 +411,12 @@ struct AudioTrimEditorSheet: View {
     @State private var showInPlaceConfirmation = false
     @State private var keyMonitor: Any?
 
+    /// Held in `@State` so it survives body evaluations. Built inline in
+    /// `.onReceive`, a fresh publisher is created — and the old subscription
+    /// torn down — on every render, which during playback means ~20 timers a
+    /// second created and cancelled.
+    @State private var ticker = Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()
+
     init(track: Track, libraryDirectory: URL, onSaved: @escaping (String) -> Void) {
         self.track = track
         self.libraryDirectory = libraryDirectory
@@ -443,7 +449,7 @@ struct AudioTrimEditorSheet: View {
             removeKeyboardMonitor()
             model.stopPreview()
         }
-        .onReceive(Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()) { _ in
+        .onReceive(ticker) { _ in
             model.refreshPlayhead()
         }
         .alert(
@@ -1013,8 +1019,47 @@ private struct TrimWaveformView: View {
     /// How close to a handle a drag must begin to grab it rather than scrub.
     private let handleGrabDistance: CGFloat = 14
 
+    /// Pointer position, used only to anchor a pinch-zoom.
+    ///
+    /// Deliberately a reference box rather than `@State`: the value is read
+    /// inside a gesture handler and never rendered, so publishing it would
+    /// invalidate the view — and re-slice the whole envelope — on every mouse
+    /// move across the waveform.
+    private final class HoverTracker {
+        var x: CGFloat?
+    }
+
+    /// Memoizes the visible slice of the envelope.
+    ///
+    /// The waveform redraws on every playhead tick, but the columns it draws
+    /// depend only on the window and the view's width — none of which move
+    /// while a track plays at a fixed zoom. Without this the same reduction of
+    /// 144k buckets down to ~1100 columns is recomputed 20 times a second to
+    /// produce an identical array.
+    private final class PeakCache {
+        private var start = Double.nan
+        private var end = Double.nan
+        private var columns = -1
+        private var cached: [Float] = []
+
+        func peaks(
+            of waveform: AudioWaveform,
+            from newStart: Double,
+            to newEnd: Double,
+            columns newColumns: Int
+        ) -> [Float] {
+            if newStart == start, newEnd == end, newColumns == columns {
+                return cached
+            }
+            cached = waveform.peaks(from: newStart, to: newEnd, bucketCount: newColumns)
+            (start, end, columns) = (newStart, newEnd, newColumns)
+            return cached
+        }
+    }
+
     @State private var activeHandle: Handle?
-    @State private var hoverX: CGFloat?
+    @State private var hover = HoverTracker()
+    @State private var peakCache = PeakCache()
 
     private enum Handle { case start, end, playhead }
 
@@ -1076,12 +1121,12 @@ private struct TrimWaveformView: View {
             .contentShape(Rectangle())
             // Trackpad/mouse zoom over the waveform, anchored under the pointer.
             .onContinuousHover { phase in
-                if case let .active(location) = phase { hoverX = location.x }
+                if case let .active(location) = phase { hover.x = location.x }
             }
             .gesture(
                 MagnifyGesture()
                     .onChanged { value in
-                        let anchor = time(for: hoverX ?? width / 2, width: width)
+                        let anchor = time(for: hover.x ?? width / 2, width: width)
                         onZoomBy(1 + (value.magnification - 1) * 0.15, anchor)
                     }
             )
@@ -1126,7 +1171,8 @@ private struct TrimWaveformView: View {
         // One column per ~1.5pt of width, resampled from the stored envelope
         // over just the visible window — that's what makes zoom show detail.
         let columnCount = max(1, Int(size.width / 1.5))
-        let peaks = waveform.peaks(from: windowStart, to: windowEnd, bucketCount: columnCount)
+        let peaks = peakCache.peaks(
+            of: waveform, from: windowStart, to: windowEnd, columns: columnCount)
         guard !peaks.isEmpty else { return }
 
         let midY = size.height / 2

@@ -402,3 +402,101 @@ timeIt("tracksDiffer (per updateNSView!)") {
     _ = differ
 }
 
+
+// MARK: - Audio trim editor
+//
+// The waveform view redraws on every playhead tick (20Hz while playing) and on
+// every mouse move over the waveform, and each redraw reslices the stored
+// envelope. These are the per-frame costs.
+
+print("\nAudio trim editor — waveform envelope")
+
+// A 6-minute track at the editor's 400 buckets/second.
+let envelopeDuration: TimeInterval = 360
+let envelopePeaks: [Float] = (0..<Int(envelopeDuration * 400)).map { index in
+    Float(abs(sin(Double(index) / 900))) * 0.9
+}
+let envelope = AudioWaveform(peaks: envelopePeaks, duration: envelopeDuration)
+print("  envelope: \(envelopePeaks.count) buckets, \(Int(envelopeDuration))s")
+
+// ~1100 columns is what an 1650pt-wide waveform asks for at 1.5pt per column.
+let columns = 1100
+
+timeIt("peaks() fully zoomed out x60") {
+    for _ in 0..<60 {
+        _ = envelope.peaks(from: 0, to: envelopeDuration, bucketCount: columns)
+    }
+}
+
+timeIt("peaks() at 32x zoom x60") {
+    let visible = envelopeDuration / 32
+    for _ in 0..<60 {
+        _ = envelope.peaks(from: 100, to: 100 + visible, bucketCount: columns)
+    }
+}
+
+timeIt("peaks() at 512x zoom x60") {
+    let visible = envelopeDuration / 512
+    for _ in 0..<60 {
+        _ = envelope.peaks(from: 100, to: 100 + visible, bucketCount: columns)
+    }
+}
+
+timeIt("loudBounds (silence detect)") {
+    _ = AudioWaveformSampler.loudBounds(in: envelope)
+}
+
+// Decoding happens once per sheet open, on a real file. Point the bench at one
+// with EZBENCH_AUDIO=/path/to/track.mp3 — skipped when unset so the default
+// run stays dependency-free.
+if let audioPath = ProcessInfo.processInfo.environment["EZBENCH_AUDIO"] {
+    let audioURL = URL(fileURLWithPath: audioPath)
+    print("\nAudio trim editor — decode \(audioURL.lastPathComponent)")
+
+    let semaphore = DispatchSemaphore(value: 0)
+    Task {
+        for resolution in [
+            ("totalBuckets(1200)", AudioWaveformSampler.Resolution.totalBuckets(1200)),
+            ("perSecond(400)", AudioWaveformSampler.Resolution.perSecond(400)),
+            ("perSecond(100)", AudioWaveformSampler.Resolution.perSecond(100))
+        ] {
+            let start = DispatchTime.now().uptimeNanoseconds
+            let waveform = try? await AudioWaveformSampler.waveform(
+                forFileAt: audioURL, resolution: resolution.1)
+            let ms = Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000
+            let buckets = waveform?.peaks.count ?? 0
+            print(String(format: "  %-38@ %9.1f ms  (%d buckets)",
+                         resolution.0 as NSString, ms, buckets))
+        }
+        semaphore.signal()
+    }
+    // AVFoundation's async loading delivers on the main runloop, so blocking it
+    // outright deadlocks. Pump instead of waiting.
+    let deadline = Date().addingTimeInterval(120)
+    while semaphore.wait(timeout: .now()) == .timedOut, Date() < deadline {
+        RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+    }
+}
+
+// The playback case: the window is fixed while the playhead moves, so every
+// tick asks for the identical slice. Models the view's PeakCache.
+print("")
+final class BenchPeakCache {
+    private var start = Double.nan, end = Double.nan, columns = -1
+    private var cached: [Float] = []
+    func peaks(of w: AudioWaveform, from s: Double, to e: Double, columns c: Int) -> [Float] {
+        if s == start, e == end, c == columns { return cached }
+        cached = w.peaks(from: s, to: e, bucketCount: c)
+        (start, end, columns) = (s, e, c)
+        return cached
+    }
+}
+let benchCache = BenchPeakCache()
+timeIt("20Hz playback, 1s uncached (zoomed out)") {
+    for _ in 0..<20 { _ = envelope.peaks(from: 0, to: envelopeDuration, bucketCount: columns) }
+}
+timeIt("20Hz playback, 1s cached (zoomed out)") {
+    for _ in 0..<20 {
+        _ = benchCache.peaks(of: envelope, from: 0, to: envelopeDuration, columns: columns)
+    }
+}

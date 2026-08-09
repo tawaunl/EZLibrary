@@ -11,6 +11,25 @@ version (`CFBundleShortVersionString.CFBundleVersion`) and are used verbatim by
 
 ## Unreleased
 
+### Performance
+- The trim editor's waveform no longer re-slices the whole envelope on every
+  redraw. During playback at a fixed zoom the visible columns don't change, so
+  the result is memoized — 2.2ms of work per second of playback drops to 0.1ms
+  on a 6-minute track.
+- Moving the mouse across the waveform no longer forces a full redraw. The
+  pointer position (used only to anchor pinch-zoom) was stored in `@State`,
+  which invalidated the view — and re-sliced the envelope — on every pointer
+  event.
+- Slicing the envelope no longer copies it first, removing a ~500KB allocation
+  per redraw when zoomed out over a long track. (Neutral on wall-clock; the
+  `max()` scan dominates.)
+- The playhead timers in the trim editor and the mini player were built inline
+  in `.onReceive`, which creates a new publisher and tears down the old
+  subscription on every body evaluation — around 20 timers a second during
+  playback. Both are now held across renders.
+- Benchmarks for the waveform paths were added to `EZLibraryBench`; pass
+  `EZBENCH_AUDIO=/path/to/track.mp3` to also time a real decode.
+
 ### YouTube downloads no longer tag the channel as the artist
 - Downloads took the **channel name** as both the artist and the album, and the
   raw video title as the title. A video titled "E-40 & Too $hort - Dump Truck

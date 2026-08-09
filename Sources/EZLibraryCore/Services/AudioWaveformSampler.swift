@@ -50,7 +50,10 @@ public struct AudioWaveform: Sendable, Equatable {
         let range = max(0, lower)..<min(peaks.count, max(lower + 1, upper))
         guard !range.isEmpty else { return [] }
 
-        return AudioWaveformSampler.resample(Array(peaks[range]), to: bucketCount)
+        // Sliced, not copied: this runs on every waveform redraw, and copying
+        // the visible span first cost a 500KB+ allocation per frame when zoomed
+        // out over a long track.
+        return AudioWaveformSampler.resample(peaks[range], to: bucketCount)
     }
 }
 
@@ -281,15 +284,29 @@ public enum AudioWaveformSampler {
     /// Downsampling keeps the max of each source window rather than averaging,
     /// which would flatten transients.
     static func resample(_ peaks: [Float], to target: Int) -> [Float] {
-        guard !peaks.isEmpty, target > 0, peaks.count != target else { return peaks }
+        guard peaks.count != target else { return peaks }
+        return resample(peaks[...], to: target)
+    }
+
+    /// Slice-based so callers on the redraw path don't have to materialise the
+    /// visible span as its own array first.
+    static func resample(_ peaks: ArraySlice<Float>, to target: Int) -> [Float] {
+        let count = peaks.count
+        guard count > 0, target > 0 else { return [] }
+        guard count != target else { return Array(peaks) }
+
+        // A slice's indices are offset from its parent's, so every lookup below
+        // is relative to `base` rather than to zero.
+        let base = peaks.startIndex
 
         var result: [Float] = []
         result.reserveCapacity(target)
         for index in 0..<target {
-            let lower = Int((Double(index) / Double(target) * Double(peaks.count)).rounded(.down))
-            let upper = Int((Double(index + 1) / Double(target) * Double(peaks.count)).rounded(.down))
-            let range = lower..<max(lower + 1, min(upper, peaks.count))
-            result.append(peaks[range.clamped(to: 0..<peaks.count)].max() ?? 0)
+            // Integer math rather than round-tripping through Double: same
+            // floor(count * index / target), without the conversions.
+            let lower = count * index / target
+            let upper = max(lower + 1, min(count * (index + 1) / target, count))
+            result.append(peaks[(base + lower)..<(base + upper)].max() ?? 0)
         }
         return result
     }
