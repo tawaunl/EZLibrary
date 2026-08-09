@@ -158,8 +158,70 @@ if [[ "$BUILD_UNIVERSAL" == "1" ]]; then
 	verify_universal_macho "$RESOURCE_BIN_DIR/EZLibraryCLI" "CLI executable"
 fi
 
-# Ad-hoc sign so Gatekeeper allows a local launch.
-codesign --force --deep --sign - "$APP_BUNDLE"
+# --- Code signing -----------------------------------------------------------
+# A Developer ID signature is what lets the app open without the Gatekeeper
+# warning. Without an identity we fall back to an ad-hoc signature, which is
+# enough for a local launch and is what a contributor building from source gets.
+#
+# The identity is resolved in this order:
+#   1. $EZLIBRARY_CODESIGN_IDENTITY, if set (use "-" to force ad-hoc).
+#   2. The first "Developer ID Application" identity in the keychain.
+#   3. Ad-hoc.
+resolve_codesign_identity() {
+	if [[ -n "${EZLIBRARY_CODESIGN_IDENTITY:-}" ]]; then
+		echo "$EZLIBRARY_CODESIGN_IDENTITY"
+		return
+	fi
+	# `security find-identity` prints one identity per line as:
+	#   1) <40-hex-sha1> "Developer ID Application: Name (TEAMID)"
+	# Take the quoted name of the first Developer ID Application entry.
+	#
+	# `|| true` because no identity is a normal state, not an error: this script
+	# runs under `set -euo pipefail`, where grep matching nothing exits 1 and
+	# would abort the whole build instead of falling through to ad-hoc signing.
+	security find-identity -v -p codesigning 2>/dev/null \
+		| grep "Developer ID Application:" \
+		| head -1 \
+		| sed -n 's/.*"\(.*\)".*/\1/p' || true
+}
+
+CODESIGN_IDENTITY="$(resolve_codesign_identity)"
+
+if [[ -z "$CODESIGN_IDENTITY" || "$CODESIGN_IDENTITY" == "-" ]]; then
+	echo "No Developer ID identity found; ad-hoc signing (Gatekeeper will warn on other Macs)."
+	# --deep is deprecated and signs inner code with the outer bundle's options,
+	# but for an ad-hoc signature there are no options to get wrong.
+	codesign --force --deep --sign - "$APP_BUNDLE"
+else
+	echo "Signing with: $CODESIGN_IDENTITY"
+
+	# Sign inside out. The bundled CLI is a Mach-O executable in Resources/,
+	# not a nested bundle, so codesign does not reach it when sealing the app —
+	# and an unsigned executable inside a hardened bundle fails notarization.
+	# `--deep` would appear to handle this, but it is deprecated for signing and
+	# applies the *outer* options to inner code, which is how binaries end up
+	# missing the hardened runtime.
+	#
+	# --options runtime is the hardened runtime, which notarization requires.
+	# --timestamp gets a trusted timestamp from Apple, so the signature stays
+	# valid after the signing certificate itself expires.
+	CODESIGN_ARGS=(
+		--force
+		--sign "$CODESIGN_IDENTITY"
+		--options runtime
+		--timestamp
+	)
+
+	codesign "${CODESIGN_ARGS[@]}" "$RESOURCE_BIN_DIR/EZLibraryCLI"
+	codesign "${CODESIGN_ARGS[@]}" "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
+	codesign "${CODESIGN_ARGS[@]}" "$APP_BUNDLE"
+
+	# Verify the way Gatekeeper will. --strict catches seal problems that plain
+	# verification lets through, and this is cheap next to finding out from a
+	# notarization rejection ten minutes later.
+	codesign --verify --strict --deep --verbose=2 "$APP_BUNDLE"
+	echo "Signature verified (hardened runtime, timestamped)."
+fi
 
 echo "Built $APP_BUNDLE"
 echo "Runtime tools (yt-dlp, ffmpeg/ffprobe, fpcalc) are installed and kept current via Homebrew on the user's machine — nothing is bundled."

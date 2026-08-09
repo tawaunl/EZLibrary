@@ -51,6 +51,25 @@ if [[ ! -f "$PKG_PATH" ]]; then
   exit 1
 fi
 
+# --- Notarize -------------------------------------------------------------
+# Signing lets the app launch; notarization is what stops Gatekeeper warning on
+# a Mac that has never seen it before. A signed package that skipped this step
+# still triggers the warning, so it is on by default rather than opt-in.
+NOTARIZED=0
+if pkgutil --check-signature "$PKG_PATH" >/dev/null 2>&1; then
+  if [[ "${RELEASE_SKIP_NOTARIZE:-0}" == "1" ]]; then
+    echo "Skipping notarization (RELEASE_SKIP_NOTARIZE=1). Users will see the Gatekeeper warning."
+  else
+    "$ROOT_DIR/Scripts/notarize.sh" "$PKG_PATH"
+    NOTARIZED=1
+  fi
+else
+  echo "Warning: the package is unsigned, so it cannot be notarized and macOS will" >&2
+  echo "         warn on first open. Install Developer ID certificates to fix this." >&2
+fi
+
+# Checksummed after notarization on purpose: stapling the ticket rewrites the
+# package, so a hash taken before it would not match what users download.
 SHASUM="$(shasum -a 256 "$PKG_PATH" | awk '{print $1}')"
 
 # --- Release notes --------------------------------------------------------
@@ -78,17 +97,33 @@ $HIGHLIGHTS
 EOF
 fi
 
-cat >> "$NOTES_FILE" <<EOF
+if [[ "$NOTARIZED" == "1" ]]; then
+  cat >> "$NOTES_FILE" <<EOF
 ## Install
 
-This build is **not signed** with an Apple Developer ID, so macOS Gatekeeper
-will warn on first open. To install:
+1. Download **$PKG_NAME** from the Assets below.
+2. Open it and follow the installer.
+
+This build is signed with an Apple Developer ID and notarized by Apple, so it
+installs without any security warning.
+
+EOF
+else
+  cat >> "$NOTES_FILE" <<EOF
+## Install
+
+This build is **not notarized**, so macOS Gatekeeper will warn on first open.
+To install:
 
 1. Download **$PKG_NAME** from the Assets below.
 2. **Right-click** the downloaded file → **Open** → **Open** in the dialog.
    - Or via Terminal: \`sudo installer -pkg "$PKG_NAME" -target /\`
    - Or allow it under **System Settings → Privacy & Security → Open Anyway**.
 
+EOF
+fi
+
+cat >> "$NOTES_FILE" <<EOF
 ## What it installs
 
 - \`EZLibrary.app\` into /Applications

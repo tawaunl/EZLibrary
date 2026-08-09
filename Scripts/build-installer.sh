@@ -77,11 +77,45 @@ PKGBUILD_ARGS=(
   --scripts "$PKGSCRIPTS"
 )
 
-if [[ -n "${EZLIBRARY_PKG_SIGN_IDENTITY:-${SERATOTOOLS_PKG_SIGN_IDENTITY:-}}" ]]; then
-  PKGBUILD_ARGS+=(--sign "${EZLIBRARY_PKG_SIGN_IDENTITY:-${SERATOTOOLS_PKG_SIGN_IDENTITY}}")
+# A .pkg is signed with a "Developer ID Installer" certificate — a different
+# certificate from the "Developer ID Application" one that signs the app inside
+# it. Both are needed: the app signature is what lets it launch, the installer
+# signature is what lets the .pkg open without a warning of its own.
+#
+# Resolved like the app identity: explicit env var, else the first matching
+# identity in the keychain, else leave the package unsigned.
+resolve_pkg_sign_identity() {
+  local explicit="${EZLIBRARY_PKG_SIGN_IDENTITY:-${SERATOTOOLS_PKG_SIGN_IDENTITY:-}}"
+  if [[ -n "$explicit" ]]; then
+    echo "$explicit"
+    return
+  fi
+  # `|| true` because having no identity is a normal state: under
+  # `set -euo pipefail` a grep that matches nothing exits 1 and would abort the
+  # build rather than fall through to an unsigned package.
+  security find-identity -v 2>/dev/null \
+    | grep "Developer ID Installer:" \
+    | head -1 \
+    | sed -n 's/.*"\(.*\)".*/\1/p' || true
+}
+
+PKG_SIGN_IDENTITY="$(resolve_pkg_sign_identity)"
+
+if [[ -n "$PKG_SIGN_IDENTITY" ]]; then
+  echo "Signing installer with: $PKG_SIGN_IDENTITY"
+  PKGBUILD_ARGS+=(--sign "$PKG_SIGN_IDENTITY" --timestamp)
+else
+  echo "No Developer ID Installer identity found; building an unsigned package."
 fi
 
 pkgbuild "${PKGBUILD_ARGS[@]}" "$PKG_PATH"
+
+if [[ -n "$PKG_SIGN_IDENTITY" ]]; then
+  # Confirms the package carries a valid signature chain before it is uploaded
+  # or handed to notarization.
+  pkgutil --check-signature "$PKG_PATH" >/dev/null
+  echo "Installer signature verified."
+fi
 
 echo "Built installer: $PKG_PATH"
 echo "Install with: installer -pkg \"$PKG_PATH\" -target /"
