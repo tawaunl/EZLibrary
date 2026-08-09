@@ -13,9 +13,27 @@ import Foundation
 /// Safe crate file mutations (create/update track membership) that never touch
 /// audio files themselves.
 public enum SeratoCrateEditor {
-    public enum EditError: Error {
+    public enum EditError: LocalizedError {
         case seratoIsRunning
         case missingCrateFileURL
+
+        public var errorDescription: String? {
+            switch self {
+            case .seratoIsRunning:
+                return "Serato is currently running. Quit Serato before changing crates so it doesn't overwrite the changes."
+            case .missingCrateFileURL:
+                return "That crate has no file on disk, so its track list can't be changed."
+            }
+        }
+
+        public var recoverySuggestion: String? {
+            switch self {
+            case .seratoIsRunning:
+                return "Quit Serato DJ, then retry. Serato rewrites its crates from memory on quit, which would revert this change."
+            case .missingCrateFileURL:
+                return "Reload the library and try again. If the crate still has no file, recreate it."
+            }
+        }
     }
 
     /// Creates a new crate file under `destinationFileURL`.

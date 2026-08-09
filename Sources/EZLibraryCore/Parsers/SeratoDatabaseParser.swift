@@ -24,8 +24,19 @@ import Dispatch
 /// intermediate `[String: Data]` dictionary, no per-chunk `Data` copies, no
 /// tag `String`s) and decodes the independent records in parallel.
 public enum SeratoDatabaseParser {
-    public enum ParserError: Error {
+    public enum ParserError: LocalizedError {
         case fileNotFound(URL)
+
+        public var errorDescription: String? {
+            switch self {
+            case let .fileNotFound(url):
+                return "Serato database V2 was not found at \(url.path)."
+            }
+        }
+
+        public var recoverySuggestion: String? {
+            "Open Serato once to initialize the library, then retry."
+        }
     }
 
     /// Parses every `otrk` record in `fileURL`, resolving each track's

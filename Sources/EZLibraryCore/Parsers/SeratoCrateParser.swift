@@ -23,8 +23,19 @@ import Foundation
 /// per `otrk`, then a second array per record, which across a few hundred
 /// crates was the largest remaining cost in `LibraryService.reload`.
 public enum SeratoCrateParser {
-    public enum ParserError: Error {
+    public enum ParserError: LocalizedError {
         case fileNotFound(URL)
+
+        public var errorDescription: String? {
+            switch self {
+            case let .fileNotFound(url):
+                return "Crate file not found: \(url.lastPathComponent)."
+            }
+        }
+
+        public var recoverySuggestion: String? {
+            "Reload the library — the crate may have been renamed or removed since it was listed."
+        }
     }
 
     public static func parseCrate(at fileURL: URL) throws -> Crate {
