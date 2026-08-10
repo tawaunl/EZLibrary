@@ -204,7 +204,9 @@ struct AddMusicView: View {
                     .foregroundStyle(.secondary)
                     .overlay(alignment: .topTrailing) {
                         FastHoverHelp(
-                            text: "Scans the selected folder for audio files and inserts missing tracks into Serato database V2, taking title/artist/album/genre/year from each file's own tags and falling back to the filename only when a tag is missing. Existing tracks are left unchanged. It does not move or copy files or create crates; with \"Use central crate\" on, the tracks it adds are also filed there."
+                            text: """
+                            Scans the selected folder for audio files and inserts missing tracks into Serato database V2, taking title/artist/album/genre/year from each file's own tags and falling back to the filename only when a tag is missing. Existing tracks are left unchanged. It does not move or copy files or create crates; with "Use central crate" on, the tracks it adds are also filed there.
+                            """
                         )
                         .offset(x: 2, y: -2)
                     }
