@@ -183,8 +183,10 @@ FEATURES: list[Feature] = [
             ("Review each group", "Check the audio verification detail and the completeness score. Groups you are unsure about can be left alone."),
             ("Keep the best", "Use Pick Best, or choose the keeper by hand, then delete the rest from the library or from disk."),
         ),
-        note="Fingerprinting needs <code>fpcalc</code>, which ships inside the app — there is nothing "
-             "to install. The optional AcoustID lookup needs your own free API key.",
+           note="Fingerprinting needs <code>fpcalc</code>. The installer and the app both try to "
+               "provision it via Homebrew, so if duplicate detection says it is unavailable, open "
+               "EZLibrary and let the dependency banner finish. The optional AcoustID lookup needs "
+               "your own free API key.",
         related=("tracks-and-tags", "backup", "consolidation"),
     ),
     Feature(
@@ -667,7 +669,7 @@ def cta_band() -> str:
         Download for macOS
       </a>
     </div>
-    <p class="meta-line">v<span data-latest-version>1.0.1</span> · <span data-latest-size>8.2 MB</span> · macOS 13+ · Apple Silicon &amp; Intel</p>
+        <p class="meta-line">v<span data-latest-version>1.0.2</span> · <span data-latest-size>9.1 MB</span> · macOS 13+ · Apple Silicon &amp; Intel</p>
   </div>
 </section>"""
 

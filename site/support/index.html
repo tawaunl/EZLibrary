@@ -69,10 +69,11 @@
     <ol class="steps" style="margin-top:28px">
       <li>
         <h3>Download the installer</h3>
-        <p>One <code>.pkg</code> file, about <span data-latest-size>8.2 MB</span>. Everything the
-          app needs is inside it.</p>
+        <p>One <code>.pkg</code> file, about <span data-latest-size>9.1 MB</span>. It installs the
+          app, then kicks off a best-effort Homebrew bootstrap for the helper tools EZLibrary
+          uses.</p>
         <div class="btn-row" style="margin-top:14px">
-          <a class="btn btn-primary btn-sm" href="https://github.com/tawaunl/EZLibrary/releases/latest" data-download>Download v<span data-latest-version>1.0.1</span></a>
+          <a class="btn btn-primary btn-sm" href="https://github.com/tawaunl/EZLibrary/releases/latest" data-download>Download v<span data-latest-version>1.0.2</span></a>
         </div>
       </li>
       <li>
@@ -95,8 +96,9 @@
       </li>
       <li>
         <h3>Run the installer</h3>
-        <p>EZLibrary is installed to your Applications folder. There's no Homebrew step and no
-          separate download for <code>ffmpeg</code> or <code>fpcalc</code> — they're bundled.</p>
+        <p>EZLibrary is installed to your Applications folder. The installer also starts a
+          best-effort Homebrew setup for <code>yt-dlp</code>, <code>ffmpeg</code>,
+          <code>ffprobe</code> and <code>fpcalc</code>, and the app checks them again on launch.</p>
       </li>
       <li>
         <h3>Open it</h3>
@@ -233,8 +235,11 @@
       <details>
         <summary>Do I have to install ffmpeg or anything else?</summary>
         <div class="faq-body">
-          <p>No. <code>ffmpeg</code>, <code>ffprobe</code> and <code>fpcalc</code> are bundled
-            inside the app, along with the libraries they need. Nothing else to provision.</p>
+          <p>Usually no. The installer starts a best-effort Homebrew bootstrap for
+            <code>ffmpeg</code>, <code>ffprobe</code>, <code>fpcalc</code> and
+            <code>yt-dlp</code>, and EZLibrary checks again on every launch. If Homebrew is
+            missing or the bootstrap fails, use the banner inside the app to install or update
+            them.</p>
         </div>
       </details>
       <details>
@@ -374,8 +379,10 @@
       <details>
         <summary>Duplicate detection says fingerprinting is unavailable.</summary>
         <div class="faq-body">
-          <p>Basic fingerprinting is bundled and shouldn't need anything from you. The optional
-            AcoustID lookup does need a free API key of your own — add it in Settings, or set
+          <p>Fingerprinting depends on <code>fpcalc</code>. The installer and the app both try to
+            provision it for you via Homebrew, so if it is missing the usual fix is to click the
+            install/update banner in EZLibrary and let it finish. The optional AcoustID lookup
+            still needs a free API key of your own — add it in Settings, or set
             <code>EZLIBRARY_ACOUSTID_KEY</code>.</p>
         </div>
       </details>
@@ -509,7 +516,7 @@
         Download for macOS
       </a>
     </div>
-    <p class="meta-line">v<span data-latest-version>1.0.1</span> · <span data-latest-size>8.2 MB</span> · macOS 13+ · Apple Silicon &amp; Intel</p>
+    <p class="meta-line">v<span data-latest-version>1.0.2</span> · <span data-latest-size>9.1 MB</span> · macOS 13+ · Apple Silicon &amp; Intel</p>
   </div>
 </section>
 
