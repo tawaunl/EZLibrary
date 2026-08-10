@@ -17,6 +17,7 @@ public enum AddMusicImportService {
     }
 
     public enum ImportError: Error, LocalizedError {
+        case seratoIsRunning
         case noInputSelected
         case noSupportedAudioFiles
         case missingCrateFileURL
@@ -25,6 +26,8 @@ public enum AddMusicImportService {
 
         public var errorDescription: String? {
             switch self {
+            case .seratoIsRunning:
+                return "Serato is currently running. Quit Serato before adding music so it doesn't overwrite the changes."
             case .noInputSelected:
                 return "Choose at least one file or folder to import."
             case .noSupportedAudioFiles:
@@ -41,6 +44,8 @@ public enum AddMusicImportService {
 
         public var recoverySuggestion: String? {
             switch self {
+            case .seratoIsRunning:
+                return "Quit Serato DJ, then retry. Serato rewrites its crates from memory on quit, which would revert this."
             case .noInputSelected:
                 return "Pick files or folders, then import again."
             case .noSupportedAudioFiles:
@@ -169,6 +174,13 @@ public enum AddMusicImportService {
         transferMode: TransferMode,
         fileManager: FileManager = .default
     ) throws -> ImportFilesResult {
+        // Checked before anything moves. Guarding only the crate write left the
+        // files transferred to the destination with no crate and no database
+        // entry — a half-done import that is worse than refusing outright.
+        guard !SeratoProcessGuard.isSeratoRunning else {
+            throw ImportError.seratoIsRunning
+        }
+
         guard !inputURLs.isEmpty else {
             throw ImportError.noInputSelected
         }
@@ -204,6 +216,14 @@ public enum AddMusicImportService {
         date: Date = Date(),
         fileManager: FileManager = .default
     ) throws -> CrateCreationResult {
+        // Serato rewrites its crates from memory when it quits, so a crate
+        // written while it is running is liable to be reverted. These write
+        // crate files directly rather than through `SeratoCrateEditor`, so
+        // they carry the same guard it does.
+        guard !SeratoProcessGuard.isSeratoRunning else {
+            throw ImportError.seratoIsRunning
+        }
+
         guard !audioFiles.isEmpty else {
             throw ImportError.noSupportedAudioFiles
         }
@@ -237,6 +257,14 @@ public enum AddMusicImportService {
         rootDirectory: URL,
         fileManager: FileManager = .default
     ) throws -> CrateCreationResult {
+        // Serato rewrites its crates from memory when it quits, so a crate
+        // written while it is running is liable to be reverted. These write
+        // crate files directly rather than through `SeratoCrateEditor`, so
+        // they carry the same guard it does.
+        guard !SeratoProcessGuard.isSeratoRunning else {
+            throw ImportError.seratoIsRunning
+        }
+
         guard !audioFiles.isEmpty else {
             throw ImportError.noSupportedAudioFiles
         }
@@ -269,6 +297,14 @@ public enum AddMusicImportService {
         rootDirectory: URL,
         fileManager: FileManager = .default
     ) throws -> CrateCreationResult {
+        // Serato rewrites its crates from memory when it quits, so a crate
+        // written while it is running is liable to be reverted. These write
+        // crate files directly rather than through `SeratoCrateEditor`, so
+        // they carry the same guard it does.
+        guard !SeratoProcessGuard.isSeratoRunning else {
+            throw ImportError.seratoIsRunning
+        }
+
         guard let crateURL = crate.fileURL else {
             throw ImportError.missingCrateFileURL
         }

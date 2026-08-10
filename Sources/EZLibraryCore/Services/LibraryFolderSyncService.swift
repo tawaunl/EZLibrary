@@ -54,6 +54,7 @@ public enum LibraryFolderSyncService {
         case folderNotFound(URL)
         case noSupportedAudioFiles(URL)
         case databaseNotFound(URL)
+        case seratoIsRunning
 
         public var errorDescription: String? {
             switch self {
@@ -63,6 +64,8 @@ public enum LibraryFolderSyncService {
                 return "No supported audio files were found in \(folderURL.path)."
             case let .databaseNotFound(databaseURL):
                 return "Serato database V2 was not found at \(databaseURL.path)."
+            case .seratoIsRunning:
+                return "Serato is currently running. Quit Serato before syncing so it doesn't overwrite the changes."
             }
         }
 
@@ -74,6 +77,8 @@ public enum LibraryFolderSyncService {
                 return "Add supported formats like mp3, m4a, aac, wav, aif, aiff, flac, alac, or ogg first."
             case .databaseNotFound:
                 return "Open Serato once to initialize the library, then retry."
+            case .seratoIsRunning:
+                return "Quit Serato DJ, then retry. Serato rewrites its library from memory on quit, which would revert this sync."
             }
         }
     }
@@ -118,6 +123,13 @@ public enum LibraryFolderSyncService {
         renameFilesFromTags: Bool = false,
         fileManager: FileManager = .default
     ) async throws -> SyncResult {
+        // Serato rewrites its library from memory when it quits, so any change
+        // made while it is running is liable to be reverted. Every service that
+        // mutates the library refuses for the same reason.
+        guard !SeratoProcessGuard.isSeratoRunning else {
+            throw SyncError.seratoIsRunning
+        }
+
         guard fileManager.fileExists(atPath: databaseFileURL.path) else {
             throw SyncError.databaseNotFound(databaseFileURL)
         }

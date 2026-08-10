@@ -40,6 +40,7 @@ struct AddMusicView: View {
     let onLibraryChanged: () -> Void
 
     @State private var selectedInputURLs: [URL] = []
+    @EnvironmentObject private var seratoRunning: SeratoRunningModel
     @AppStorage(SeratoFeatureFlags.mainMusicFolderDefaultsKey) private var destinationPath = ""
     @State private var cratePrefix = "New Music"
     @AppStorage(SeratoFeatureFlags.addMusicUsesCentralCrateDefaultsKey) private var usesCentralCrate = false
@@ -196,7 +197,7 @@ struct AddMusicView: View {
                 Button(isSyncingFolder ? "Syncing..." : "Sync Folder To Serato DB") {
                     syncDestinationFolderToSeratoLibrary()
                 }
-                .disabled(isRunning || isSyncingFolder)
+                .disabled(isRunning || isSyncingFolder || seratoRunning.isSeratoRunning)
                 .help("Scan the selected folder for audio files and add any missing tracks to the Serato database, reading each file's tags. Files are never moved or copied. Newly added tracks go to the central crate only when that option is switched on below.")
 
                 Image(systemName: "questionmark.circle")
@@ -352,7 +353,7 @@ struct AddMusicView: View {
             Button(actionTitle) {
                 runImport()
             }
-            .disabled(isImportDisabled)
+            .disabled(isImportDisabled || seratoRunning.isSeratoRunning)
             .help("Copy or move the selected files into your library folder and add them to the Serato database.")
 
             Text("Destination root: \(destinationFolderURL.path)")

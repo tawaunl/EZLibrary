@@ -92,6 +92,7 @@ struct TracksAndTagsView: View {
     @State private var bulkLookupMessage: String?
     @State private var operationErrorMessage: String?
     @State private var pendingTopHitUpdates: [(Track, SeratoTrackMetadataUpdate)] = []
+    @EnvironmentObject private var seratoRunning: SeratoRunningModel
     @State private var pendingTagRefreshPlan: LibraryTagRefreshService.Plan?
     @State private var showTagRefreshConfirmation = false
     @State private var showTopHitConfirmation = false
@@ -609,6 +610,11 @@ struct TracksAndTagsView: View {
         .padding(.vertical, 8)
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.45))
         .glowCardStyle(radius: 8, opacity: 0.05)
+        // Every action here writes to the library, and Serato would revert the
+        // lot when it quits. Gated as a block so a new action added later is
+        // covered without having to remember this.
+        .disabled(seratoRunning.isSeratoRunning)
+        .help(seratoRunning.isSeratoRunning ? "Quit Serato DJ to edit tags." : "")
     }
 
     private var selectionStatusBar: some View {

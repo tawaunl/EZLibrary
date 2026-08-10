@@ -36,6 +36,7 @@ struct CrateDetailView: View {
     let onCratesChanged: () -> Void
     let onTrackActivated: ((Track, [Track]) -> Void)?
     @EnvironmentObject private var libraryService: LibraryService
+    @EnvironmentObject private var seratoRunning: SeratoRunningModel
 
     @State private var isManagingTracks = false
     @State private var trackEditErrorMessage: String?
@@ -450,6 +451,9 @@ struct CrateDetailView: View {
         }
         .padding(.horizontal, 8)
         .padding(.top, 8)
+        // Crate edits are written straight to the .crate files, which Serato
+        // rewrites from memory on quit.
+        .disabled(seratoRunning.isSeratoRunning)
     }
 
     private func genreFilterSection(matchedTracks: [Track], genreTags: [String]) -> some View {

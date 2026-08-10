@@ -53,6 +53,7 @@ struct ContentView: View {
 
     @EnvironmentObject private var libraryService: LibraryService
     @EnvironmentObject private var dependencyReadiness: DependencyReadinessModel
+    @EnvironmentObject private var seratoRunning: SeratoRunningModel
     @ObservedObject var crateHierarchy: CrateHierarchyViewModel
     @ObservedObject var smartCrateHierarchy: CrateHierarchyViewModel
 
@@ -138,6 +139,7 @@ struct ContentView: View {
 
     private var mainStack: some View {
         VStack(spacing: 0) {
+            SeratoRunningBanner(model: seratoRunning)
             DependencyReadinessBanner(model: dependencyReadiness)
             HSplitView {
                 sidebar

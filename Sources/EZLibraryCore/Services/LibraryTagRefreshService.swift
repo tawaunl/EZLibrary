@@ -69,11 +69,23 @@ public enum LibraryTagRefreshService {
 
     public enum RefreshError: LocalizedError {
         case databaseNotFound(URL)
+        case seratoIsRunning
 
         public var errorDescription: String? {
             switch self {
             case let .databaseNotFound(url):
                 return "Serato database V2 was not found at \(url.path)."
+            case .seratoIsRunning:
+                return "Serato is currently running. Quit Serato before updating tags so it doesn't overwrite the changes."
+            }
+        }
+
+        public var recoverySuggestion: String? {
+            switch self {
+            case .databaseNotFound:
+                return "Open Serato once to initialize the library, then retry."
+            case .seratoIsRunning:
+                return "Quit Serato DJ, then retry. Serato rewrites its library from memory on quit, which would revert these edits."
             }
         }
     }
@@ -215,6 +227,14 @@ public enum LibraryTagRefreshService {
         fileManager: FileManager = .default
     ) throws -> Int {
         guard !plan.changes.isEmpty else { return 0 }
+
+        // Serato rewrites its library from memory when it quits, so any change
+        // made while it is running is liable to be reverted. Every service that
+        // mutates the library refuses for the same reason.
+        guard !SeratoProcessGuard.isSeratoRunning else {
+            throw RefreshError.seratoIsRunning
+        }
+
         guard fileManager.fileExists(atPath: databaseFileURL.path) else {
             throw RefreshError.databaseNotFound(databaseFileURL)
         }

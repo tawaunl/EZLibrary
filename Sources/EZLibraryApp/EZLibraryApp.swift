@@ -60,6 +60,7 @@ struct EZLibraryApp: App {
     @StateObject private var missingTracksService: MissingTracksService
     @StateObject private var updateChecker = UpdateCheckViewModel()
     @StateObject private var dependencyReadiness = DependencyReadinessModel()
+    @StateObject private var seratoRunning = SeratoRunningModel()
     @ObservedObject private var themeController = ThemeController.shared
 
     init() {
@@ -94,6 +95,7 @@ struct EZLibraryApp: App {
                 .environmentObject(hiddenCrateStore)
                 .environmentObject(missingTracksService)
                 .environmentObject(dependencyReadiness)
+                .environmentObject(seratoRunning)
                 .sheet(isPresented: $updateChecker.isPresented) {
                     UpdateCheckView(viewModel: updateChecker)
                         .textSelection(.enabled)

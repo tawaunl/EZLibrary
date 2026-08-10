@@ -107,7 +107,11 @@ private func makeScratchImportEnvironment() throws -> (tempRoot: URL, libraryDir
     #expect(Set(crate.trackPaths) == expectedStoredPaths)
 }
 
-@Test func importIntoDatedCrateAllowsImportWhileSeratoIsRunning() throws {
+/// Importing used to be exempt from the Serato-running guard, on the grounds
+/// that Serato cannot revert a crate it has never loaded. That exemption was
+/// removed: every library write is now blocked while Serato runs, so the rule
+/// is one users can predict rather than one that varies per action.
+@Test func importIntoDatedCrateRefusesWhileSeratoIsRunning() throws {
     let env = try makeScratchImportEnvironment()
     defer { try? FileManager.default.removeItem(at: env.tempRoot) }
 
@@ -126,19 +130,21 @@ private func makeScratchImportEnvironment() throws -> (tempRoot: URL, libraryDir
     let fixedDate = try #require(components.date)
     let rootDirectory = SeratoLibraryLocator.rootDirectory(for: env.libraryDirectory, homeDirectory: env.tempRoot)
 
-    let result = try AddMusicImportService.importIntoDatedCrate(
-        inputURLs: [incomingFile],
-        destinationFolderURL: env.destinationRoot,
-        crateNamePrefix: "New Music",
-        transferMode: .move,
-        subcratesDirectory: env.subcratesDirectory,
-        rootDirectory: rootDirectory,
-        date: fixedDate
-    )
+    #expect(throws: AddMusicImportService.ImportError.self) {
+        _ = try AddMusicImportService.importIntoDatedCrate(
+            inputURLs: [incomingFile],
+            destinationFolderURL: env.destinationRoot,
+            crateNamePrefix: "New Music",
+            transferMode: .move,
+            subcratesDirectory: env.subcratesDirectory,
+            rootDirectory: rootDirectory,
+            date: fixedDate
+        )
+    }
 
-    #expect(result.importedTrackCount == 1)
-    #expect(FileManager.default.fileExists(atPath: result.crateFileURL.path))
-    #expect(!FileManager.default.fileExists(atPath: incomingFile.path))
+    // The file must be left where it was rather than half-imported.
+    #expect(FileManager.default.fileExists(atPath: incomingFile.path))
+    #expect(try FileManager.default.contentsOfDirectory(atPath: env.destinationRoot.path).isEmpty)
 }
 
 @Test func createNamedCrateUsesExactNameWithoutDate() throws {
