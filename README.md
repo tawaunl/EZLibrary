@@ -50,7 +50,7 @@ It isn't sponsored, endorsed, or reviewed by Serato. It reads and writes Serato'
 library file format for interoperability purposes only.
 
 **Real commit history, not a weekend drop.** Check the commit log yourself — this
-project has grown incrementally across **150+ commits and 7 releases**, with
+project has grown incrementally across **190+ commits and 8 releases**, with
 ongoing fixes, tests, and refactors, not a single large initial commit followed by
 silence.
 
@@ -70,7 +70,7 @@ operation doesn't leave your crates half-written or corrupted. See
 [docs/SECURITY_AND_DATA_HANDLING.md](docs/SECURITY_AND_DATA_HANDLING.md) for
 specifics.
 
-**Actively maintained.** 7 releases so far, with updates landing roughly monthly
+**Actively maintained.** 8 releases so far, with updates landing roughly monthly
 (more often for fixes). Check the
 [Releases](https://github.com/tawaunl/EZLibrary/releases) page and the
 [changelog](docs/CHANGELOG.md) for the latest activity — not just a README that

@@ -9,6 +9,43 @@ version (`CFBundleShortVersionString.CFBundleVersion`) and are used verbatim by
 > the highest priority — see [SECURITY.md](../SECURITY.md). This changelog is kept
 > up to date so you can see exactly what changed and when.
 
+## 1.0.2
+
+### Writes are blocked while Serato is open
+- EZLibrary now treats the library as read-only for as long as Serato is running.
+  Serato rewrites its library and crates from memory on quit, so edits made
+  underneath it can be silently reverted.
+- The guard now covers the remaining write paths that were still exposed,
+  including **Add Music**, folder sync, and the new tag refresh workflow.
+- The app shows a banner while Serato is open and disables the bulk tag,
+  crate-edit, and Add Music controls as groups, so later actions are covered by
+  default too.
+
+### Refresh library tags from the audio files
+- New **Refresh Tags From Files** action in Tracks & Tags re-reads each selected
+  track's embedded audio tags and writes the current values back into Serato's
+  library.
+- This is the repair path for tracks whose file tags were fixed elsewhere and
+  now disagree with `database V2`.
+- The refresh runs through the same verified write path as other metadata edits,
+  so failures still roll back cleanly instead of half-applying.
+
+### Folder sync can rename from tags and keep crates pointed at the file
+- Folder sync can now rename imported tracks from their audio metadata instead
+  of leaving them on the source filename.
+- When sync renames a file, EZLibrary now rewrites every plain and smart crate
+  entry that still points at the old stored path, so the track does not drop out
+  of crates or reappear as a second missing entry in Serato.
+- Sync results were expanded to report the rename work alongside the normal file
+  transfer updates.
+
+### Better metadata handling and error messages
+- Audio tag reads used by sync were tightened up so imported metadata is more
+  complete and database updates stay in step with the file on disk.
+- Crate-editor and parser failures now surface plain-language recovery messages
+  instead of raw Swift error names, including the case where quitting Serato is
+  the fix.
+
 ## 1.0.1
 
 ### Fixed: Search Online stopped returning matches
