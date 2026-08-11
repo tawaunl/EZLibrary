@@ -22,7 +22,7 @@ version (`CFBundleShortVersionString.CFBundleVersion`) and are used verbatim by
   default too.
 
 ### Refresh library tags from the audio files
-- New **Refresh Tags From Files** action in Tracks & Tags re-reads each selected
+- New **Re-read Tags From Files** action in Tracks & Tags re-reads each selected
   track's embedded audio tags and writes the current values back into Serato's
   library.
 - This is the repair path for tracks whose file tags were fixed elsewhere and
@@ -36,6 +36,14 @@ version (`CFBundleShortVersionString.CFBundleVersion`) and are used verbatim by
 - When sync renames a file, EZLibrary now rewrites every plain and smart crate
   entry that still points at the old stored path, so the track does not drop out
   of crates or reappear as a second missing entry in Serato.
+- A rename also repoints the track's row in Serato's own `location.sqlite`,
+  keeping the asset id so the track's cues and crate membership stay attached.
+  Without it Serato re-imports the renamed file as a brand-new track — its log
+  says "Adding track not found in database" — and leaves the original row
+  pointing at a path that no longer exists.
+- A file Serato has never seen has no row to repoint, which is the normal case
+  for a folder sync and is not reported as a problem. A rename blocked by a
+  different track already claiming that path is reported instead.
 - Sync results were expanded to report the rename work alongside the normal file
   transfer updates.
 
