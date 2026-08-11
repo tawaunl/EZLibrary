@@ -128,6 +128,15 @@ public enum YouTubeBatchLinkImportService {
             .filter { !$0.isEmpty }
     }
 
+    /// Host fragments the batch parser accepts. yt-dlp downloads from all of
+    /// these, so restricting to YouTube alone silently dropped valid SoundCloud
+    /// links even though the UI advertises SoundCloud support.
+    private static let supportedHostFragments = [
+        "youtube.com",
+        "youtu.be",
+        "soundcloud.com",
+    ]
+
     private static func normalizeYouTubeURL(from rawValue: String) -> URL? {
         let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
@@ -143,7 +152,7 @@ public enum YouTubeBatchLinkImportService {
               let scheme = url.scheme?.lowercased(),
               ["http", "https"].contains(scheme),
               let host = url.host?.lowercased(),
-              host.contains("youtube.com") || host.contains("youtu.be") else {
+              supportedHostFragments.contains(where: { host.contains($0) }) else {
             return nil
         }
 
