@@ -32,6 +32,14 @@ public enum LibraryFolderSyncService {
         public let renamedFiles: [Rename]
         /// Files that would have been renamed but whose target name was taken.
         public let renameSkippedCount: Int
+        /// `location.sqlite` rows repointed at a renamed file. Usually zero —
+        /// a file this sync is adding is one Serato has never seen, so it has
+        /// no asset row — and non-zero only for a file Serato already knew
+        /// about that was missing from `database V2`.
+        public let locationRowsUpdated: Int
+        /// Renames whose new path is already claimed by a different asset row,
+        /// so the row was left pointing at the old path.
+        public let locationConflictCount: Int
 
         public init(
             scannedAudioFiles: Int,
@@ -39,7 +47,9 @@ public enum LibraryFolderSyncService {
             alreadyPresentTracks: Int,
             insertedFileURLs: [URL] = [],
             renamedFiles: [Rename] = [],
-            renameSkippedCount: Int = 0
+            renameSkippedCount: Int = 0,
+            locationRowsUpdated: Int = 0,
+            locationConflictCount: Int = 0
         ) {
             self.scannedAudioFiles = scannedAudioFiles
             self.insertedTracks = insertedTracks
@@ -47,6 +57,8 @@ public enum LibraryFolderSyncService {
             self.insertedFileURLs = insertedFileURLs
             self.renamedFiles = renamedFiles
             self.renameSkippedCount = renameSkippedCount
+            self.locationRowsUpdated = locationRowsUpdated
+            self.locationConflictCount = locationConflictCount
         }
     }
 
@@ -227,13 +239,18 @@ public enum LibraryFolderSyncService {
             try AtomicFileWriter.write(data, to: databaseFileURL)
         }
 
+        let libraryDirectory = databaseFileURL.deletingLastPathComponent()
+
         // A crate can list a track that `database V2` doesn't have — that is
         // exactly the file this sync treats as new. Renaming it without
         // repointing the crate would drop it out of that crate, so the crates
         // are repointed for every rename.
-        try rewriteCratePaths(
+        try rewriteCratePaths(renamedStoredPaths, libraryDirectory: libraryDirectory)
+
+        let location = rewriteLocationDatabases(
             renamedStoredPaths,
-            libraryDirectory: databaseFileURL.deletingLastPathComponent()
+            rootDirectory: rootDirectory,
+            libraryDirectory: libraryDirectory
         )
 
         return SyncResult(
@@ -242,7 +259,9 @@ public enum LibraryFolderSyncService {
             alreadyPresentTracks: alreadyPresent,
             insertedFileURLs: insertedFiles,
             renamedFiles: renamedFiles,
-            renameSkippedCount: renameSkipped
+            renameSkippedCount: renameSkipped,
+            locationRowsUpdated: location.updated,
+            locationConflictCount: location.conflicts
         )
     }
 
@@ -369,6 +388,46 @@ public enum LibraryFolderSyncService {
             try SeratoBackupBeforeWrite.snapshot(of: entry.url)
             try AtomicFileWriter.write(rewritten.data, to: entry.url)
         }
+    }
+
+    /// Repoints Serato's own SQLite library at every renamed file.
+    ///
+    /// Serato reads `location.sqlite`, not `database V2`. A renamed file whose
+    /// asset row still names the old path gets re-imported as a brand-new
+    /// track — Serato's log says "Adding track not found in database" — while
+    /// the original row is left pointing at a path that no longer exists.
+    ///
+    /// A path with no asset row is the normal case here and not a problem: a
+    /// file this sync is adding is usually one Serato has never seen. Failures
+    /// are swallowed for the same reason — the files and `database V2` are
+    /// already written by this point, so throwing would report a failed sync
+    /// that in fact succeeded. Conflicts are counted and returned instead.
+    static func rewriteLocationDatabases(
+        _ renamedStoredPaths: [String: String],
+        rootDirectory: URL,
+        libraryDirectory: URL
+    ) -> (updated: Int, conflicts: Int) {
+        guard !renamedStoredPaths.isEmpty else { return (0, 0) }
+
+        var updated = 0
+        var conflicts = 0
+
+        for locationDatabaseURL in SeratoLocationDatabase.activeDatabases(
+            forLibraryDirectory: libraryDirectory
+        ) {
+            guard let summary = try? SeratoLocationDatabase.rewritePaths(
+                renamedStoredPaths,
+                rootDirectory: rootDirectory,
+                in: locationDatabaseURL
+            ) else {
+                continue
+            }
+
+            updated += summary.updatedCount
+            conflicts += summary.conflictingPaths.count
+        }
+
+        return (updated, conflicts)
     }
 
     /// The name `metadata` renders under `template`, or nil when the template

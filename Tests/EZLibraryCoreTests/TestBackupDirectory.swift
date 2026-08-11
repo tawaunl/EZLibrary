@@ -34,7 +34,7 @@ enum TestBackupDirectory {
     static func use() {
         SeratoBackupBeforeWrite.backupDirectory = shared
         TestSeratoEnvironment.isolateApplicationSupport()
-        TestSeratoEnvironment.pretendSeratoIsClosed()
+        TestSeratoEnvironment.assumeSeratoClosedUnlessSet()
     }
 }
 
@@ -67,5 +67,18 @@ enum TestSeratoEnvironment {
     /// it re-exposes the real check to whatever else is running in parallel.
     static func pretendSeratoIsClosed() {
         SeratoProcessGuard.isRunningOverride = false
+    }
+
+    /// Establish the "Serato is closed" default without stomping a value a
+    /// test set on purpose.
+    ///
+    /// `use()` runs from tests in every suite, and suites run in parallel, so
+    /// setting the override unconditionally there raced with the tests that
+    /// set it to `true` to exercise the refusal — the guard would silently not
+    /// fire and those tests failed at random.
+    static func assumeSeratoClosedUnlessSet() {
+        if SeratoProcessGuard.isRunningOverride == nil {
+            SeratoProcessGuard.isRunningOverride = false
+        }
     }
 }

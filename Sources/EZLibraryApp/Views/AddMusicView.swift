@@ -641,6 +641,9 @@ struct AddMusicView: View {
                 if result.renameSkippedCount > 0 {
                     baseMessage += " \(result.renameSkippedCount) kept its existing name because the new one was already taken."
                 }
+                if result.locationConflictCount > 0 {
+                    baseMessage += " \(result.locationConflictCount) renamed file could not be repointed in Serato's own library because another track already claims that path; Serato may re-import it."
+                }
                 if let crateName = crateResults.first?.crateName {
                     successMessage = "\(baseMessage) Added tracks to crate \(crateName)."
                 } else {

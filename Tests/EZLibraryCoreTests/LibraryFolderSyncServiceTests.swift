@@ -535,3 +535,133 @@ private func makeSyncScratchEnvironment() throws -> (tempRoot: URL, libraryDirec
             == ["Music/Artist - Title.mp3", "Music/untouched.mp3"]
     )
 }
+
+// MARK: - Serato's own SQLite library
+
+/// Serato reads `location.sqlite`, not `database V2`. A renamed file whose
+/// asset row still names the old path is re-imported as a brand-new track
+/// while the original row is left pointing at a path that no longer exists.
+@Test func renamingRepointsSeratosLocationDatabase() throws {
+    let env = try makeSyncScratchEnvironment()
+    defer { try? FileManager.default.removeItem(at: env.tempRoot) }
+    TestBackupDirectory.use()
+
+    let locationURL = SeratoLocationDatabase.locationDatabaseFile(in: env.libraryDirectory)
+    try FileManager.default.createDirectory(
+        at: locationURL.deletingLastPathComponent(), withIntermediateDirectories: true
+    )
+    let database = try TestLocationDatabase(at: locationURL)
+    try database.createSeratoSchema()
+    try database.insertAsset(id: 7, portableID: "Main Music/raw download.mp3")
+    database.close()
+
+    let summary = try SeratoLocationDatabase.rewritePaths(
+        ["Main Music/raw download.mp3": "Main Music/Calvin Harris - Feel So Close.mp3"],
+        rootDirectory: env.tempRoot,
+        in: locationURL
+    )
+
+    #expect(summary.updatedCount == 1)
+    #expect(summary.conflictingPaths.isEmpty)
+
+    let reopened = try TestLocationDatabase(at: locationURL)
+    defer { reopened.close() }
+    // The asset id has to survive, or the track's cues and crate membership
+    // are orphaned along with it.
+    #expect(
+        try reopened.queryString("SELECT portable_id FROM asset WHERE id = 7")
+            == "Main Music/Calvin Harris - Feel So Close.mp3"
+    )
+}
+
+/// A sync that renames nothing must not touch Serato's database at all.
+@Test func syncWithoutRenamesLeavesTheLocationDatabaseAlone() async throws {
+    let env = try makeSyncScratchEnvironment()
+    defer { try? FileManager.default.removeItem(at: env.tempRoot) }
+    TestBackupDirectory.use()
+
+    let locationURL = SeratoLocationDatabase.locationDatabaseFile(in: env.libraryDirectory)
+    try FileManager.default.createDirectory(
+        at: locationURL.deletingLastPathComponent(), withIntermediateDirectories: true
+    )
+    let database = try TestLocationDatabase(at: locationURL)
+    try database.createSeratoSchema()
+    try database.insertAsset(id: 7, portableID: "Main Music/untouched.mp3")
+    database.close()
+    let before = try Data(contentsOf: locationURL)
+
+    // No tags, so nothing is renamed.
+    let file = env.destinationRoot.appendingPathComponent("untouched.mp3")
+    try Data("not audio".utf8).write(to: file)
+    let rootDirectory = SeratoLibraryLocator.rootDirectory(for: env.libraryDirectory, homeDirectory: env.tempRoot)
+
+    let result = try await LibraryFolderSyncService.syncAudioFolder(
+        env.destinationRoot,
+        databaseFileURL: env.databaseFile,
+        rootDirectory: rootDirectory,
+        renameFilesFromTags: true
+    )
+
+    #expect(result.renamedFiles.isEmpty)
+    #expect(result.locationRowsUpdated == 0)
+    #expect(result.locationConflictCount == 0)
+    #expect(try Data(contentsOf: locationURL) == before)
+}
+
+/// Renaming repoints Serato's own asset row, keeping its id so the track's
+/// cues and crate membership stay attached.
+@Test func renameRewriteUpdatesTheAssetRowInPlace() throws {
+    let env = try makeSyncScratchEnvironment()
+    defer { try? FileManager.default.removeItem(at: env.tempRoot) }
+    TestBackupDirectory.use()
+
+    let locationURL = SeratoLocationDatabase.locationDatabaseFile(in: env.libraryDirectory)
+    try FileManager.default.createDirectory(
+        at: locationURL.deletingLastPathComponent(), withIntermediateDirectories: true
+    )
+    let database = try TestLocationDatabase(at: locationURL)
+    try database.createSeratoSchema()
+    try database.insertAsset(id: 7, portableID: "Main Music/raw download.mp3")
+    database.close()
+
+    let result = LibraryFolderSyncService.rewriteLocationDatabases(
+        ["Main Music/raw download.mp3": "Main Music/Calvin Harris - Feel So Close.mp3"],
+        rootDirectory: env.tempRoot,
+        libraryDirectory: env.libraryDirectory
+    )
+
+    #expect(result.updated == 1)
+    #expect(result.conflicts == 0)
+
+    let reopened = try TestLocationDatabase(at: locationURL)
+    defer { reopened.close() }
+    #expect(
+        try reopened.queryString("SELECT portable_id FROM asset WHERE id = 7")
+            == "Main Music/Calvin Harris - Feel So Close.mp3"
+    )
+}
+
+/// A path Serato has never seen is the normal case for a folder sync — those
+/// files are new — so it must not be reported as a conflict or a failure.
+@Test func renameRewriteTreatsUnknownPathsAsNormal() throws {
+    let env = try makeSyncScratchEnvironment()
+    defer { try? FileManager.default.removeItem(at: env.tempRoot) }
+    TestBackupDirectory.use()
+
+    let locationURL = SeratoLocationDatabase.locationDatabaseFile(in: env.libraryDirectory)
+    try FileManager.default.createDirectory(
+        at: locationURL.deletingLastPathComponent(), withIntermediateDirectories: true
+    )
+    let database = try TestLocationDatabase(at: locationURL)
+    try database.createSeratoSchema()
+    database.close()
+
+    let result = LibraryFolderSyncService.rewriteLocationDatabases(
+        ["Main Music/brand new.mp3": "Main Music/Artist - Title.mp3"],
+        rootDirectory: env.tempRoot,
+        libraryDirectory: env.libraryDirectory
+    )
+
+    #expect(result.updated == 0)
+    #expect(result.conflicts == 0)
+}

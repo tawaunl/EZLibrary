@@ -15,6 +15,8 @@ import Testing
 /// These flip the global "is Serato running" override, so they run one at a
 /// time rather than concurrently with each other.
 @Suite(.serialized) struct SeratoRunningGuardTests {
+    init() { TestBackupDirectory.use() }
+
     /// Every service that mutates the Serato library must refuse while Serato
     /// is running: Serato rewrites its library and crates from memory on quit,
     /// which silently reverts anything written underneath it.
@@ -30,7 +32,7 @@ import Testing
         try Data("a".utf8).write(to: file)
 
         SeratoProcessGuard.isRunningOverride = true
-        defer { SeratoProcessGuard.isRunningOverride = nil }
+        defer { TestSeratoEnvironment.pretendSeratoIsClosed() }
 
         await #expect(throws: LibraryFolderSyncService.SyncError.self) {
             try await LibraryFolderSyncService.syncAudioFiles(
@@ -55,7 +57,7 @@ import Testing
         )
 
         SeratoProcessGuard.isRunningOverride = true
-        defer { SeratoProcessGuard.isRunningOverride = nil }
+        defer { TestSeratoEnvironment.pretendSeratoIsClosed() }
 
         #expect(throws: LibraryTagRefreshService.RefreshError.self) {
             try LibraryTagRefreshService.apply(
@@ -76,7 +78,7 @@ import Testing
         try Data("a".utf8).write(to: file)
 
         SeratoProcessGuard.isRunningOverride = true
-        defer { SeratoProcessGuard.isRunningOverride = nil }
+        defer { TestSeratoEnvironment.pretendSeratoIsClosed() }
 
         #expect(throws: AddMusicImportService.ImportError.self) {
             _ = try AddMusicImportService.createNamedCrate(
@@ -101,8 +103,7 @@ import Testing
         let file = directory.appendingPathComponent("Song.mp3")
         try Data("a".utf8).write(to: file)
 
-        SeratoProcessGuard.isRunningOverride = false
-        defer { SeratoProcessGuard.isRunningOverride = nil }
+        TestSeratoEnvironment.pretendSeratoIsClosed()
 
         let result = try await LibraryFolderSyncService.syncAudioFiles(
             [file], databaseFileURL: database, rootDirectory: directory
