@@ -8,6 +8,24 @@
 
   var REPO = "tawaunl/EZLibrary";
 
+  /* ----------------------------------------------------------------- analytics
+
+     GoatCounter: cookieless, no-consent-banner page-view counting. Loaded here
+     so every page is covered without editing each template. The endpoint is set
+     before count.js loads; count.js auto-records the page view on load. */
+
+  window.goatcounter = { endpoint: "https://ezlibrary.goatcounter.com/count" };
+  var gc = document.createElement("script");
+  gc.async = true;
+  gc.src = "//gc.zgo.at/count.js";
+  document.head.appendChild(gc);
+
+  function countEvent(path) {
+    if (window.goatcounter && window.goatcounter.count) {
+      window.goatcounter.count({ path: path, title: "Download click", event: true });
+    }
+  }
+
   /* ------------------------------------------------------------ mobile nav */
 
   var toggle = document.querySelector(".nav-toggle");
@@ -62,6 +80,13 @@
   var versionSlots = document.querySelectorAll("[data-latest-version]");
   var sizeSlots = document.querySelectorAll("[data-latest-size]");
   var downloadLinks = document.querySelectorAll("[data-download]");
+
+  downloadLinks.forEach(function (link) {
+    link.addEventListener("click", function () {
+      countEvent("download-" + (link.getAttribute("data-version") || "latest"));
+    });
+  });
+
   if (!versionSlots.length && !downloadLinks.length) return;
 
   fetch("https://api.github.com/repos/" + REPO + "/releases/latest", {

@@ -61,6 +61,14 @@ upgraded to a direct `.pkg` link once `releases/latest` answers. The version and
 size shown on the page come from the same response; the hardcoded values in the
 HTML are the fallback, so bump them when they get stale.
 
+## Analytics
+
+`assets/js/site.js` loads [GoatCounter](https://www.goatcounter.com) (cookieless,
+no consent banner) for every page, so no per-page markup is needed. Page views go
+to `https://ezlibrary.goatcounter.com`, and each Download button click is also
+recorded as a `download-<version>` event. Create the `ezlibrary` site in
+GoatCounter for the data to land; if it is unreachable, nothing else breaks.
+
 **The roadmap board** is a view over GitHub Issues labelled `roadmap`:
 
 | Column | Comes from |

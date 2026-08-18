@@ -1,0 +1,75 @@
+name: Download metrics
+
+# GitHub only reports the current download total per asset, never a history.
+# This job snapshots the counts on a schedule and appends them to a committed
+# CSV so trends over time are recoverable.
+
+on:
+  schedule:
+    - cron: '17 6 * * *'   # daily at 06:17 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: download-metrics
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  snapshot:
+    name: Snapshot release download counts
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Append today's counts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 - <<'PY'
+          import csv, datetime, json, os, pathlib, subprocess
+
+          out = pathlib.Path("docs/metrics/download-counts.csv")
+          out.parent.mkdir(parents=True, exist_ok=True)
+
+          # Paginate through every release and asset.
+          releases = json.loads(subprocess.check_output([
+              "gh", "api", "--paginate",
+              "repos/${{ github.repository }}/releases",
+          ]))
+
+          date = datetime.date.today().isoformat()
+          rows = []
+          for rel in releases:
+              tag = rel.get("tag_name", "")
+              for asset in rel.get("assets", []):
+                  rows.append((date, tag, asset["name"], asset["download_count"]))
+
+          if not rows:
+              print("No release assets found; nothing to record.")
+              raise SystemExit(0)
+
+          new_file = not out.exists()
+          with out.open("a", newline="") as f:
+              w = csv.writer(f)
+              if new_file:
+                  w.writerow(["date", "tag", "asset", "downloads"])
+              w.writerows(rows)
+
+          print(f"Recorded {len(rows)} rows for {date}.")
+          PY
+
+      - name: Commit if changed
+        run: |
+          if git diff --quiet -- docs/metrics/download-counts.csv; then
+            echo "No change to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/metrics/download-counts.csv
+          git commit -m "chore: snapshot release download counts"
+          git push
