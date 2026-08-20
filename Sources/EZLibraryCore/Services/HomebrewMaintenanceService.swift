@@ -47,14 +47,16 @@ public enum HomebrewMaintenanceService {
             return false
         }
 
-        userDefaults.set(Date(), forKey: lastRefreshDefaultsKey)
-
         // Refresh Homebrew's formula index once so upgrades see new versions.
         _ = runBrew(brewPath, ["update", "--quiet"])
 
         for formula in managedFormulae where isFormulaInstalled(brewPath, formula) {
             _ = runBrew(brewPath, ["upgrade", "--quiet", formula])
         }
+
+        // Stamp only after the work completes so an interrupted or failed run
+        // doesn't burn the daily window and can retry on the next launch.
+        userDefaults.set(Date(), forKey: lastRefreshDefaultsKey)
 
         return true
     }
@@ -95,8 +97,11 @@ public enum HomebrewMaintenanceService {
         process.executableURL = URL(fileURLWithPath: brewPath)
         process.arguments = arguments
         process.environment = cleanEnvironment(brewPath: brewPath)
-        process.standardOutput = Pipe()
-        process.standardError = Pipe()
+        // Discard to /dev/null rather than an undrained Pipe(): `brew update`
+        // and `brew upgrade` emit more than the OS pipe buffer holds, and a
+        // full, unread pipe blocks brew and deadlocks waitUntilExit().
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
 
         do {
             try process.run()
@@ -116,7 +121,9 @@ public enum HomebrewMaintenanceService {
         process.environment = cleanEnvironment(brewPath: brewPath)
         let stdoutPipe = Pipe()
         process.standardOutput = stdoutPipe
-        process.standardError = Pipe()
+        // Discard stderr to /dev/null; an undrained stderr Pipe() would
+        // deadlock waitUntilExit() if brew wrote past the buffer limit.
+        process.standardError = FileHandle.nullDevice
 
         do {
             try process.run()
