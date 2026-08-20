@@ -56,6 +56,7 @@ enum TestSeratoEnvironment {
 
     static func isolateApplicationSupport() {
         SeratoLocationDatabase.applicationSupportDirectoryOverride = applicationSupport
+        LibraryChangeJournal.applicationSupportDirectoryOverride = applicationSupport
     }
 
     /// Force the "Serato is closed" answer for the whole test process.
@@ -67,6 +68,19 @@ enum TestSeratoEnvironment {
     /// it re-exposes the real check to whatever else is running in parallel.
     static func pretendSeratoIsClosed() {
         SeratoProcessGuard.isRunningOverride = false
+    }
+
+    /// Run `body` with Serato reported as running, scoped to this task only.
+    ///
+    /// Prefer this over assigning `SeratoProcessGuard.isRunningOverride`:
+    /// that is process-wide, and tests run in parallel, so setting it made
+    /// every concurrently running write test fail at random.
+    static func withSeratoRunning<T>(_ body: () throws -> T) rethrows -> T {
+        try SeratoProcessGuard.$isRunningForCurrentTask.withValue(true, operation: body)
+    }
+
+    static func withSeratoRunning<T>(_ body: () async throws -> T) async rethrows -> T {
+        try await SeratoProcessGuard.$isRunningForCurrentTask.withValue(true, operation: body)
     }
 
     /// Establish the "Serato is closed" default without stomping a value a

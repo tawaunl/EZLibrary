@@ -1,6 +1,6 @@
 # EZLibrary Feature Roadmap
 
-## Status at a glance (updated 2026-07-18)
+## Status at a glance (updated 2026-08-19)
 
 Legend: ✅ Done (shipped) · 🚧 In progress / partial · 📋 Planned · ⏸️ Tabled
 
@@ -9,6 +9,7 @@ The app has grown well past the original MVP, and most of the originally-planned
 ### In progress
 
 - 🚧 **ID3 title descriptor preservation** — keep DJ markers like "(Intro)"/"(Clean)" when applying an online title match (branch `feature/id3-title-descriptors`, PR #16).
+- 🚧 **Offline library sync** — browse the library and queue edits from a phone while away from the Mac (branch `feature/offline-library-sync`). Stage 0 engine work landed; see [Offline library sync](#offline-library-sync) below.
 
 ### Planned / not started
 
@@ -68,6 +69,78 @@ Only the file header/envelope was validated on this machine (the local library i
 | 6 | 5 CrateMatch | Spotify ingestion, fuzzy metadata matching | Reuses matching concepts from Phase 3; needs Spotify API credentials decision. |
 | 7 | 8 iTunes Migration | Library.xml (or MediaLibrary framework) reader | One-time-per-user tool, isolated risk, doesn't block others — reuses TrackFileMover/SeratoCrateWriter, no new file-move primitives. |
 | 8 | 11 Sync (Rekordbox) | Rekordbox DB writer, cue→hot-cue conversion, USB export | Highest reverse-engineering risk in the roadmap; pure read-only export from our side (never writes back to Serato), so it can slip without blocking anything. Target the unencrypted `.PDB`/USB-export format first (also what CDJs actually read), not the SQLCipher-encrypted `master.db` — safer and may fully satisfy the "mirror to USB" requirement on its own. |
+
+---
+
+## Offline library sync
+
+**Goal:** browse the library, retag tracks, and build crates from a phone while away from the
+Mac — then apply that work safely on return.
+
+**Shape:** the phone plans, the Mac executes. A dated `LibrarySnapshot` goes out; an intent
+queue comes back; the Mac revalidates it against a fresh parse, previews a diff, and only
+then writes through the existing backup-first/atomic/read-back path. The phone never touches
+a Serato file, so it cannot corrupt anything.
+
+**Why it is tractable:** the library's metadata is ~1.76 MB against ~18 GB of audio, so this
+was never a sync-capacity problem — only a question of which operations can be expressed
+without the audio bytes present. Browsing, crate membership, and tag *values* can; playback,
+waveforms, fingerprinting, and the actual ID3 write cannot.
+
+**Transport:** a plain iCloud Drive folder, not CloudKit. CloudKit needs a Developer ID
+provisioning profile, and Gatekeeper checks that profile at every launch — an expired one
+stops the app opening, which is unacceptable for a tool people install and forget. One writer
+per file (`snapshot-<fingerprint>.json` from the Mac, `queue-<uuid>.json` from the phone) so
+iCloud never creates conflict copies. Being just files, it degrades to Dropbox or AirDrop.
+
+### Track identity
+
+`Track.id` is a fresh `UUID()` per parse and means nothing across devices, so identity runs on
+`seratoStoredPath`. Paths are not permanent either, so `TrackIdentityResolver` walks a ladder
+and reports which rung answered:
+
+1. **Exact path** — free and exact.
+2. **Rename journal** — an exact lookup for any move EZLibrary itself performed.
+3. **Filename basename** — consolidation preserves filenames while changing folders.
+4. **Snapshot title + artist** — survives a move *and* a rename.
+5. **Unresolved / ambiguous** — surfaced for the user, never guessed.
+
+Measured against the real 2,362-track library, `(dateAdded, duration)` looked like the ideal
+key — immune to both moves and retagging — but **fails**: 370 tracks are ambiguous under it
+across 83 collision groups, because batch imports share a `uadd` second, and 280 tracks carry
+no duration at all. Path, basename, and title+artist were each unique across that library,
+though that is a property of one library and not a guarantee — hence the corroboration step
+and the explicit ambiguous case.
+
+### Reconciliation
+
+Everything is dated, so an incoming intent falls into one of four buckets: the journal never
+touched it (apply), the journal set the same value (drop silently — do not prompt on
+agreement), the journal set a different value (a real conflict, ask), or the value differs
+with nothing in the journal to explain it (external change by Serato or Finder — ask, but
+there is no second value to offer). Crate membership is a set and merges on its own; only
+crate *ordering* genuinely needs a prompt.
+
+Retention matters: pruning the journal past a snapshot's timestamp makes that snapshot
+unreconcilable. Journal entries are kept for `LibraryChangeJournal.defaultRetention`
+(90 days), and older work is refused rather than guessed at.
+
+### Status
+
+| Stage | Scope | Status |
+|---|---|---|
+| 0 | `Codable` snapshot + journal + resolver, engine only | ✅ landed |
+| 1 | Snapshot export + read-only browsing on the phone | 📋 next |
+| 2 | Crate intents (create, add, remove, reorder) | 📋 |
+| 3 | Queued tag edits with three-way merge | 📋 |
+
+Stage 0 shipped `Sources/EZLibraryCore/Sync/` — `LibrarySnapshot`, `LibrarySnapshotBuilder`,
+`LibraryFingerprint`, `LibraryChangeJournal`, `TrackIdentityResolver` — plus journaling wired
+into `LibraryConsolidationService`, covered by 45 tests.
+
+Still open for Stage 1: adding `.iOS` to `Package.swift` with `#if os(macOS)` guards around
+the one AppKit file and the six `Process()` shell-outs (work shared with the Windows goal),
+and the export UI.
 
 ## Key open risks per feature (decide when that phase starts, not now)
 

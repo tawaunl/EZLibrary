@@ -28,7 +28,19 @@ public enum SeratoProcessGuard {
     /// pattern already used by `SeratoBackupBeforeWrite`.
     public nonisolated(unsafe) static var isRunningOverride: Bool?
 
+    /// Task-scoped answer, checked ahead of `isRunningOverride`.
+    ///
+    /// `isRunningOverride` is one value for the whole process, so a parallel
+    /// test that set it to `true` to exercise the refusal made unrelated
+    /// tests' writes fail at random. A task-local is visible only to the test
+    /// that binds it and the work that test starts, so suites running side by
+    /// side can no longer see each other's answer.
+    @TaskLocal public static var isRunningForCurrentTask: Bool?
+
     public static var isSeratoRunning: Bool {
+        if let taskOverride = isRunningForCurrentTask {
+            return taskOverride
+        }
         if let override = isRunningOverride {
             return override
         }

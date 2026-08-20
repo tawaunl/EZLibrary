@@ -31,13 +31,12 @@ import Testing
         let file = directory.appendingPathComponent("Song.mp3")
         try Data("a".utf8).write(to: file)
 
-        SeratoProcessGuard.isRunningOverride = true
-        defer { TestSeratoEnvironment.pretendSeratoIsClosed() }
-
-        await #expect(throws: LibraryFolderSyncService.SyncError.self) {
-            try await LibraryFolderSyncService.syncAudioFiles(
-                [file], databaseFileURL: database, rootDirectory: directory
-            )
+        await TestSeratoEnvironment.withSeratoRunning {
+            await #expect(throws: LibraryFolderSyncService.SyncError.self) {
+                try await LibraryFolderSyncService.syncAudioFiles(
+                    [file], databaseFileURL: database, rootDirectory: directory
+                )
+            }
         }
     }
 
@@ -56,13 +55,12 @@ import Testing
             missingFiles: [], untaggedFiles: [], unchangedCount: 0
         )
 
-        SeratoProcessGuard.isRunningOverride = true
-        defer { TestSeratoEnvironment.pretendSeratoIsClosed() }
-
-        #expect(throws: LibraryTagRefreshService.RefreshError.self) {
-            try LibraryTagRefreshService.apply(
-                plan, databaseFileURL: URL(fileURLWithPath: "/tmp/database V2")
-            )
+        TestSeratoEnvironment.withSeratoRunning {
+            #expect(throws: LibraryTagRefreshService.RefreshError.self) {
+                try LibraryTagRefreshService.apply(
+                    plan, databaseFileURL: URL(fileURLWithPath: "/tmp/database V2")
+                )
+            }
         }
     }
 
@@ -77,16 +75,15 @@ import Testing
         let file = directory.appendingPathComponent("Song.mp3")
         try Data("a".utf8).write(to: file)
 
-        SeratoProcessGuard.isRunningOverride = true
-        defer { TestSeratoEnvironment.pretendSeratoIsClosed() }
-
-        #expect(throws: AddMusicImportService.ImportError.self) {
-            _ = try AddMusicImportService.createNamedCrate(
-                forAudioFiles: [file],
-                crateName: "Test",
-                subcratesDirectory: directory,
-                rootDirectory: directory
-            )
+        TestSeratoEnvironment.withSeratoRunning {
+            #expect(throws: AddMusicImportService.ImportError.self) {
+                _ = try AddMusicImportService.createNamedCrate(
+                    forAudioFiles: [file],
+                    crateName: "Test",
+                    subcratesDirectory: directory,
+                    rootDirectory: directory
+                )
+            }
         }
     }
 
