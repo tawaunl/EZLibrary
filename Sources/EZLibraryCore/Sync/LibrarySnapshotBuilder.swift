@@ -9,18 +9,18 @@
 // General Public License (LICENSE) for more details.
 
 import Foundation
+import EZLibrarySnapshotKit
 
-/// Builds, encodes, and reads `LibrarySnapshot` files.
-///
-/// A snapshot is disposable: a newer one supersedes it, and losing one costs
-/// an export, never data. That is what keeps this side of the system simple —
-/// there is no long-lived remote database to keep consistent.
-public enum LibrarySnapshotBuilder {
+// The Mac-side half of snapshot handling: producing one from a parsed library,
+// and writing it through the same atomic-write machinery every other library
+// write uses. Encoding, decoding, naming, and reading live in
+// `EZLibrarySnapshotKit` so a phone can do them without any of this.
+extension LibrarySnapshotBuilder {
     /// Captures the parsed library as a portable snapshot.
     ///
-    /// Smart crates are included so a remote device can display them, but they
-    /// are read-only there: their contents are a Serato query result, not a
-    /// stored membership list.
+    /// Smart crates can be included so a remote device can display them, but
+    /// they are read-only there: their contents are a Serato query result, not
+    /// a stored membership list.
     public static func makeSnapshot(
         tracks: [Track],
         crates: [Crate],
@@ -39,54 +39,7 @@ public enum LibrarySnapshotBuilder {
         )
     }
 
-    // MARK: - Coding
-
-    /// Snapshots travel between devices and OS versions, so dates are ISO 8601
-    /// rather than the default seconds-since-reference-date.
-    private static func makeEncoder() -> JSONEncoder {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.sortedKeys]
-        return encoder
-    }
-
-    private static func makeDecoder() -> JSONDecoder {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return decoder
-    }
-
-    public static func encode(_ snapshot: LibrarySnapshot) throws -> Data {
-        try makeEncoder().encode(snapshot)
-    }
-
-    /// Decodes a snapshot, refusing one written by a newer version of
-    /// EZLibrary rather than silently dropping the fields it cannot see.
-    public static func decode(_ data: Data) throws -> LibrarySnapshot {
-        let snapshot: LibrarySnapshot
-        do {
-            snapshot = try makeDecoder().decode(LibrarySnapshot.self, from: data)
-        } catch {
-            throw SnapshotError.unreadable
-        }
-        guard snapshot.schemaVersion <= LibrarySnapshot.currentSchemaVersion else {
-            throw SnapshotError.newerSchema(found: snapshot.schemaVersion)
-        }
-        return snapshot
-    }
-
-    // MARK: - Files
-
-    /// `snapshot-<fingerprint>.json`.
-    ///
-    /// The fingerprint in the name means a device can tell one snapshot from
-    /// another without opening it, and — because only this Mac ever writes
-    /// files with this prefix — a shared folder never has two writers for the
-    /// same file, so iCloud has no cause to create conflict copies.
-    public static func fileName(for snapshot: LibrarySnapshot) -> String {
-        "snapshot-\(snapshot.libraryFingerprint).json"
-    }
-
+    @discardableResult
     public static func write(
         _ snapshot: LibrarySnapshot,
         toDirectory directory: URL,
@@ -96,40 +49,5 @@ public enum LibrarySnapshotBuilder {
         let url = directory.appendingPathComponent(fileName(for: snapshot))
         try AtomicFileWriter.write(try encode(snapshot), to: url)
         return url
-    }
-
-    public static func read(contentsOf url: URL) throws -> LibrarySnapshot {
-        guard let data = try? Data(contentsOf: url) else {
-            throw SnapshotError.missingFile(url.lastPathComponent)
-        }
-        return try decode(data)
-    }
-
-    public enum SnapshotError: Error, LocalizedError, Equatable {
-        case missingFile(String)
-        case unreadable
-        case newerSchema(found: Int)
-
-        public var errorDescription: String? {
-            switch self {
-            case let .missingFile(name):
-                return "Couldn't find the library snapshot \"\(name)\"."
-            case .unreadable:
-                return "That library snapshot is damaged and couldn't be read."
-            case let .newerSchema(found):
-                return "That snapshot was made by a newer version of EZLibrary (format \(found))."
-            }
-        }
-
-        public var recoverySuggestion: String? {
-            switch self {
-            case .missingFile:
-                return "Export a new snapshot from EZLibrary on your Mac."
-            case .unreadable:
-                return "Export a new snapshot from EZLibrary on your Mac to replace it."
-            case .newerSchema:
-                return "Update EZLibrary on this device, then open the snapshot again."
-            }
-        }
     }
 }

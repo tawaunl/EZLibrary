@@ -18,7 +18,7 @@ public struct LibraryChangeEntry: Codable, Sendable, Hashable, Identifiable {
 
     public init(id: UUID = UUID(), recordedAt: Date = Date(), change: LibraryChange) {
         self.id = id
-        self.recordedAt = recordedAt.truncatedToSeconds
+        self.recordedAt = recordedAt.truncatedToWholeSeconds
         self.change = change
     }
 }

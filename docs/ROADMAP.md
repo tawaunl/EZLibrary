@@ -131,7 +131,8 @@ unreconcilable. Journal entries are kept for `LibraryChangeJournal.defaultRetent
 |---|---|---|
 | 0 | `Codable` snapshot + journal + resolver, engine only | ✅ landed |
 | 1a | Snapshot export from the Mac ("Offline Sync" tab) | ✅ landed |
-| 1b | Read-only browsing on the phone (needs an iOS app target) | 📋 next |
+| 1b | Portable snapshot target that builds for iOS | ✅ landed |
+| 1c | Read-only browsing on the phone (needs an iOS app in Xcode) | 📋 next |
 | 2 | Crate intents (create, add, remove, reorder) | 📋 |
 | 3 | Queued tag edits with three-way merge | 📋 |
 
@@ -144,30 +145,29 @@ folder (defaulting to iCloud Drive), skips the write when the fingerprint is unc
 keeps the most recent few snapshots so a device that has been offline can still find the one
 its pending work was based on.
 
-**Stage 1b is blocked on iOS portability, which is larger than first estimated.** Building
-`EZLibraryCore` against the iOS SDK surfaces two distinct problems across 12 files:
+Stage 1b split the snapshot format into its own target, **`EZLibrarySnapshotKit`**, which is
+pure Foundation and knows nothing about Serato's binary format or where a library lives on
+disk. It holds `LibrarySnapshot`, `SnapshotTrack`, `SnapshotCrate`, `TrackField`, and snapshot
+encoding/decoding/reading. `EZLibraryCore` depends on it and `@_exported`s it, so no app or
+test code needed to change.
 
-- `Process` is unavailable on iOS — 6 service files shell out to Homebrew, fpcalc, yt-dlp and
-  ffmpeg. Those features are macOS-only by nature, but 4 other Core files depend on
-  `AudioFingerprintService` alone, so guarding them cascades.
-- `FileManager.homeDirectoryForCurrentUser` is unavailable on iOS — used by
-  `SeratoLibraryLocator`, `SeratoLocationDatabase`, `LibraryConsolidationService`,
-  `SeratoLocationRepairService`, and `FileSystemScanner`. All are Mac-side concerns: a phone
-  reads a snapshot and never locates a Serato library at all.
+The split turned out far cheaper than first estimated. The initial guess assumed a phone would
+need `Track`, `Crate`, and the crate-tree and search helpers — about 37 files. It needs none of
+them: a phone reads *snapshots*, whose types reference `Track`/`Crate` in exactly two places,
+both being export-side conversions that only run on the Mac. Those moved to
+`Sync/SnapshotConversions.swift` as extensions. The journal and `TrackIdentityResolver` also
+stay in Core, because reconciling is the Mac's job — the phone only emits intent.
 
-Two ways forward:
+Portability is enforced rather than assumed: CI cross-compiles `EZLibrarySnapshotKit` against
+the iOS simulator SDK on every change. Both `arm64-apple-ios17.0-simulator` and
+`arm64-apple-ios17.0` were verified locally. `.iOS(.v17)` is now declared in `Package.swift`;
+`EZLibraryCore`, the app, and the CLI remain macOS-only.
 
-1. **`#if os(macOS)` guards** — ~16 files, one target. Cheaper now, but conditional
-   compilation only ever gets built in one configuration on CI, so the iOS path rots quietly.
-2. **Split a portable `EZLibraryShared` target** — Models, `Sync/`, `AtomicFileWriter`,
-   `CrateHierarchy`, `TrackTextSearch`; all verified pure-Foundation. Costs a one-line
-   `import` in ~37 Core files, but portability becomes structural and compiler-enforced, and
-   the iOS app depends on a small pure module instead of a large one full of dead branches.
-   `LibraryFingerprint` stays in Core, since it needs the library layout.
-
-Only `SeratoProcessGuard` is guarded so far (`#if os(macOS)`, returning `false` elsewhere —
-Serato is a desktop app, so nothing on a phone can be holding the library open). `.iOS` is
-deliberately *not* declared in `Package.swift` until Core actually compiles for it.
+This was chosen over `#if os(macOS)` guards (~16 files) specifically because conditional code
+that CI never builds for the other platform rots silently — and guarding
+`AudioFingerprintService` alone would have cascaded through its four dependents. The one guard
+that remains is `SeratoProcessGuard`, which returns `false` off macOS: Serato is a desktop app,
+so nothing on a phone can be holding the library open.
 
 ## Key open risks per feature (decide when that phase starts, not now)
 
