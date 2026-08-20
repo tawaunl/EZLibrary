@@ -1,17 +1,14 @@
-//
-//  PocketCratesApp.swift
-//  PocketCrates
-//
-//  Created by Tawaun Lucas on 8/19/26.
-//
-
 import SwiftUI
 
 @main
 struct PocketCratesApp: App {
+    @State private var store = SnapshotStore()
+
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            RootView()
+                .environment(store)
+                .task { store.restore() }
         }
     }
 }

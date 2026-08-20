@@ -133,7 +133,8 @@ unreconcilable. Journal entries are kept for `LibraryChangeJournal.defaultRetent
 | 1a | Snapshot export from the Mac ("Offline Sync" tab) | ✅ landed |
 | 1b | Portable snapshot target that builds for iOS | ✅ landed |
 | 1c | Shared crate-tree + search over snapshot types | ✅ landed |
-| 1d | The iOS app itself (Xcode project under `Mobile/`) | 📋 next |
+| 1d | iOS app sources (`Mobile/EZLibraryMobile/`) | ✅ landed |
+| 1e | Xcode project wrapper so the app can run | 📋 next |
 | 2 | Crate intents (create, add, remove, reorder) | 📋 |
 | 3 | Queued tag edits with three-way merge | 📋 |
 
@@ -245,24 +246,43 @@ so nothing on a phone can be holding the library open.
 The original MVP is done. Rationale it proved out: it kept risk to reversible metadata changes (crate delete → Trash, path rewrite only — no audio files touched), delivered something every Serato user immediately wants, and needed zero external APIs or Xcode/extension work — buildable entirely with `swift build`.
 
 
-### Building the iOS app
+### The iOS app
 
-The app lives in the same repository, not a separate one: `LibrarySnapshot.currentSchemaVersion`
-is shared state between the Mac and the phone, so a schema change should be one commit that CI
-checks on both sides.
+Lives in this repository, not a separate one: `LibrarySnapshot.currentSchemaVersion` is shared
+state between the Mac and the phone, so a schema change is one commit CI checks on both sides.
 
-1. New Xcode project → iOS → App (SwiftUI), saved under `Mobile/`, signed with team `HMVH3CU559`.
-2. File → Add Package Dependencies → Add Local, pointing at the repository root.
-3. **Link `EZLibrarySnapshotKit` only.** Xcode also offers `EZLibraryCore`, which does not build
-   for iOS by design.
-4. **Add no entitlements.** The app reads a folder the user picks, so there is no iCloud
+**Sources are written** — `Mobile/EZLibraryMobile/`, about 560 lines:
+
+| File | Role |
+|---|---|
+| `EZLibraryMobileApp.swift` | Entry point; restores the saved folder on launch |
+| `SnapshotFolderBookmark.swift` | Security-scoped bookmark so the folder grant survives relaunch |
+| `SnapshotStore.swift` | `@Observable` state machine: needs folder / loading / loaded / failed |
+| `RootView.swift` | Folder picker, welcome, and failure states |
+| `LibraryBrowser.swift` | Crate tree with nesting, All Tracks, Not in Crates |
+| `TrackListView.swift` | Scoped list with search |
+| `TrackDetailView.swift` | Track fields, and says plainly that it is read-only |
+
+Almost all the logic sits in `EZLibrarySnapshotKit` instead of the views — `SnapshotLibrary`
+(crate tree, path index, prebuilt search blobs) and `SnapshotFolder` (finds and loads the
+newest snapshot). That keeps it unit-tested by `swift test` and compiled for iOS by CI, rather
+than trapped in an Xcode project nothing else can check.
+
+CI type-checks the app sources against the iOS build of the kit, which catches the breakage
+that actually happens: the kit's API moving under them.
+
+**Remaining (Stage 1e), and it needs Xcode:**
+
+1. New project → iOS → App (SwiftUI), saved under `Mobile/`, team `HMVH3CU559`. Delete the
+   template's generated `ContentView.swift` and `…App.swift`.
+2. Drag `Mobile/EZLibraryMobile/` into the project — "Create groups", *not* "Copy items",
+   since the files are already in place.
+3. File → Add Package Dependencies → Add Local, pointing at the repository root.
+4. **Link `EZLibrarySnapshotKit` only.** Xcode also offers `EZLibraryCore`, which does not
+   build for iOS by design.
+5. **Add no entitlements.** The app reads a folder the user picks, so there is no iCloud
    container, no provisioning profile, and none of the launch-blocking expiry risk that ruled
    CloudKit out.
 
-Getting at the snapshot: `.fileImporter` (or `UIDocumentPickerViewController`) onto the
-`EZLibrary` folder once, then persist a security-scoped bookmark so it reopens without
-re-prompting, wrapping reads in `startAccessingSecurityScopedResource()`. Pick the newest
-`snapshot-*.json` and hand it to `LibrarySnapshotBuilder.decode`.
-
-Note that `.gitignore` previously listed `*.xcodeproj`, which would have silently excluded the
-whole project bundle; it now ignores `xcuserdata/` and friends instead.
+Note `.gitignore` previously listed `*.xcodeproj`, which would have silently excluded the whole
+project bundle; it now ignores `xcuserdata/` and friends instead.

@@ -56,6 +56,19 @@ jobs:
             --sdk "$(xcrun --sdk iphonesimulator --show-sdk-path)" \
             --triple arm64-apple-ios17.0-simulator
 
+      # The iOS app's sources live outside the SwiftPM graph — they need an
+      # Xcode project to link and run. They can still be type-checked against
+      # the iOS build of the kit, which catches the breakage that actually
+      # happens: the kit's API moving under them. Depends on the step above
+      # having produced the module for this triple.
+      - name: Type-check iOS app sources
+        run: |
+          xcrun --sdk iphonesimulator swiftc \
+            -target arm64-apple-ios17.0-simulator \
+            -typecheck \
+            -I .build/arm64-apple-ios-simulator/debug/Modules \
+            Mobile/EZLibraryMobile/*.swift
+
   lint:
     name: SwiftLint
     runs-on: macos-15
