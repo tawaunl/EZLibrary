@@ -1,6 +1,11 @@
+# Build from the netlify/ folder only. The repository root holds the macOS
+# app's Package.swift; if Netlify's base directory saw that, it would try (and
+# fail) to install and `swift build` a Swift toolchain. The website itself is
+# served from GitHub Pages — Netlify only needs to host the functions.
 [build]
-  publish = "site"
-  functions = "netlify/functions"
+  base = "netlify"
+  publish = "public"
+  functions = "functions"
 
 [functions]
   node_bundler = "esbuild"

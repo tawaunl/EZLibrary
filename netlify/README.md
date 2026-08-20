@@ -34,8 +34,15 @@ adds the `roadmap` label manually.
 
 ### 3. Deploy to Netlify
 
-Create a Netlify site from this repo (it picks up `netlify.toml`). Set these
-environment variables under **Site settings → Environment variables**:
+Create a Netlify site from this repo. `netlify.toml` pins the **base directory**
+to `netlify/`, which keeps Netlify away from the repo root's `Package.swift` (the
+macOS app) — otherwise Netlify tries to install and `swift build` a toolchain and
+the deploy fails. Only the functions are deployed; the website is served from
+GitHub Pages. If you configured the site in the UI before this change, confirm
+the base directory shows `netlify` and clear the build cache on the next deploy.
+
+Set these environment variables under **Site settings → Environment variables**:
+
 
 | Variable               | Value                                             |
 | ---------------------- | ------------------------------------------------- |
@@ -63,11 +70,16 @@ Commit and push. That's it — the board now votes and posts in place.
 
 ## Local testing
 
+Because the base directory is `netlify/`, run the functions on their own and
+serve the site separately:
+
 ```bash
 npm install -g netlify-cli
-netlify dev
+netlify functions:serve --functions netlify/functions   # http://localhost:9999
+python3 -m http.server 8000 --directory site            # http://localhost:8000
 ```
 
-`netlify dev` serves `site/` and the functions together on one origin, so set
-`data-functions-base="/.netlify/functions"` (and add `http://localhost:8888` to
-`ALLOWED_ORIGIN`) while testing locally.
+Point the board at the local functions and allow the local origin while testing:
+set `data-functions-base="http://localhost:9999/.netlify/functions"` and add
+`http://localhost:8000` to `ALLOWED_ORIGIN`.
+
