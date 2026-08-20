@@ -27,6 +27,7 @@ enum SidebarSection: Hashable {
     case missingTracks
     case backup
     case libraryConsolidation
+    case offlineSync
 }
 
 struct ContentView: View {
@@ -395,6 +396,7 @@ struct ContentView: View {
             Label("Missing Tracks", systemImage: "exclamationmark.triangle").tag(SidebarSection.missingTracks)
             Label("Backup", systemImage: "externaldrive.badge.plus").tag(SidebarSection.backup)
             Label("Library Consolidation", systemImage: "arrow.triangle.merge").tag(SidebarSection.libraryConsolidation)
+            Label("Offline Sync", systemImage: "iphone.and.arrow.forward").tag(SidebarSection.offlineSync)
         }
         .frame(minWidth: sidebarWidth, idealWidth: sidebarWidth, maxWidth: sidebarWidth)
     }
@@ -488,6 +490,8 @@ struct ContentView: View {
             LibraryBackupView()
         case .libraryConsolidation:
             LibraryConsolidationView(onLibraryChanged: reloadLibrary)
+        case .offlineSync:
+            OfflineSyncView()
         case .crates:
             VStack(alignment: .leading, spacing: 12) {
                 SectionHeaderCard(
