@@ -132,7 +132,8 @@ unreconcilable. Journal entries are kept for `LibraryChangeJournal.defaultRetent
 | 0 | `Codable` snapshot + journal + resolver, engine only | ✅ landed |
 | 1a | Snapshot export from the Mac ("Offline Sync" tab) | ✅ landed |
 | 1b | Portable snapshot target that builds for iOS | ✅ landed |
-| 1c | Read-only browsing on the phone (needs an iOS app in Xcode) | 📋 next |
+| 1c | Shared crate-tree + search over snapshot types | ✅ landed |
+| 1d | The iOS app itself (Xcode project under `Mobile/`) | 📋 next |
 | 2 | Crate intents (create, add, remove, reorder) | 📋 |
 | 3 | Queued tag edits with three-way merge | 📋 |
 
@@ -162,6 +163,14 @@ Portability is enforced rather than assumed: CI cross-compiles `EZLibrarySnapsho
 the iOS simulator SDK on every change. Both `arm64-apple-ios17.0-simulator` and
 `arm64-apple-ios17.0` were verified locally. `.iOS(.v17)` is now declared in `Package.swift`;
 `EZLibraryCore`, the app, and the CLI remain macOS-only.
+
+Stage 1c added the two things a browsing screen needs, both in the kit so the Mac and the
+phone behave identically rather than drifting: `SnapshotCrateTree` (mirrors `CrateHierarchy`,
+including synthesized parent folders and sibling ordering) and `SnapshotTrackSearch`. The byte
+matcher underneath moved to `ByteTextSearch` in the kit, and `TrackTextSearch` on the Mac now
+delegates to it — one implementation, not two. Tests assert the two sides agree on the same
+input, so a divergence fails the build rather than surfacing as "search finds different things
+on my phone".
 
 This was chosen over `#if os(macOS)` guards (~16 files) specifically because conditional code
 that CI never builds for the other platform rots silently — and guarding
@@ -235,3 +244,25 @@ so nothing on a phone can be holding the library open.
 
 The original MVP is done. Rationale it proved out: it kept risk to reversible metadata changes (crate delete → Trash, path rewrite only — no audio files touched), delivered something every Serato user immediately wants, and needed zero external APIs or Xcode/extension work — buildable entirely with `swift build`.
 
+
+### Building the iOS app
+
+The app lives in the same repository, not a separate one: `LibrarySnapshot.currentSchemaVersion`
+is shared state between the Mac and the phone, so a schema change should be one commit that CI
+checks on both sides.
+
+1. New Xcode project → iOS → App (SwiftUI), saved under `Mobile/`, signed with team `HMVH3CU559`.
+2. File → Add Package Dependencies → Add Local, pointing at the repository root.
+3. **Link `EZLibrarySnapshotKit` only.** Xcode also offers `EZLibraryCore`, which does not build
+   for iOS by design.
+4. **Add no entitlements.** The app reads a folder the user picks, so there is no iCloud
+   container, no provisioning profile, and none of the launch-blocking expiry risk that ruled
+   CloudKit out.
+
+Getting at the snapshot: `.fileImporter` (or `UIDocumentPickerViewController`) onto the
+`EZLibrary` folder once, then persist a security-scoped bookmark so it reopens without
+re-prompting, wrapping reads in `startAccessingSecurityScopedResource()`. Pick the newest
+`snapshot-*.json` and hand it to `LibrarySnapshotBuilder.decode`.
+
+Note that `.gitignore` previously listed `*.xcodeproj`, which would have silently excluded the
+whole project bundle; it now ignores `xcuserdata/` and friends instead.
