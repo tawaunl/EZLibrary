@@ -7,9 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		38E18D873036C8240041B2E8 /* EZLibraryCore in Frameworks */ = {isa = PBXBuildFile; productRef = 38E18D863036C8240041B2E8 /* EZLibraryCore */; };
-		38E18D893036C8240041B2E8 /* EZLibrarySnapshotKit in Frameworks */ = {isa = PBXBuildFile; productRef = 38E18D883036C8240041B2E8 /* EZLibrarySnapshotKit */; };
-		38E18D8C3036C86A0041B2E8 /* EZLibrarySnapshotKit in Frameworks */ = {isa = PBXBuildFile; productRef = 38E18D8B3036C86A0041B2E8 /* EZLibrarySnapshotKit */; };
+		38E18D9B3036CEC60041B2E8 /* EZLibrarySnapshotKit in Frameworks */ = {isa = PBXBuildFile; productRef = 38E18D9A3036CEC60041B2E8 /* EZLibrarySnapshotKit */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -29,9 +27,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				38E18D893036C8240041B2E8 /* EZLibrarySnapshotKit in Frameworks */,
-				38E18D873036C8240041B2E8 /* EZLibraryCore in Frameworks */,
-				38E18D8C3036C86A0041B2E8 /* EZLibrarySnapshotKit in Frameworks */,
+				38E18D9B3036CEC60041B2E8 /* EZLibrarySnapshotKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -74,9 +70,7 @@
 			);
 			name = PocketCrates;
 			packageProductDependencies = (
-				38E18D863036C8240041B2E8 /* EZLibraryCore */,
-				38E18D883036C8240041B2E8 /* EZLibrarySnapshotKit */,
-				38E18D8B3036C86A0041B2E8 /* EZLibrarySnapshotKit */,
+				38E18D9A3036CEC60041B2E8 /* EZLibrarySnapshotKit */,
 			);
 			productName = PocketCrates;
 			productReference = 38E18D773036C7F20041B2E8 /* PocketCrates.app */;
@@ -107,7 +101,7 @@
 			mainGroup = 38E18D6E3036C7F20041B2E8;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				38E18D8A3036C86A0041B2E8 /* XCLocalSwiftPackageReference "../../../SeratoTools" */,
+				38E18D993036CEC60041B2E8 /* XCLocalSwiftPackageReference "../../../SeratoTools" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 38E18D783036C7F20041B2E8 /* Products */;
@@ -349,22 +343,14 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		38E18D8A3036C86A0041B2E8 /* XCLocalSwiftPackageReference "../../../SeratoTools" */ = {
+		38E18D993036CEC60041B2E8 /* XCLocalSwiftPackageReference "../../../SeratoTools" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../../../SeratoTools;
 		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		38E18D863036C8240041B2E8 /* EZLibraryCore */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = EZLibraryCore;
-		};
-		38E18D883036C8240041B2E8 /* EZLibrarySnapshotKit */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = EZLibrarySnapshotKit;
-		};
-		38E18D8B3036C86A0041B2E8 /* EZLibrarySnapshotKit */ = {
+		38E18D9A3036CEC60041B2E8 /* EZLibrarySnapshotKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = EZLibrarySnapshotKit;
 		};

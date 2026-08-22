@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 import EZLibrarySnapshotKit
 
 struct RootView: View {
@@ -34,6 +35,7 @@ struct RootView: View {
 
 private struct WelcomeView: View {
     let chooseFolder: () -> Void
+    @Environment(SnapshotStore.self) private var store
 
     var body: some View {
         VStack(spacing: 20) {
@@ -61,6 +63,12 @@ private struct WelcomeView: View {
             Button("Choose Folder", action: chooseFolder)
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
+
+#if DEBUG
+            Button("Load Sample Library") { store.loadPreview() }
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+#endif
         }
         .padding()
     }

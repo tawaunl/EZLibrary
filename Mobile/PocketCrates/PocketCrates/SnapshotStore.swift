@@ -60,6 +60,12 @@ final class SnapshotStore {
         state = .needsFolder
     }
 
+#if DEBUG
+    func loadPreview() {
+        state = .loaded(.preview)
+    }
+#endif
+
     private func load(from url: URL) {
         state = .loading
         do {
