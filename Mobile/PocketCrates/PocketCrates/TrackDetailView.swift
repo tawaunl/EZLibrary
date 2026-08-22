@@ -8,7 +8,7 @@ struct TrackDetailView: View {
         List {
             Section {
                 ForEach(TrackField.allCases, id: \.self) { field in
-                    if let value = track.value(for: field) {
+                    if let value = displayValue(for: field) {
                         LabeledContent(field.displayName, value: value)
                     }
                 }
@@ -48,8 +48,16 @@ struct TrackDetailView: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .navigationTitle(track.title.isEmpty ? "Track" : track.title)
+        .navigationTitle(track.displayTitle)
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    /// Returns the display value for a field, converting key to Camelot.
+    private func displayValue(for field: TrackField) -> String? {
+        if field == .key, let raw = track.key, !raw.isEmpty {
+            return KeyFormatter.camelot(from: raw)
+        }
+        return track.value(for: field)
     }
 
     private func formatted(_ duration: TimeInterval) -> String {
