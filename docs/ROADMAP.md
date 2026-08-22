@@ -133,10 +133,20 @@ unreconcilable. Journal entries are kept for `LibraryChangeJournal.defaultRetent
 | 1a | Snapshot export from the Mac ("Offline Sync" tab) | ✅ landed |
 | 1b | Portable snapshot target that builds for iOS | ✅ landed |
 | 1c | Shared crate-tree + search over snapshot types | ✅ landed |
-| 1d | iOS app sources (`Mobile/EZLibraryMobile/`) | ✅ landed |
-| 1e | Xcode project wrapper so the app can run | 📋 next |
-| 2 | Crate intents (create, add, remove, reorder) | 📋 |
-| 3 | Queued tag edits with three-way merge | 📋 |
+| 1d | iOS app (unified as **PocketCrates**, browse + edit) | ✅ landed |
+| 1e | Xcode project wrapper so the app can run | ✅ landed (`Mobile/PocketCrates/`) |
+| 2 | Crate intents (create, rename, delete) | ✅ landed |
+| 3 | Queued tag edits + Mac-side reconcile/apply | ✅ landed |
+
+Stages 2–3 shipped the **two-way loop**. The phone composes granular `SnapshotIntent`s
+(shared type in `EZLibrarySnapshotKit`) and writes them to its own `queue-<deviceID>.json`
+outbox in the sync folder. The Mac's "Offline Sync" tab discovers those queues
+(`SnapshotIntentIngestService`), resolves each intent against the current library via
+`TrackIdentityResolver` + the change journal (`SnapshotIntentReconciler` — classifying every
+change as applicable / conflict / unresolved / redundant), previews them for the user, and
+applies the accepted ones through the same guarded, backed-up write path as a desktop edit
+(`SnapshotIntentApplier`), then deletes the consumed queue. A phone never re-exports a whole
+library, so Mac-side edits are never clobbered.
 
 Stage 0 shipped `Sources/EZLibraryCore/Sync/` — `LibrarySnapshot`, `LibrarySnapshotBuilder`,
 `LibraryFingerprint`, `LibraryChangeJournal`, `TrackIdentityResolver` — plus journaling wired
@@ -251,38 +261,28 @@ The original MVP is done. Rationale it proved out: it kept risk to reversible me
 Lives in this repository, not a separate one: `LibrarySnapshot.currentSchemaVersion` is shared
 state between the Mac and the phone, so a schema change is one commit CI checks on both sides.
 
-**Sources are written** — `Mobile/EZLibraryMobile/`, about 560 lines:
+**Shipped as `Mobile/PocketCrates/`** (an Xcode project, deployment target iOS 26.5). It
+browses the snapshot *and* edits it — track tags and crate create/rename/delete — queuing each
+change as a `SnapshotIntent` and sending them to the Mac via its `queue-<deviceID>.json`
+outbox. The earlier read-only `Mobile/EZLibraryMobile/` sources were retired; PocketCrates is a
+superset, so nothing was lost.
 
 | File | Role |
 |---|---|
-| `EZLibraryMobileApp.swift` | Entry point; restores the saved folder on launch |
+| `PocketCratesApp.swift` | Entry point; restores the saved folder on launch |
 | `SnapshotFolderBookmark.swift` | Security-scoped bookmark so the folder grant survives relaunch |
-| `SnapshotStore.swift` | `@Observable` state machine: needs folder / loading / loaded / failed |
+| `SnapshotStore.swift` | `@Observable` state machine + pending-intent outbox (`sendToMac()`) |
 | `RootView.swift` | Folder picker, welcome, and failure states |
-| `LibraryBrowser.swift` | Crate tree with nesting, All Tracks, Not in Crates |
+| `LibraryBrowser.swift` | Crate tree with create/rename/delete + pending-changes badge |
 | `TrackListView.swift` | Scoped list with search |
-| `TrackDetailView.swift` | Track fields, and says plainly that it is read-only |
+| `TrackDetailView.swift` | Track fields with inline editing that queues intents |
+| `PendingIntentsView.swift` | Review/remove queued changes and send them to the Mac |
 
 Almost all the logic sits in `EZLibrarySnapshotKit` instead of the views — `SnapshotLibrary`
-(crate tree, path index, prebuilt search blobs) and `SnapshotFolder` (finds and loads the
-newest snapshot). That keeps it unit-tested by `swift test` and compiled for iOS by CI, rather
-than trapped in an Xcode project nothing else can check.
+(crate tree, path index, prebuilt search blobs), `SnapshotFolder` (finds and loads the newest
+snapshot), and the intent model (`SnapshotIntent`, `SnapshotIntentQueue`, `LibrarySnapshot.applying`).
+That keeps it unit-tested by `swift test` and compiled for iOS by CI, rather than trapped in an
+Xcode project nothing else can check.
 
 CI type-checks the app sources against the iOS build of the kit, which catches the breakage
 that actually happens: the kit's API moving under them.
-
-**Remaining (Stage 1e), and it needs Xcode:**
-
-1. New project → iOS → App (SwiftUI), saved under `Mobile/`, team `HMVH3CU559`. Delete the
-   template's generated `ContentView.swift` and `…App.swift`.
-2. Drag `Mobile/EZLibraryMobile/` into the project — "Create groups", *not* "Copy items",
-   since the files are already in place.
-3. File → Add Package Dependencies → Add Local, pointing at the repository root.
-4. **Link `EZLibrarySnapshotKit` only.** Xcode also offers `EZLibraryCore`, which does not
-   build for iOS by design.
-5. **Add no entitlements.** The app reads a folder the user picks, so there is no iCloud
-   container, no provisioning profile, and none of the launch-blocking expiry risk that ruled
-   CloudKit out.
-
-Note `.gitignore` previously listed `*.xcodeproj`, which would have silently excluded the whole
-project bundle; it now ignores `xcuserdata/` and friends instead.

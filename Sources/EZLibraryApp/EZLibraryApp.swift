@@ -61,6 +61,7 @@ struct EZLibraryApp: App {
     @StateObject private var updateChecker = UpdateCheckViewModel()
     @StateObject private var dependencyReadiness = DependencyReadinessModel()
     @StateObject private var seratoRunning = SeratoRunningModel()
+    @StateObject private var offlineSyncInbox = OfflineSyncInboxModel()
     @ObservedObject private var themeController = ThemeController.shared
 
     init() {
@@ -96,6 +97,7 @@ struct EZLibraryApp: App {
                 .environmentObject(missingTracksService)
                 .environmentObject(dependencyReadiness)
                 .environmentObject(seratoRunning)
+                .environmentObject(offlineSyncInbox)
                 .sheet(isPresented: $updateChecker.isPresented) {
                     UpdateCheckView(viewModel: updateChecker)
                         .textSelection(.enabled)
@@ -128,6 +130,14 @@ struct EZLibraryApp: App {
                         _ = YouTubeAudioImportService.refreshManagedYTDLPIfDue()
                         _ = HomebrewMaintenanceService.refreshIfDue()
                     }
+                }
+                .task {
+                    // Check the sync folder for edits queued by phones/tablets
+                    // right away on launch — before the other deferred launch
+                    // work — so the sidebar badge is populated immediately. The
+                    // scan only reads small queue files, so it's cheap enough
+                    // to run first.
+                    offlineSyncInbox.start()
                 }
         }
         .commands {

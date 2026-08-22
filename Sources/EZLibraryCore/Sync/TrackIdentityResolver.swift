@@ -10,27 +10,9 @@
 
 import Foundation
 
-/// How a remote device names a track it wants changed.
-///
-/// Carries the identifying values the snapshot recorded, not the edited ones,
-/// so a queued title change does not chase its own tail when it is resolved.
-public struct TrackReference: Codable, Sendable, Hashable {
-    public let storedPath: String
-    public let title: String
-    public let artist: String
-
-    public init(storedPath: String, title: String, artist: String) {
-        self.storedPath = storedPath
-        self.title = title
-        self.artist = artist
-    }
-
-    public init(snapshotTrack: SnapshotTrack) {
-        self.storedPath = snapshotTrack.storedPath
-        self.title = snapshotTrack.title
-        self.artist = snapshotTrack.artist
-    }
-}
+// `TrackReference` now lives in `EZLibrarySnapshotKit` so a phone can compose
+// intents against it; it reaches this file through the module's re-export of
+// the snapshot kit.
 
 /// Matches a track named in an older snapshot against the library as it
 /// stands now.

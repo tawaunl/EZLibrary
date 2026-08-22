@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import UIKit
 import EZLibrarySnapshotKit
 
 @Observable
@@ -13,10 +14,11 @@ final class SnapshotStore {
 
     private(set) var state: State = .needsFolder
     private(set) var folderURL: URL?
-    private(set) var pendingIntents: [PendingIntent] = []
+    private(set) var pendingIntents: [SnapshotIntent] = []
 
     private var baseSnapshot: LibrarySnapshot?
     private static let intentsFilename = "intents-pending.json"
+    private static let deviceIDDefaultsKey = "PocketCrates.deviceID"
 
     var library: SnapshotLibrary? {
         if case let .loaded(lib) = state { return lib }
@@ -25,6 +27,26 @@ final class SnapshotStore {
 
     var snapshotID: UUID? { baseSnapshot?.snapshotID }
     var hasPendingIntents: Bool { !pendingIntents.isEmpty }
+
+    // MARK: - Device identity
+
+    /// Stable per-install identifier that names this device's queue file, so
+    /// the Mac can tell one device's edits from another's and no two devices
+    /// ever write the same file.
+    private static func deviceID() -> UUID {
+        if let stored = UserDefaults.standard.string(forKey: deviceIDDefaultsKey),
+           let id = UUID(uuidString: stored) {
+            return id
+        }
+        let id = UUID()
+        UserDefaults.standard.set(id.uuidString, forKey: deviceIDDefaultsKey)
+        return id
+    }
+
+    private static var deviceName: String {
+        let name = UIDevice.current.name
+        return name.isEmpty ? "iPhone" : name
+    }
 
     // MARK: - Folder lifecycle
 
@@ -63,9 +85,9 @@ final class SnapshotStore {
 
     // MARK: - Intents
 
-    func addIntent(_ operation: IntentOperation) {
+    func addIntent(_ operation: SnapshotIntentOperation) {
         guard let id = snapshotID else { return }
-        let intent = PendingIntent(id: UUID(), createdAt: Date(), snapshotID: id, operation: operation)
+        let intent = SnapshotIntent(baseSnapshotID: id, operation: operation)
         pendingIntents.append(intent)
         rebuildEffective()
         saveIntents()
@@ -83,37 +105,46 @@ final class SnapshotStore {
         saveIntents()
     }
 
-    /// Writes the effective snapshot (base + all pending intents applied) to the sync
-    /// folder as a new JSON file. The Mac picks this up as the newest snapshot the next
-    /// time EZLibrary opens. Pending intents are cleared afterwards since they are now
-    /// baked into the exported file.
-    func exportEffectiveSnapshot() throws {
+    /// Sends the pending edits to the Mac by writing them to this device's
+    /// queue file in the sync folder. EZLibrary on the Mac reviews and applies
+    /// them, then deletes the file.
+    ///
+    /// Merges with any queue the Mac hasn't consumed yet, so edits made while
+    /// offline accumulate rather than overwriting each other. Local pending
+    /// intents are cleared once written — they now live in the outbox.
+    func sendToMac() throws {
         guard let folderURL, let base = baseSnapshot else { return }
 
-        let effective = base.applying(pendingIntents)
-        // Fresh ID + timestamp so the Mac sees this as a new, authoritative snapshot.
-        let exported = LibrarySnapshot(
-            libraryFingerprint: effective.libraryFingerprint,
-            tracks: effective.tracks,
-            crates: effective.crates
+        let deviceID = Self.deviceID()
+        let alreadyQueued = existingQueue(for: deviceID, in: folderURL)?.intents ?? []
+        let combined = alreadyQueued + pendingIntents
+        guard !combined.isEmpty else { return }
+
+        let queue = SnapshotIntentQueue(
+            deviceID: deviceID,
+            deviceName: Self.deviceName,
+            baseSnapshotID: base.snapshotID,
+            intents: combined
         )
-
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let data = try encoder.encode(exported)
-
-        let filename = "snapshot-phone-\(exported.snapshotID.uuidString.lowercased()).json"
-        let fileURL = folderURL.appendingPathComponent(filename)
+        let data = try SnapshotIntentQueueCodec.encode(queue)
+        let fileURL = folderURL.appendingPathComponent(queue.fileName)
 
         try SnapshotFolderBookmark.withAccess(to: folderURL) {
             try data.write(to: fileURL, options: .atomic)
         }
 
-        // Intents are now baked into the exported file — clear them and reload.
         pendingIntents = []
         saveIntents()
         load(from: folderURL)
+    }
+
+    private func existingQueue(for deviceID: UUID, in folder: URL) -> SnapshotIntentQueue? {
+        let fileURL = folder.appendingPathComponent(
+            "\(SnapshotIntentQueue.filePrefix)\(deviceID.uuidString.lowercased()).\(SnapshotIntentQueue.fileExtension)"
+        )
+        let data: Data? = SnapshotFolderBookmark.withAccess(to: folder) { try? Data(contentsOf: fileURL) }
+        guard let data else { return nil }
+        return try? SnapshotIntentQueueCodec.decode(data)
     }
 
     // MARK: - Private helpers
@@ -154,7 +185,7 @@ final class SnapshotStore {
         guard let data else { pendingIntents = []; return }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        pendingIntents = (try? decoder.decode([PendingIntent].self, from: data)) ?? []
+        pendingIntents = (try? decoder.decode([SnapshotIntent].self, from: data)) ?? []
     }
 
     private func saveIntents() {

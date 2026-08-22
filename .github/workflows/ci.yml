@@ -60,14 +60,15 @@ jobs:
       # Xcode project to link and run. They can still be type-checked against
       # the iOS build of the kit, which catches the breakage that actually
       # happens: the kit's API moving under them. Depends on the step above
-      # having produced the module for this triple.
+      # having produced the module for this triple. Targets the app's real
+      # deployment (iOS 26) since it uses FoundationModels.
       - name: Type-check iOS app sources
         run: |
           xcrun --sdk iphonesimulator swiftc \
             -target arm64-apple-ios17.0-simulator \
             -typecheck \
             -I .build/arm64-apple-ios-simulator/debug/Modules \
-            Mobile/EZLibraryMobile/*.swift
+            Mobile/PocketCrates/PocketCrates/*.swift
 
   lint:
     name: SwiftLint

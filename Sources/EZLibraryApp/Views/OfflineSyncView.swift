@@ -16,12 +16,20 @@ import EZLibraryCore
 /// on another device while away from this Mac.
 struct OfflineSyncView: View {
     @EnvironmentObject private var libraryService: LibraryService
+    @EnvironmentObject private var offlineSyncInbox: OfflineSyncInboxModel
 
-    @State private var destinationPath = ""
+    @AppStorage(OfflineSyncDefaults.destinationPathKey) private var destinationPath = ""
     @State private var isExporting = false
     @State private var errorMessage: String?
     @State private var successMessage: String?
     @State private var existingSnapshots: [URL] = []
+
+    /// Changes queued by phones/tablets in the sync folder, resolved against
+    /// the current library and awaiting review.
+    @State private var incoming: [IncomingChange] = []
+    @State private var acceptedChangeIDs: Set<UUID> = []
+    @State private var isApplying = false
+    @State private var incomingMessage: String?
 
     private var destinationURL: URL {
         let trimmed = destinationPath.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -41,6 +49,9 @@ struct OfflineSyncView: View {
             VStack(alignment: .leading, spacing: 16) {
                 heroCard
                 statsCard
+                if !incoming.isEmpty {
+                    incomingCard
+                }
                 destinationCard
                 actionCard
             }
@@ -51,9 +62,11 @@ struct OfflineSyncView: View {
                 destinationPath = destinationURL.path
             }
             refreshExistingSnapshots()
+            refreshIncoming()
         }
         .onChange(of: destinationPath) {
             refreshExistingSnapshots()
+            refreshIncoming()
         }
     }
 
@@ -240,5 +253,180 @@ struct OfflineSyncView: View {
 
     private func refreshExistingSnapshots() {
         existingSnapshots = LibrarySnapshotExportService.existingSnapshots(in: destinationURL)
+    }
+}
+
+// MARK: - Incoming changes
+
+extension OfflineSyncView {
+    private var applyableCount: Int {
+        incoming.filter { $0.isApplyable }.count
+    }
+
+    private var acceptedApplyableCount: Int {
+        incoming.filter { acceptedChangeIDs.contains($0.id) && $0.isApplyable }.count
+    }
+
+    private var incomingCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Changes From Your Devices")
+                    .font(.title.weight(.semibold))
+                Spacer()
+                Text("^[\(applyableCount) change](inflect: true) to review")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+
+            Text("""
+                These edits were made on a phone or tablet and left in the sync folder. Review \
+                them, then apply the ones you want — each is written through the same backed-up, \
+                verified path as an edit made here.
+                """)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+
+            if let incomingMessage {
+                Text(incomingMessage)
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+
+            ForEach(incoming) { change in
+                incomingRow(change)
+                Divider()
+            }
+
+            HStack(spacing: 12) {
+                Button(action: applyIncoming) {
+                    if isApplying {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Text("Apply Selected")
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isApplying || acceptedApplyableCount == 0)
+
+                Button("Refresh") { refreshIncoming() }
+                    .disabled(isApplying)
+
+                Spacer()
+            }
+        }
+        .padding(20)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Color(nsColor: .controlBackgroundColor).opacity(0.55)))
+        .glowCardStyle(radius: 8, opacity: 0.05)
+    }
+
+    @ViewBuilder
+    private func incomingRow(_ change: IncomingChange) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            if change.isApplyable {
+                Toggle("", isOn: Binding(
+                    get: { acceptedChangeIDs.contains(change.id) },
+                    set: { isOn in
+                        if isOn { acceptedChangeIDs.insert(change.id) }
+                        else { acceptedChangeIDs.remove(change.id) }
+                    }
+                ))
+                .labelsHidden()
+                .toggleStyle(.checkbox)
+            } else {
+                Image(systemName: statusIcon(change.status))
+                    .foregroundStyle(statusColor(change.status))
+                    .frame(width: 16)
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(change.summary)
+                    .font(.callout.weight(.medium))
+                HStack(spacing: 6) {
+                    Text(change.deviceName)
+                    Text("·")
+                    Text(statusText(change.status))
+                        .foregroundStyle(statusColor(change.status))
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+    }
+
+    private func statusText(_ status: IncomingChange.Status) -> String {
+        switch status {
+        case .applicable: return "Ready to apply"
+        case let .conflict(reason): return "Conflict — \(reason)"
+        case let .unresolved(reason): return "Can't apply — \(reason)"
+        case .redundant: return "Already up to date"
+        }
+    }
+
+    private func statusIcon(_ status: IncomingChange.Status) -> String {
+        switch status {
+        case .applicable: return "checkmark.circle"
+        case .conflict: return "exclamationmark.triangle.fill"
+        case .unresolved: return "questionmark.circle"
+        case .redundant: return "checkmark.circle.fill"
+        }
+    }
+
+    private func statusColor(_ status: IncomingChange.Status) -> Color {
+        switch status {
+        case .applicable: return .green
+        case .conflict: return .orange
+        case .unresolved: return .secondary
+        case .redundant: return .secondary
+        }
+    }
+
+    private func refreshIncoming() {
+        let queues = SnapshotIntentIngestService.discoverQueues(in: destinationURL)
+        let plan = SnapshotIntentReconciler.plan(
+            queues: queues.map(\.queue),
+            tracks: libraryService.tracks,
+            crates: libraryService.crates,
+            journal: LibraryChangeJournal()
+        )
+        incoming = plan
+        // Pre-check the cleanly applicable ones; leave conflicts for the user
+        // to opt into deliberately.
+        acceptedChangeIDs = Set(
+            plan.compactMap { change in
+                if case .applicable = change.status, change.isApplyable { return change.id }
+                return nil
+            }
+        )
+        // Keep the sidebar badge in step with what the tab shows.
+        offlineSyncInbox.refresh()
+    }
+
+    private func applyIncoming() {
+        isApplying = true
+        incomingMessage = nil
+        errorMessage = nil
+
+        let accepted = acceptedChangeIDs
+        Task {
+            let outcome = await OfflineSyncApplyRunner.apply(
+                folder: destinationURL,
+                libraryService: libraryService,
+                accepting: { accepted.contains($0.id) }
+            )
+
+            if outcome.failures.isEmpty {
+                incomingMessage = outcome.applied == 0
+                    ? "No changes were applied."
+                    : "Applied ^[\(outcome.applied) change](inflect: true) from your devices."
+            } else {
+                errorMessage = "Applied \(outcome.applied), but \(outcome.failures.count) failed:\n"
+                    + outcome.failures.joined(separator: "\n")
+            }
+
+            isApplying = false
+            refreshIncoming()
+            refreshExistingSnapshots()
+        }
     }
 }

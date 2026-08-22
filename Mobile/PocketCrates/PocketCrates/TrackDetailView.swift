@@ -74,7 +74,7 @@ struct TrackDetailView: View {
                 TagVerificationView(track: track, result: result) { changes in
                     for (field, newValue) in changes {
                         store.addIntent(.editTrackField(
-                            storedPath: track.storedPath,
+                            track: TrackReference(snapshotTrack: track),
                             field: field,
                             oldValue: track.value(for: field),
                             newValue: newValue
@@ -87,7 +87,7 @@ struct TrackDetailView: View {
             TrackEditView(track: track) { changes in
                 for (field, newValue) in changes {
                     store.addIntent(.editTrackField(
-                        storedPath: track.storedPath,
+                        track: TrackReference(snapshotTrack: track),
                         field: field,
                         oldValue: track.value(for: field),
                         newValue: newValue

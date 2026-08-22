@@ -47,8 +47,8 @@ struct PendingIntentsView: View {
                         HStack {
                             Label(
                                 store.hasPendingIntents
-                                    ? "Apply & Write Snapshot"
-                                    : "Write Snapshot to Folder",
+                                    ? "Send Changes to Mac"
+                                    : "Nothing to Send",
                                 systemImage: "arrow.up.doc.fill"
                             )
                             Spacer()
@@ -57,9 +57,9 @@ struct PendingIntentsView: View {
                             }
                         }
                     }
-                    .disabled(isExporting)
+                    .disabled(isExporting || !store.hasPendingIntents)
 
-                    Text("Writes the effective library snapshot (with all pending changes applied) to your sync folder. EZLibrary on Mac will pick it up the next time it opens.")
+                    Text("Writes your pending edits to the sync folder as this device's queue. EZLibrary on your Mac reviews and applies them, then clears the queue.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -97,7 +97,7 @@ struct PendingIntentsView: View {
         exportError = nil
         defer { isExporting = false }
         do {
-            try store.exportEffectiveSnapshot()
+            try store.sendToMac()
             dismiss()
         } catch {
             exportError = error.localizedDescription
