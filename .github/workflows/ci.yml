@@ -32,15 +32,35 @@ jobs:
       - name: Build
         run: swift build --build-tests
 
-      # `--no-parallel` because EZLibraryCore's write-safety test seams
-      # (`SeratoBackupBeforeWrite.backupDirectory`, `SeratoProcessGuard`)
-      # are process-wide mutable statics that several suites override at once.
-      # Run in parallel, one suite redirects another's backups mid-write and
-      # the build fails at random (~1 in 14 runs measured). Serializing costs
-      # under a second here. The real fix is to scope those seams per test
-      # (e.g. task-local) rather than sharing one global.
+      # `--no-parallel` because `SeratoBackupBeforeWrite.backupDirectory` is
+      # still a process-wide mutable static that several suites override at
+      # once. Run in parallel, one suite redirects another's backups mid-write
+      # and the build fails at random (~1 in 14 runs measured). Serializing
+      # costs under a second here.
+      #
+      # The `SeratoProcessGuard` half of that problem is fixed: tests now bind
+      # a task-local via `TestSeratoEnvironment.withSeratoRunning`, so a test
+      # exercising the refusal is no longer visible to anything running beside
+      # it. Once the backup directory gets the same treatment this flag can go.
       - name: Run tests
         run: swift test --skip-build --no-parallel
+
+      # `EZLibrarySnapshotKit` is the only target a phone will link against,
+      # and it is kept portable by construction rather than by conditional
+      # compilation. That guarantee is only real if something builds it for
+      # iOS on every change — cross-platform code that is never compiled for
+      # the other platform rots silently.
+      - name: Build snapshot kit for iOS
+        run: |
+          swift build --target EZLibrarySnapshotKit \
+            --sdk "$(xcrun --sdk iphonesimulator --show-sdk-path)" \
+            --triple arm64-apple-ios17.0-simulator
+
+      # The iOS app (PocketCrates) is not type-checked here: it depends on the
+      # iOS 26-only FoundationModels framework, whose SDK this runner image
+      # doesn't ship. It's built and validated in Xcode instead. The kit's
+      # portability — the guarantee that actually matters for shared code — is
+      # still enforced by the step above.
 
   lint:
     name: SwiftLint

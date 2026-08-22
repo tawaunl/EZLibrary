@@ -336,7 +336,8 @@ public enum LibraryConsolidationService {
         crates: [Crate],
         rootDirectory: URL,
         databaseFileURL: URL,
-        fileManager: FileManager = .default
+        fileManager: FileManager = .default,
+        journalURL: URL? = LibraryChangeJournal.defaultURL()
     ) throws -> ConsolidationResult {
         guard !SeratoProcessGuard.isSeratoRunning else {
             throw ConsolidationError.seratoIsRunning
@@ -359,6 +360,7 @@ public enum LibraryConsolidationService {
             var updatedCrateCount = 0
             if !pathMap.isEmpty {
                 _ = try SeratoPathRewriter.rewritePaths(pathMap, in: databaseFileURL)
+                recordMovesInJournal(pathMap, journalURL: journalURL)
 
                 for crate in crates {
                     let rewrittenPaths = crate.trackPaths.map { pathMap[$0] ?? $0 }
@@ -543,4 +545,21 @@ public enum LibraryConsolidationService {
         let sourceDirectory = sourceURL.deletingLastPathComponent().standardizedFileURL
         return sourceDirectory
     }
+
+    /// Records this consolidation's path changes so a device working from an
+    /// older snapshot can be reconciled exactly rather than by inference.
+    ///
+    /// Deliberately non-throwing: the files have already moved and the library
+    /// has already been rewritten by the time this runs, so a journal that
+    /// can't be written must not turn a successful consolidation into a
+    /// failure. The cost of losing it is that stale references fall back to
+    /// the resolver's approximate tiers, which is exactly what they do for
+    /// moves EZLibrary never made.
+    private static func recordMovesInJournal(_ pathMap: [String: String], journalURL: URL?) {
+        guard let journalURL, !pathMap.isEmpty else { return }
+        var journal = LibraryChangeJournal.load(from: journalURL)
+        journal.recordMoves(pathMap)
+        try? journal.save(to: journalURL)
+    }
+
 }

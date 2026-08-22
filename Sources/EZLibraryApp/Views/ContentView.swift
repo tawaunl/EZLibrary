@@ -27,6 +27,7 @@ enum SidebarSection: Hashable {
     case missingTracks
     case backup
     case libraryConsolidation
+    case offlineSync
 }
 
 struct ContentView: View {
@@ -54,12 +55,20 @@ struct ContentView: View {
     @EnvironmentObject private var libraryService: LibraryService
     @EnvironmentObject private var dependencyReadiness: DependencyReadinessModel
     @EnvironmentObject private var seratoRunning: SeratoRunningModel
+    @EnvironmentObject private var offlineSyncInbox: OfflineSyncInboxModel
     @ObservedObject var crateHierarchy: CrateHierarchyViewModel
     @ObservedObject var smartCrateHierarchy: CrateHierarchyViewModel
 
     @State private var selectedSection: SidebarSection? = .tracks
     @State private var loadErrorMessage: String?
     @State private var libraryPathDraft = ""
+
+    /// Drives the "there may be changes from your devices" launch prompt.
+    @State private var showIncomingChangesAlert = false
+    /// Guards against re-prompting for the same batch on every folder poll;
+    /// re-armed when the pending count drops back to zero.
+    @State private var incomingAlertHandled = false
+    @State private var incomingResultMessage: String?
 
     /// What the Crates section is pointed at. Defaults to All Tracks so the
     /// section opens on something useful, matching Tracks & Tags.
@@ -290,6 +299,82 @@ struct ContentView: View {
                     .padding(.trailing, 12)
             }
         }
+        .onChange(of: offlineSyncInbox.pendingCount) { _, count in
+            if count > 0 {
+                if !incomingAlertHandled { showIncomingChangesAlert = true }
+            } else {
+                incomingAlertHandled = false
+            }
+        }
+        .alert("Changes From Your Devices", isPresented: $showIncomingChangesAlert) {
+            Button("Apply") {
+                incomingAlertHandled = true
+                applyIncomingChangesFromPrompt()
+            }
+            Button("Review…") {
+                incomingAlertHandled = true
+                selectedSection = .offlineSync
+            }
+            Button("Not Now", role: .cancel) {
+                incomingAlertHandled = true
+            }
+        } message: {
+            Text(incomingChangesPromptMessage)
+        }
+        .alert(
+            "Sync",
+            isPresented: Binding(get: { incomingResultMessage != nil }, set: { if !$0 { incomingResultMessage = nil } })
+        ) {
+            Button("OK", role: .cancel) { incomingResultMessage = nil }
+        } message: {
+            Text(incomingResultMessage ?? "")
+        }
+    }
+
+    private var incomingChangesPromptMessage: String {
+        let changes = offlineSyncInbox.pendingCount
+        let devices = offlineSyncInbox.deviceCount
+        let changeWord = changes == 1 ? "change" : "changes"
+        let deviceWord = devices == 1 ? "device" : "devices"
+        return "There may be \(changes) \(changeWord) waiting from \(devices) \(deviceWord). "
+            + "Apply the ones that are ready to your Serato library now?"
+    }
+
+    /// Applies only the cleanly-resolved changes without further clicks;
+    /// conflicts and unresolved items are left for the Offline Sync tab, which
+    /// this opens when anything still needs a human.
+    private func applyIncomingChangesFromPrompt() {
+        Task {
+            let outcome = await OfflineSyncApplyRunner.apply(
+                folder: OfflineSyncDefaults.resolveDestination(),
+                libraryService: libraryService,
+                accepting: { change in
+                    if case .applicable = change.status { return true }
+                    return false
+                }
+            )
+            offlineSyncInbox.refresh()
+
+            var parts: [String] = []
+            if outcome.applied > 0 {
+                parts.append("Applied \(outcome.applied) change\(outcome.applied == 1 ? "" : "s").")
+            }
+            let needsReview = outcome.conflictsRemaining + outcome.unresolvedRemaining
+            if needsReview > 0 {
+                parts.append("\(needsReview) need\(needsReview == 1 ? "s" : "") your review.")
+            }
+            if !outcome.failures.isEmpty {
+                parts.append("\(outcome.failures.count) couldn't be applied.")
+            }
+            if parts.isEmpty {
+                parts.append("Nothing needed applying.")
+            }
+            incomingResultMessage = parts.joined(separator: " ")
+
+            if needsReview > 0 || !outcome.failures.isEmpty {
+                selectedSection = .offlineSync
+            }
+        }
     }
 
     private var cratesStatsHeader: some View {
@@ -395,6 +480,8 @@ struct ContentView: View {
             Label("Missing Tracks", systemImage: "exclamationmark.triangle").tag(SidebarSection.missingTracks)
             Label("Backup", systemImage: "externaldrive.badge.plus").tag(SidebarSection.backup)
             Label("Library Consolidation", systemImage: "arrow.triangle.merge").tag(SidebarSection.libraryConsolidation)
+            Label("Offline Sync", systemImage: "iphone.and.arrow.forward").tag(SidebarSection.offlineSync)
+                .badge(offlineSyncInbox.pendingCount)
         }
         .frame(minWidth: sidebarWidth, idealWidth: sidebarWidth, maxWidth: sidebarWidth)
     }
@@ -488,6 +575,8 @@ struct ContentView: View {
             LibraryBackupView()
         case .libraryConsolidation:
             LibraryConsolidationView(onLibraryChanged: reloadLibrary)
+        case .offlineSync:
+            OfflineSyncView()
         case .crates:
             VStack(alignment: .leading, spacing: 12) {
                 SectionHeaderCard(

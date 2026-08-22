@@ -40,7 +40,7 @@
       voted for it — so the thing at the top of the first column is genuinely the thing
       most people want.</p>
     <div class="btn-row" style="margin-top:26px">
-      <a class="btn btn-primary" href="https://github.com/tawaunl/EZLibrary/issues/new?template=feature_request.yml">
+      <a class="btn btn-primary" data-suggest href="https://github.com/tawaunl/EZLibrary/issues/new?template=feature_request.yml">
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
         Suggest an idea
       </a>
@@ -66,8 +66,8 @@
           <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
         </div>
         <h3>2. Vote on it</h3>
-        <p>Hit the arrow on any card to open it on GitHub, then react with 👍. That reaction
-          <em>is</em> the vote, and it's what sorts this board.</p>
+        <p>Sign in with GitHub once, then hit the arrow on any card to vote right here — no
+          jumping to GitHub. Your vote <em>is</em> a 👍, and it's what sorts this board.</p>
       </div>
       <div class="card">
         <div class="card-icon">
@@ -85,7 +85,13 @@
 <!-- ----------------------------------------------------------------- board -->
 <section class="section" style="padding-top:34px">
   <div class="wrap">
-    <div id="board" class="board">
+    <!-- To enable in-site sign-in, voting and posting, fill both attributes
+         below (see netlify/README.md). Left empty, the board stays read-only
+         and the vote buttons link out to GitHub. -->
+    <div id="board-auth" class="board-auth" hidden></div>
+    <div id="board" class="board"
+         data-oauth-client-id="Ov23licywXgfRkI8Yckt"
+         data-functions-base="https://ezlibrary.netlify.app/.netlify/functions">
       <div class="column c-planned">
         <div class="column-head">
           <span class="dot"></span>
@@ -134,6 +140,7 @@
       Loaded straight from GitHub Issues. Vote counts refresh every few minutes.
     </p>
   </div>
+  <div id="board-toast" class="board-toast" role="status" aria-live="polite"></div>
 </section>
 
 <!-- ---------------------------------------------------------------- context -->
@@ -182,7 +189,7 @@
       <aside class="aside">
         <h4>Contribute</h4>
         <ul>
-          <li><a href="https://github.com/tawaunl/EZLibrary/issues/new?template=feature_request.yml">Suggest a feature</a></li>
+          <li><a data-suggest href="https://github.com/tawaunl/EZLibrary/issues/new?template=feature_request.yml">Suggest a feature</a></li>
           <li><a href="https://github.com/tawaunl/EZLibrary/issues/new?template=bug_report.yml">Report a bug</a></li>
           <li><a href="https://github.com/tawaunl/EZLibrary/discussions">Discuss an idea first</a></li>
           <li><a href="https://github.com/tawaunl/EZLibrary/blob/main/CONTRIBUTING.md">Contributing guide</a></li>
@@ -193,7 +200,7 @@
           <li><a href="https://github.com/tawaunl/EZLibrary/releases">All releases</a></li>
           <li><a href="https://github.com/tawaunl/EZLibrary/blob/main/docs/ROADMAP.md">Long-form roadmap doc</a></li>
         </ul>
-        <a class="btn btn-primary btn-sm" style="width:100%" href="https://github.com/tawaunl/EZLibrary/issues/new?template=feature_request.yml">Suggest an idea</a>
+        <a class="btn btn-primary btn-sm" style="width:100%" data-suggest href="https://github.com/tawaunl/EZLibrary/issues/new?template=feature_request.yml">Suggest an idea</a>
       </aside>
     </div>
   </div>
@@ -262,6 +269,33 @@
     </div>
   </div>
 </footer>
+
+<dialog id="suggest-dialog" class="suggest-dialog" aria-labelledby="suggest-heading">
+  <form id="suggest-form" method="dialog" class="suggest">
+    <div class="suggest-head">
+      <h2 id="suggest-heading">Suggest an idea</h2>
+      <button type="button" class="suggest-x" data-close aria-label="Close">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <p class="suggest-intro">This opens a public GitHub issue in your name and drops it
+      straight onto the board. Keep it to one idea.</p>
+
+    <label for="suggest-title">Title</label>
+    <input id="suggest-title" name="title" type="text" maxlength="120" required
+      placeholder="e.g. Batch-fix mismatched BPM tags" autocomplete="off">
+
+    <label for="suggest-body">Details <span class="suggest-optional">(optional)</span></label>
+    <textarea id="suggest-body" name="body" rows="5" maxlength="4000"
+      placeholder="What's the problem, and what would a good fix look like?"></textarea>
+
+    <div class="suggest-actions">
+      <button type="button" class="btn btn-sm" data-close>Cancel</button>
+      <button type="submit" id="suggest-submit" class="btn btn-sm btn-primary">Post idea</button>
+    </div>
+  </form>
+  <p id="suggest-status" class="suggest-status" role="status" aria-live="polite"></p>
+</dialog>
 
 <script src="../assets/js/site.js"></script>
 <script src="../assets/js/roadmap.js"></script>

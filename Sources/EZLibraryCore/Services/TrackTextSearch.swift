@@ -9,14 +9,14 @@
 // General Public License (LICENSE) for more details.
 
 import Foundation
+import EZLibrarySnapshotKit
 
 /// Fast case-insensitive substring search across a track's textual fields.
 ///
-/// `String.contains` / `localizedCaseInsensitiveContains` spend most of their
-/// time on Unicode grapheme segmentation, which dominated the table/scope
-/// search on large libraries. This compares lowercased UTF-8 bytes instead,
-/// which cut a search keystroke over 50K tracks from ~60ms to well under 30ms
-/// (measured via `EZLibraryBench`).
+/// The byte matcher itself lives in `ByteTextSearch` so that this and the
+/// snapshot-side `SnapshotTrackSearch` a phone uses are literally the same
+/// code — a search that ranked differently per device would be worse than a
+/// slow one. See `ByteTextSearch` for why bytes rather than `String.contains`.
 public enum TrackTextSearch {
     /// Returns the tracks whose title, artist, album, or genre — plus the file
     /// name when `includeFileName` is set — contain `query`, case-insensitively.
@@ -39,46 +39,27 @@ public enum TrackTextSearch {
     /// separator that keeps a query from matching across two fields. Build
     /// these once and cache them to search repeatedly without re-lowercasing.
     public static func searchBytes(for track: Track, includeFileName: Bool = false) -> [UInt8] {
-        var combined = track.title
-        combined.append("\u{01}")
-        combined.append(track.artist)
-        combined.append("\u{01}")
-        combined.append(track.album)
-        combined.append("\u{01}")
-        combined.append(track.genre)
+        var fields = [track.title, track.artist, track.album, track.genre]
         if includeFileName {
-            combined.append("\u{01}")
-            combined.append(track.fileURL.lastPathComponent)
+            fields.append(track.fileURL.lastPathComponent)
         }
-        return Array(combined.lowercased().utf8)
+        return ByteTextSearch.searchBytes(fields: fields)
     }
 
     /// The lowercased UTF-8 bytes of a search query (trimmed). An empty result
     /// means "match everything".
     public static func needle(for query: String) -> [UInt8] {
-        Array(query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().utf8)
+        ByteTextSearch.needle(for: query)
     }
 
     /// Whether prebuilt `bytes` (from `searchBytes(for:)`) contain `needle`.
     /// An empty needle matches everything.
     public static func matches(bytes: [UInt8], needle: [UInt8]) -> Bool {
-        needle.isEmpty || bytesContain(bytes, needle)
+        ByteTextSearch.matches(bytes: bytes, needle: needle)
     }
 
     /// Plain byte substring search. `needle` must be non-empty.
     static func bytesContain(_ haystack: [UInt8], _ needle: [UInt8]) -> Bool {
-        guard !needle.isEmpty, needle.count <= haystack.count else { return false }
-        let first = needle[0]
-        let limit = haystack.count - needle.count
-        var i = 0
-        while i <= limit {
-            if haystack[i] == first {
-                var j = 1
-                while j < needle.count, haystack[i + j] == needle[j] { j += 1 }
-                if j == needle.count { return true }
-            }
-            i += 1
-        }
-        return false
+        ByteTextSearch.bytesContain(haystack, needle)
     }
 }

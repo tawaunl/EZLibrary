@@ -3,9 +3,13 @@
 .swiftpm/
 DerivedData/
 dist/
-*.xcodeproj
-*.xcuserstate
 .vscode/
+
+# Xcode per-user state. NOT `*.xcodeproj` — the iOS app's project bundle has to
+# be committed, or the app is invisible to everyone who clones the repo.
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
 
 # Secrets / credentials — never commit these
 .env

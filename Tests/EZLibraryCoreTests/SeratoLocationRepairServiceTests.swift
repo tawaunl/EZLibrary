@@ -308,11 +308,10 @@ private func makeDesyncedLibrary(
         homeDirectory: library.root
     )
 
-    SeratoProcessGuard.isRunningOverride = true
-    defer { TestSeratoEnvironment.pretendSeratoIsClosed() }
-
-    #expect(throws: SeratoLocationRepairService.RepairError.self) {
-        try SeratoLocationRepairService.apply(plan)
+    TestSeratoEnvironment.withSeratoRunning {
+        #expect(throws: SeratoLocationRepairService.RepairError.self) {
+            try SeratoLocationRepairService.apply(plan)
+        }
     }
 }
 

@@ -14,4 +14,6 @@ regexes = [
   # These are environment-variable NAMES referenced in code/docs, not secrets.
   '''EZLIBRARY_(DISCOGS_TOKEN|ACOUSTID_KEY|[A-Z_]+)''',
   '''SERATOTOOLS_[A-Z_]+''',
+  # A GitHub OAuth App client ID is a public identifier shipped in page HTML.
+  '''Ov23li[A-Za-z0-9]{14}''',
 ]
