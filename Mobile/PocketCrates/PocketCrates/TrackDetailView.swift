@@ -89,10 +89,32 @@ private struct TrackEditView: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var values: [TrackField: String] = [:]
+    @State private var isSearching = false
+    @State private var lookupResults: [AppleMusicLookup.Result] = []
+    @State private var showingResults = false
+    @State private var lookupError: String? = nil
 
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    Button {
+                        Task { await searchAppleMusic() }
+                    } label: {
+                        Label("Find on Apple Music", systemImage: "music.note.list")
+                    }
+                    .disabled(isSearching)
+                    .overlay(alignment: .trailing) {
+                        if isSearching { ProgressView().padding(.trailing, 4) }
+                    }
+
+                    if let error = lookupError {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
+                }
+
                 ForEach(TrackField.allCases, id: \.self) { field in
                     LabeledContent(field.displayName) {
                         TextField(
@@ -128,6 +150,104 @@ private struct TrackEditView: View {
                         dismiss()
                     }
                     .fontWeight(.semibold)
+                }
+            }
+            .sheet(isPresented: $showingResults) {
+                AppleMusicResultsView(results: lookupResults) { result in
+                    apply(result)
+                    showingResults = false
+                }
+            }
+        }
+    }
+
+    private func searchAppleMusic() async {
+        isSearching = true
+        lookupError = nil
+        defer { isSearching = false }
+
+        let title = values[.title] ?? track.value(for: .title) ?? ""
+        let artist = values[.artist] ?? track.value(for: .artist) ?? ""
+
+        do {
+            lookupResults = try await AppleMusicLookup.search(title: title, artist: artist)
+            showingResults = true
+        } catch {
+            lookupError = error.localizedDescription
+        }
+    }
+
+    private func apply(_ result: AppleMusicLookup.Result) {
+        values[.title] = result.title
+        values[.artist] = result.artistName
+        if let album = result.albumTitle { values[.album] = album }
+        if let genre = result.genre { values[.genre] = genre }
+        if let year = result.year { values[.year] = String(year) }
+    }
+}
+
+// MARK: - Results picker
+
+private struct AppleMusicResultsView: View {
+    let results: [AppleMusicLookup.Result]
+    let onSelect: (AppleMusicLookup.Result) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if results.isEmpty {
+                    ContentUnavailableView(
+                        "No Results",
+                        systemImage: "music.note",
+                        description: Text("Try editing the title or artist and searching again.")
+                    )
+                } else {
+                    List(results) { result in
+                        Button { onSelect(result) } label: {
+                            HStack(spacing: 12) {
+                                AsyncImage(url: result.artworkURL) { image in
+                                    image.resizable().aspectRatio(contentMode: .fill)
+                                } placeholder: {
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .fill(.quaternary)
+                                }
+                                .frame(width: 48, height: 48)
+                                .clipShape(RoundedRectangle(cornerRadius: 6))
+
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(result.title)
+                                        .font(.body)
+                                        .foregroundStyle(.primary)
+                                    Text(result.artistName)
+                                        .font(.callout)
+                                        .foregroundStyle(.secondary)
+                                    if let album = result.albumTitle {
+                                        Text(album)
+                                            .font(.caption)
+                                            .foregroundStyle(.tertiary)
+                                    }
+                                }
+
+                                Spacer()
+
+                                if let year = result.year {
+                                    Text(String(year))
+                                        .font(.caption)
+                                        .foregroundStyle(.tertiary)
+                                }
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .navigationTitle("Apple Music Results")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
                 }
             }
         }
