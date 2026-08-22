@@ -83,6 +83,39 @@ final class SnapshotStore {
         saveIntents()
     }
 
+    /// Writes the effective snapshot (base + all pending intents applied) to the sync
+    /// folder as a new JSON file. The Mac picks this up as the newest snapshot the next
+    /// time EZLibrary opens. Pending intents are cleared afterwards since they are now
+    /// baked into the exported file.
+    func exportEffectiveSnapshot() throws {
+        guard let folderURL, let base = baseSnapshot else { return }
+
+        let effective = base.applying(pendingIntents)
+        // Fresh ID + timestamp so the Mac sees this as a new, authoritative snapshot.
+        let exported = LibrarySnapshot(
+            libraryFingerprint: effective.libraryFingerprint,
+            tracks: effective.tracks,
+            crates: effective.crates
+        )
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(exported)
+
+        let filename = "snapshot-phone-\(exported.snapshotID.uuidString.lowercased()).json"
+        let fileURL = folderURL.appendingPathComponent(filename)
+
+        try SnapshotFolderBookmark.withAccess(to: folderURL) {
+            try data.write(to: fileURL, options: .atomic)
+        }
+
+        // Intents are now baked into the exported file — clear them and reload.
+        pendingIntents = []
+        saveIntents()
+        load(from: folderURL)
+    }
+
     // MARK: - Private helpers
 
     private func load(from url: URL) {

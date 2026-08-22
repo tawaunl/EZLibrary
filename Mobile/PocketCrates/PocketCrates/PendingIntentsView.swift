@@ -4,6 +4,9 @@ struct PendingIntentsView: View {
     @Environment(SnapshotStore.self) private var store
     @Environment(\.dismiss) private var dismiss
 
+    @State private var isExporting = false
+    @State private var exportError: String? = nil
+
     var body: some View {
         NavigationStack {
             List {
@@ -29,6 +32,36 @@ struct PendingIntentsView: View {
                     for index in indexSet {
                         store.removeIntent(id: store.pendingIntents[index].id)
                     }
+                }
+
+                Section("Sync to Mac") {
+                    if let error = exportError {
+                        Text(error)
+                            .font(.footnote)
+                            .foregroundStyle(.red)
+                    }
+
+                    Button {
+                        Task { await exportSnapshot() }
+                    } label: {
+                        HStack {
+                            Label(
+                                store.hasPendingIntents
+                                    ? "Apply & Write Snapshot"
+                                    : "Write Snapshot to Folder",
+                                systemImage: "arrow.up.doc.fill"
+                            )
+                            Spacer()
+                            if isExporting {
+                                ProgressView()
+                            }
+                        }
+                    }
+                    .disabled(isExporting)
+
+                    Text("Writes the effective library snapshot (with all pending changes applied) to your sync folder. EZLibrary on Mac will pick it up the next time it opens.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
             }
             .navigationTitle("Pending Changes")
@@ -56,6 +89,18 @@ struct PendingIntentsView: View {
                     )
                 }
             }
+        }
+    }
+
+    private func exportSnapshot() async {
+        isExporting = true
+        exportError = nil
+        defer { isExporting = false }
+        do {
+            try store.exportEffectiveSnapshot()
+            dismiss()
+        } catch {
+            exportError = error.localizedDescription
         }
     }
 }

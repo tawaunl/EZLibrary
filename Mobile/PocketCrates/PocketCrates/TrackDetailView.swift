@@ -1,4 +1,5 @@
 import SwiftUI
+import FoundationModels
 import EZLibrarySnapshotKit
 
 // MARK: - Detail view
@@ -8,6 +9,9 @@ struct TrackDetailView: View {
 
     @Environment(SnapshotStore.self) private var store
     @State private var isEditing = false
+    @State private var isVerifying = false
+    @State private var verificationResult: AppleMusicLookup.VerificationResult? = nil
+    @State private var showingVerification = false
 
     var body: some View {
         List {
@@ -51,7 +55,32 @@ struct TrackDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button("Edit") { isEditing = true }
+                HStack {
+                    if isVerifying {
+                        ProgressView()
+                    } else {
+                        Button {
+                            Task { await verifyTags() }
+                        } label: {
+                            Image(systemName: "checkmark.seal")
+                        }
+                    }
+                    Button("Edit") { isEditing = true }
+                }
+            }
+        }
+        .sheet(isPresented: $showingVerification) {
+            if let result = verificationResult {
+                TagVerificationView(track: track, result: result) { changes in
+                    for (field, newValue) in changes {
+                        store.addIntent(.editTrackField(
+                            storedPath: track.storedPath,
+                            field: field,
+                            oldValue: track.value(for: field),
+                            newValue: newValue
+                        ))
+                    }
+                }
             }
         }
         .sheet(isPresented: $isEditing) {
@@ -65,6 +94,21 @@ struct TrackDetailView: View {
                     ))
                 }
             }
+        }
+    }
+
+    private func verifyTags() async {
+        isVerifying = true
+        defer { isVerifying = false }
+        if let result = try? await AppleMusicLookup.verify(
+            title: track.title,
+            artist: track.artist,
+            album: track.album,
+            genre: track.genre,
+            year: track.year.map(String.init) ?? ""
+        ) {
+            verificationResult = result
+            showingVerification = true
         }
     }
 
@@ -90,9 +134,11 @@ private struct TrackEditView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var values: [TrackField: String] = [:]
     @State private var isSearching = false
+    @State private var isUsingIntelligence = false
     @State private var lookupResults: [AppleMusicLookup.Result] = []
     @State private var showingResults = false
     @State private var lookupError: String? = nil
+    @State private var intelligenceError: String? = nil
 
     var body: some View {
         NavigationStack {
@@ -103,12 +149,29 @@ private struct TrackEditView: View {
                     } label: {
                         Label("Find on Apple Music", systemImage: "music.note.list")
                     }
-                    .disabled(isSearching)
+                    .disabled(isSearching || isUsingIntelligence)
                     .overlay(alignment: .trailing) {
                         if isSearching { ProgressView().padding(.trailing, 4) }
                     }
 
+                    if case .available = SystemLanguageModel.default.availability {
+                        Button {
+                            Task { await autofillWithIntelligence() }
+                        } label: {
+                            Label("Auto-fill with Apple Intelligence", systemImage: "sparkles")
+                        }
+                        .disabled(isSearching || isUsingIntelligence)
+                        .overlay(alignment: .trailing) {
+                            if isUsingIntelligence { ProgressView().padding(.trailing, 4) }
+                        }
+                    }
+
                     if let error = lookupError {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
+                    if let error = intelligenceError {
                         Text(error)
                             .font(.caption)
                             .foregroundStyle(.red)
@@ -161,6 +224,31 @@ private struct TrackEditView: View {
         }
     }
 
+    private func autofillWithIntelligence() async {
+        isUsingIntelligence = true
+        intelligenceError = nil
+        defer { isUsingIntelligence = false }
+
+        let get: (TrackField) -> String = { values[$0] ?? track.value(for: $0) ?? "" }
+
+        do {
+            let suggestion = try await IntelligenceLookup.suggest(
+                title: get(.title),
+                artist: get(.artist),
+                album: get(.album),
+                genre: get(.genre),
+                comment: get(.comment),
+                year: get(.year)
+            )
+            if !suggestion.title.isEmpty  { values[.title]  = suggestion.title }
+            if !suggestion.artist.isEmpty { values[.artist] = suggestion.artist }
+            if !suggestion.album.isEmpty  { values[.album]  = suggestion.album }
+            if !suggestion.genre.isEmpty  { values[.genre]  = suggestion.genre }
+        } catch {
+            intelligenceError = error.localizedDescription
+        }
+    }
+
     private func searchAppleMusic() async {
         isSearching = true
         lookupError = nil
@@ -183,6 +271,138 @@ private struct TrackEditView: View {
         if let album = result.albumTitle { values[.album] = album }
         if let genre = result.genre { values[.genre] = genre }
         if let year = result.year { values[.year] = String(year) }
+    }
+}
+
+// MARK: - Tag verification sheet
+
+private struct TagVerificationView: View {
+    let track: SnapshotTrack
+    let result: AppleMusicLookup.VerificationResult
+    let onFix: ([TrackField: String]) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var fixes: [TrackField: String] = [:]
+
+    private let verifiableFields: [(TrackField, String, AppleMusicLookup.FieldStatus)] = []
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if let match = result.bestMatch {
+                    Section("Matched Against") {
+                        HStack(spacing: 12) {
+                            AsyncImage(url: match.artworkURL) { image in
+                                image.resizable().aspectRatio(contentMode: .fill)
+                            } placeholder: {
+                                RoundedRectangle(cornerRadius: 6).fill(.quaternary)
+                            }
+                            .frame(width: 44, height: 44)
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(match.title).font(.body)
+                                Text(match.artistName).font(.callout).foregroundStyle(.secondary)
+                                if let album = match.albumTitle {
+                                    Text(album).font(.caption).foregroundStyle(.tertiary)
+                                }
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+
+                Section("Tag Status") {
+                    fieldRow(.title,  "Title",  result.title)
+                    fieldRow(.artist, "Artist", result.artist)
+                    fieldRow(.album,  "Album",  result.album)
+                    fieldRow(.genre,  "Genre",  result.genre)
+                    fieldRow(.year,   "Year",   result.year)
+                }
+
+                if !fixes.isEmpty {
+                    Section {
+                        Text("Selected corrections will be queued as pending changes.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .navigationTitle("Tag Verification")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { dismiss() }
+                }
+                if !fixes.isEmpty {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Apply \(fixes.count) Fix\(fixes.count == 1 ? "" : "es")") {
+                            onFix(fixes)
+                            dismiss()
+                        }
+                        .fontWeight(.semibold)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func fieldRow(_ field: TrackField, _ label: String, _ status: AppleMusicLookup.FieldStatus) -> some View {
+        switch status {
+        case .confirmed:
+            HStack {
+                Label(label, systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                Spacer()
+                Text(track.value(for: field) ?? "")
+                    .foregroundStyle(.secondary)
+                    .font(.callout)
+            }
+
+        case .mismatch(let suggested):
+            VStack(alignment: .leading, spacing: 6) {
+                Label(label, systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Current").font(.caption).foregroundStyle(.tertiary)
+                        Text(track.value(for: field) ?? "(empty)").font(.callout)
+                    }
+                    Spacer()
+                    Image(systemName: "arrow.right").foregroundStyle(.tertiary)
+                    Spacer()
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text("Catalog").font(.caption).foregroundStyle(.tertiary)
+                        Text(suggested).font(.callout)
+                    }
+                }
+
+                let isSelected = fixes[field] == suggested
+                Button {
+                    if isSelected { fixes.removeValue(forKey: field) }
+                    else { fixes[field] = suggested }
+                } label: {
+                    Label(
+                        isSelected ? "Correction selected" : "Use catalog value",
+                        systemImage: isSelected ? "checkmark.square.fill" : "square"
+                    )
+                    .font(.footnote)
+                    .foregroundStyle(isSelected ? .blue : .secondary)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.vertical, 2)
+
+        case .unverifiable:
+            HStack {
+                Label(label, systemImage: "minus.circle")
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("No catalog data").font(.caption).foregroundStyle(.tertiary)
+            }
+        }
     }
 }
 
