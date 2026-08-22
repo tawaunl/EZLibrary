@@ -2,11 +2,6 @@ import Foundation
 import Observation
 import EZLibrarySnapshotKit
 
-/// Owns the loaded library and the folder it came from.
-///
-/// Parsing, searching, and tree-building all live in `EZLibrarySnapshotKit`,
-/// where they are unit-tested and compiled for iOS by CI. This is only the
-/// state machine around them.
 @Observable
 final class SnapshotStore {
     enum State {
@@ -18,13 +13,21 @@ final class SnapshotStore {
 
     private(set) var state: State = .needsFolder
     private(set) var folderURL: URL?
+    private(set) var pendingIntents: [PendingIntent] = []
+
+    private var baseSnapshot: LibrarySnapshot?
+    private static let intentsFilename = "intents-pending.json"
 
     var library: SnapshotLibrary? {
-        if case let .loaded(library) = state { return library }
+        if case let .loaded(lib) = state { return lib }
         return nil
     }
 
-    /// Loads from the previously chosen folder, if there is one.
+    var snapshotID: UUID? { baseSnapshot?.snapshotID }
+    var hasPendingIntents: Bool { !pendingIntents.isEmpty }
+
+    // MARK: - Folder lifecycle
+
     func restore() {
         guard let url = SnapshotFolderBookmark.resolve() else {
             state = .needsFolder
@@ -34,7 +37,6 @@ final class SnapshotStore {
         load(from: url)
     }
 
-    /// Adopts a folder the user just picked.
     func use(folder url: URL) {
         do {
             try SnapshotFolderBookmark.save(url)
@@ -47,32 +49,51 @@ final class SnapshotStore {
     }
 
     func reload() {
-        guard let folderURL else {
-            state = .needsFolder
-            return
-        }
+        guard let folderURL else { state = .needsFolder; return }
         load(from: folderURL)
     }
 
     func forgetFolder() {
         SnapshotFolderBookmark.forget()
         folderURL = nil
+        baseSnapshot = nil
+        pendingIntents = []
         state = .needsFolder
     }
 
-#if DEBUG
-    func loadPreview() {
-        state = .loaded(.preview)
+    // MARK: - Intents
+
+    func addIntent(_ operation: IntentOperation) {
+        guard let id = snapshotID else { return }
+        let intent = PendingIntent(id: UUID(), createdAt: Date(), snapshotID: id, operation: operation)
+        pendingIntents.append(intent)
+        rebuildEffective()
+        saveIntents()
     }
-#endif
+
+    func removeIntent(id: UUID) {
+        pendingIntents.removeAll { $0.id == id }
+        rebuildEffective()
+        saveIntents()
+    }
+
+    func clearAllIntents() {
+        pendingIntents = []
+        rebuildEffective()
+        saveIntents()
+    }
+
+    // MARK: - Private helpers
 
     private func load(from url: URL) {
         state = .loading
         do {
-            let library = try SnapshotFolderBookmark.withAccess(to: url) {
+            let raw = try SnapshotFolderBookmark.withAccess(to: url) {
                 try SnapshotFolder.loadNewest(in: url)
             }
-            state = .loaded(library)
+            baseSnapshot = raw.snapshot
+            loadIntents(from: url)
+            rebuildEffective()
         } catch let error as LocalizedError {
             state = .failed([error.errorDescription, error.recoverySuggestion]
                 .compactMap { $0 }
@@ -81,4 +102,50 @@ final class SnapshotStore {
             state = .failed(error.localizedDescription)
         }
     }
+
+    private func rebuildEffective() {
+        guard let base = baseSnapshot else { return }
+        let effective = base.applying(pendingIntents)
+        state = .loaded(SnapshotLibrary(snapshot: effective))
+    }
+
+    // MARK: - Intent persistence
+
+    private func intentsURL(in folder: URL) -> URL {
+        folder.appendingPathComponent(Self.intentsFilename)
+    }
+
+    private func loadIntents(from folder: URL) {
+        let url = intentsURL(in: folder)
+        let data: Data? = SnapshotFolderBookmark.withAccess(to: folder) { try? Data(contentsOf: url) }
+        guard let data else { pendingIntents = []; return }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        pendingIntents = (try? decoder.decode([PendingIntent].self, from: data)) ?? []
+    }
+
+    private func saveIntents() {
+        guard let folderURL else { return }
+        let url = intentsURL(in: folderURL)
+        SnapshotFolderBookmark.withAccess(to: folderURL) {
+            if pendingIntents.isEmpty {
+                try? FileManager.default.removeItem(at: url)
+            } else {
+                let encoder = JSONEncoder()
+                encoder.dateEncodingStrategy = .iso8601
+                encoder.outputFormatting = .prettyPrinted
+                if let data = try? encoder.encode(pendingIntents) {
+                    try? data.write(to: url, options: .atomic)
+                }
+            }
+        }
+    }
+
+#if DEBUG
+    func loadPreview() {
+        baseSnapshot = SnapshotLibrary.preview.snapshot
+        pendingIntents = []
+        state = .loaded(.preview)
+    }
+#endif
 }

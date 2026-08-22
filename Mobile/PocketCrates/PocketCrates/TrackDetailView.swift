@@ -1,8 +1,13 @@
 import SwiftUI
 import EZLibrarySnapshotKit
 
+// MARK: - Detail view
+
 struct TrackDetailView: View {
     let track: SnapshotTrack
+
+    @Environment(SnapshotStore.self) private var store
+    @State private var isEditing = false
 
     var body: some View {
         List {
@@ -41,18 +46,28 @@ struct TrackDetailView: View {
                         .font(.callout)
                 }
             }
-
-            Section {
-                Text("This is a read-only copy. Editing from your phone is coming in a later version.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
         }
         .navigationTitle(track.displayTitle)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Edit") { isEditing = true }
+            }
+        }
+        .sheet(isPresented: $isEditing) {
+            TrackEditView(track: track) { changes in
+                for (field, newValue) in changes {
+                    store.addIntent(.editTrackField(
+                        storedPath: track.storedPath,
+                        field: field,
+                        oldValue: track.value(for: field),
+                        newValue: newValue
+                    ))
+                }
+            }
+        }
     }
 
-    /// Returns the display value for a field, converting key to Camelot.
     private func displayValue(for field: TrackField) -> String? {
         if field == .key, let raw = track.key, !raw.isEmpty {
             return KeyFormatter.camelot(from: raw)
@@ -63,5 +78,58 @@ struct TrackDetailView: View {
     private func formatted(_ duration: TimeInterval) -> String {
         let total = Int(duration.rounded())
         return String(format: "%d:%02d", total / 60, total % 60)
+    }
+}
+
+// MARK: - Edit sheet
+
+private struct TrackEditView: View {
+    let track: SnapshotTrack
+    let onSave: ([TrackField: String]) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var values: [TrackField: String] = [:]
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                ForEach(TrackField.allCases, id: \.self) { field in
+                    LabeledContent(field.displayName) {
+                        TextField(
+                            field.displayName,
+                            text: Binding(
+                                get: { values[field, default: track.value(for: field) ?? ""] },
+                                set: { values[field] = $0 }
+                            )
+                        )
+                        .multilineTextAlignment(.trailing)
+                        .autocorrectionDisabled(field == .key || field == .bpm)
+                    }
+                }
+
+                Section {
+                    Text("Changes are queued locally and will be applied to your Serato library the next time you sync with your Mac.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .navigationTitle("Edit Track")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        let changed = values.filter { field, newValue in
+                            !newValue.isEmpty && newValue != (track.value(for: field) ?? "")
+                        }
+                        if !changed.isEmpty { onSave(changed) }
+                        dismiss()
+                    }
+                    .fontWeight(.semibold)
+                }
+            }
+        }
     }
 }
