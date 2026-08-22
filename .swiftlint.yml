@@ -7,12 +7,14 @@
 included:
   - Sources
   - Tests
-  - Mobile
 
 excluded:
   - .build
   - dist
   - Packaging
+  # The iOS app has its own conventions (SwiftUI + Apple-framework naming like
+  # `iTunes*`) and isn't part of the Swift package; lint it in Xcode instead.
+  - Mobile
 
 # Opt out of a few rules that are noisy for this codebase.
 disabled_rules:
