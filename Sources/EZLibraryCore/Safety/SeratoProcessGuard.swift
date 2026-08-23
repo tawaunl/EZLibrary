@@ -21,16 +21,36 @@ public enum SeratoProcessGuard {
     /// their exact identifiers.
     private static let bundleIdentifierPrefix = "com.serato."
 
-    /// Test-only override so callers can simulate "Serato is running"
-    /// without needing the real app installed/launched.
+    /// Test-only override so callers can simulate "Serato is running" without
+    /// needing the real app installed or launched.
     ///
-    /// `nonisolated(unsafe)`: intentionally mutable, matching the override
-    /// pattern already used by `SeratoBackupBeforeWrite`.
-    public nonisolated(unsafe) static var isRunningOverride: Bool?
+    /// **Task-local on purpose.** As a plain global this was the single largest
+    /// source of flakiness in the test suite: swift-testing runs tests in
+    /// parallel, so a test setting it to `true` to exercise a refusal made every
+    /// *other* test writing at that moment fail with `seratoIsRunning`. A
+    /// different test failed each run, none of them reproducibly, and no Serato
+    /// was involved. Scoping the value to the task that set it makes the
+    /// simulation invisible to everything running alongside it.
+    ///
+    /// Set it with `$isRunningOverride.withValue(true) { … }`.
+    @TaskLocal public static var isRunningOverride: Bool?
+
+    /// Test-only baseline: treat Serato as closed when nothing says otherwise.
+    ///
+    /// Separate from the override, and deliberately global, because it is the
+    /// harmless direction. Write-path tests need to pass on a developer's own
+    /// machine where Serato may genuinely be open, and wrapping every one of
+    /// them in a task-local scope to say so would be worse than the disease.
+    /// Only ever set to `false`-meaning; the value that can break a parallel
+    /// test is the one above.
+    public nonisolated(unsafe) static var assumesSeratoClosedForTesting = false
 
     public static var isSeratoRunning: Bool {
         if let override = isRunningOverride {
             return override
+        }
+        if assumesSeratoClosedForTesting {
+            return false
         }
         return NSWorkspace.shared.runningApplications.contains { app in
             app.bundleIdentifier?.hasPrefix(bundleIdentifierPrefix) ?? false

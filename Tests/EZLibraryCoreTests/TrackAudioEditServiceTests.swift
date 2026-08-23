@@ -132,11 +132,12 @@ struct TrackAudioEditServiceTests {
         }
 
         let bytesBefore = try Data(contentsOf: env.track.fileURL)
-        SeratoProcessGuard.isRunningOverride = true
 
-        #expect(throws: TrackAudioEditService.EditError.self) {
-            try TrackAudioEditService.saveInPlace(
-                track: env.track, startSeconds: 1, endSeconds: 4)
+        TestSeratoEnvironment.withSeratoRunning {
+            #expect(throws: TrackAudioEditService.EditError.self) {
+                try TrackAudioEditService.saveInPlace(
+                    track: env.track, startSeconds: 1, endSeconds: 4)
+            }
         }
         #expect(try Data(contentsOf: env.track.fileURL) == bytesBefore)
     }
@@ -253,12 +254,13 @@ struct TrackAudioEditServiceTests {
         }
 
         let destination = AudioTrimService.suggestedEditURL(for: env.track.fileURL)
-        SeratoProcessGuard.isRunningOverride = true
 
-        #expect(throws: TrackAudioEditService.EditError.self) {
-            try TrackAudioEditService.saveAsNewFile(
-                track: env.track, startSeconds: 0, endSeconds: 3,
-                destinationURL: destination, libraryDirectory: env.libraryDirectory)
+        TestSeratoEnvironment.withSeratoRunning {
+            #expect(throws: TrackAudioEditService.EditError.self) {
+                try TrackAudioEditService.saveAsNewFile(
+                    track: env.track, startSeconds: 0, endSeconds: 3,
+                    destinationURL: destination, libraryDirectory: env.libraryDirectory)
+            }
         }
         #expect(!FileManager.default.fileExists(atPath: destination.path))
     }

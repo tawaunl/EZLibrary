@@ -29,7 +29,12 @@ struct AITagVerificationSheet: View {
     }
 
     let tracks: [Track]
+    @ObservedObject var run: TagVerificationRunModel
     let onApply: ([(Track, SeratoTrackMetadataUpdate)]) throws -> Void
+    /// Told what was written, so the caller can confirm it after the sheet
+    /// closes — a summary shown only in the footer is invisible once the window
+    /// has gone.
+    var onApplied: ((Int, String) -> Void)?
 
     @Environment(\.dismiss) private var dismiss
 
@@ -37,7 +42,6 @@ struct AITagVerificationSheet: View {
     @AppStorage(TagVerificationCoordinator.engineDefaultsKey)
     private var engineRawValue = TagVerificationEngineKind.consensus.rawValue
 
-    @State private var phase: Phase = .setup
     @State private var onlyFlaggedTracks = true
     @State private var useWebSearch = true
     @State private var useFingerprint = false
@@ -45,22 +49,37 @@ struct AITagVerificationSheet: View {
     @State private var useDiscogs = false
     @State private var showAdvanced = false
 
-    @State private var results: [AITagVerificationService.TrackVerification] = []
-    @State private var failures: [(track: Track, message: String)] = []
-    @State private var selectedFieldIDs: Set<UUID> = []
-    @State private var selectedArtworkIDs: Set<UUID> = []
-    @State private var completedCount = 0
-    @State private var totalCount = 0
     /// Computed once when the sheet opens rather than per body evaluation:
     /// the audit walks every selected track, and a large selection would
     /// otherwise re-scan on every render.
     @State private var auditFindings: [TagIntegrityAudit.Finding] = []
     @State private var isAuditing = true
     @State private var isApplying = false
-    @State private var abortMessage: String?
     @State private var applyErrorMessage: String?
     @State private var appliedSummary: String?
-    @State private var runTask: Task<Void, Never>?
+
+    // The sheet is now a view of `run`; these keep the body readable.
+    private var phase: Phase {
+        switch run.phase {
+        case .idle:
+            return .setup
+        case .running:
+            return .running
+        case .finished:
+            return .finished
+        }
+    }
+
+    private var results: [AITagVerificationService.TrackVerification] { run.results }
+    private var failures: [(track: Track, message: String)] { run.failures }
+    private var completedCount: Int { run.completedCount }
+    private var totalCount: Int { run.totalCount }
+    private var checkedCount: Int { run.checkedCount }
+    private var appliedCount: Int { run.appliedCount }
+    private var abortMessage: String? { run.abortMessage }
+
+    private var selectedFieldIDs: Set<UUID> { run.selectedFieldIDs }
+    private var selectedArtworkIDs: Set<UUID> { run.selectedArtworkIDs }
 
     private var model: ClaudeModel {
         ClaudeModel(rawValue: modelRawValue) ?? .opus5
@@ -158,10 +177,9 @@ struct AITagVerificationSheet: View {
             }.value
             isAuditing = false
         }
-        .onDisappear {
-            runTask?.cancel()
-            runTask = nil
-        }
+        // Deliberately no cancellation here: the run belongs to the model, not
+        // to this window, so closing the sheet leaves it going and the main
+        // view keeps showing its progress.
         .alert(
             "Couldn't Apply Changes",
             isPresented: Binding(get: { applyErrorMessage != nil }, set: { if !$0 { applyErrorMessage = nil } })
@@ -378,6 +396,14 @@ struct AITagVerificationSheet: View {
             if totalCount > 0 {
                 ProgressView(value: Double(completedCount), total: Double(totalCount))
             }
+
+            // Real usage, not the pre-run estimate. Shown only for the tier
+            // that actually bills.
+            if let spend = run.spendSummary {
+                Text(spend)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -395,12 +421,14 @@ struct AITagVerificationSheet: View {
             if abortMessage != nil {
                 return "The run could not start."
             }
+            let checked = "Checked \(checkedCount) track\(checkedCount == 1 ? "" : "s")"
+            let appliedNote = appliedCount > 0 ? " Applied and cleared \(appliedCount)." : ""
             let changes = totalProposedChanges
             if changes == 0 {
-                return "Checked \(results.count) track\(results.count == 1 ? "" : "s") — no field was contradicted by a source."
+                return checked + " — nothing left to change." + appliedNote
             }
-            return "Checked \(results.count) track\(results.count == 1 ? "" : "s") and found "
-                + "\(changes) proposed change\(changes == 1 ? "" : "s")."
+            return checked + " — \(changes) proposed change\(changes == 1 ? "" : "s") outstanding."
+                + appliedNote
         }
     }
 
@@ -498,12 +526,12 @@ struct AITagVerificationSheet: View {
     private func changeRow(_ change: AITagVerificationService.FieldVerification) -> some View {
         HStack(alignment: .top, spacing: 8) {
             Toggle("", isOn: Binding(
-                get: { selectedFieldIDs.contains(change.id) },
+                get: { run.selectedFieldIDs.contains(change.id) },
                 set: { isOn in
                     if isOn {
-                        selectedFieldIDs.insert(change.id)
+                        run.selectedFieldIDs.insert(change.id)
                     } else {
-                        selectedFieldIDs.remove(change.id)
+                        run.selectedFieldIDs.remove(change.id)
                     }
                 }
             ))
@@ -567,12 +595,12 @@ struct AITagVerificationSheet: View {
     private func artworkRow(_ artwork: ArtworkProposal) -> some View {
         HStack(alignment: .top, spacing: 8) {
             Toggle("", isOn: Binding(
-                get: { selectedArtworkIDs.contains(artwork.id) },
+                get: { run.selectedArtworkIDs.contains(artwork.id) },
                 set: { isOn in
                     if isOn {
-                        selectedArtworkIDs.insert(artwork.id)
+                        run.selectedArtworkIDs.insert(artwork.id)
                     } else {
-                        selectedArtworkIDs.remove(artwork.id)
+                        run.selectedArtworkIDs.remove(artwork.id)
                     }
                 }
             ))
@@ -676,9 +704,7 @@ struct AITagVerificationSheet: View {
 
             if phase == .running {
                 Button("Stop") {
-                    runTask?.cancel()
-                    runTask = nil
-                    phase = .finished
+                    run.cancel()
                 }
                 .help("Stop verifying. Results already returned are kept.")
             }
@@ -712,124 +738,71 @@ struct AITagVerificationSheet: View {
         let targets = tracksToVerify
         guard !targets.isEmpty else { return }
 
-        results = []
-        failures = []
-        selectedFieldIDs = []
-        selectedArtworkIDs = []
-        abortMessage = nil
         appliedSummary = nil
-        completedCount = 0
-        totalCount = targets.count
-        phase = .running
-
-        let cloudOptions = options
-        let localOptions = consensusOptions
-        let selectedEngine = engine
-        runTask = Task {
-            let events = TagVerificationCoordinator.verify(
-                tracks: targets,
-                using: selectedEngine,
-                consensusOptions: localOptions,
-                cloudOptions: cloudOptions
-            )
-            for await event in events {
-                if Task.isCancelled { break }
-                switch event {
-                case .started:
-                    break
-                case let .verified(result):
-                    completedCount += 1
-                    results.append(result)
-                    preselect(result, minimumConfidence: TagVerificationCoordinator.confidenceThreshold(for: selectedEngine))
-                case let .failed(track, message):
-                    completedCount += 1
-                    failures.append((track, message))
-                case let .aborted(message):
-                    abortMessage = message
-                case .finished:
-                    break
-                }
-            }
-            phase = .finished
-            runTask = nil
-        }
-    }
-
-    /// Pre-checks the proposals that are safe to trust, and leaves the rest for
-    /// the user to opt into. A confident verdict about the wrong recording is
-    /// still wrong, so the identity confidence gates this too.
-    private func preselect(
-        _ result: AITagVerificationService.TrackVerification,
-        minimumConfidence: Double
-    ) {
-        guard result.identityConfidence >= TagVerificationCoordinator.identityConfidenceFloor else { return }
-        for change in result.proposedChanges where change.confidence >= minimumConfidence {
-            selectedFieldIDs.insert(change.id)
-        }
-        if let artwork = result.artwork, artwork.fileIsMissingArtwork {
-            selectedArtworkIDs.insert(artwork.id)
-        }
+        // The model owns the run, so it outlives this window.
+        run.start(
+            tracks: targets,
+            engine: engine,
+            consensusOptions: consensusOptions,
+            cloudOptions: options
+        )
     }
 
     private func applySelectedChanges() {
         isApplying = true
+        let changeCount = run.selectedCount
+
         Task {
-            var updates: [(Track, SeratoTrackMetadataUpdate)] = []
-            var artworkApplied = 0
-            var artworkFailures: [String] = []
+            let outcome = await run.buildUpdates()
+            isApplying = false
 
-            for result in results {
-                let fields = Set(
-                    result.proposedChanges
-                        .filter { selectedFieldIDs.contains($0.id) }
-                        .map(\.field)
-                )
-                let artwork = result.artwork
-                let wantsArtwork = artwork.map { selectedArtworkIDs.contains($0.id) } ?? false
-                guard !fields.isEmpty || wantsArtwork else { continue }
-
-                var update = result.metadataUpdate(applying: fields)
-
-                // Downloaded here rather than up front: fetching art for every
-                // result would pull images the user never asked to apply.
-                if wantsArtwork, let artwork {
-                    do {
-                        update.artwork = try await ArtworkFetchService.fetchArtwork(from: artwork.url)
-                        artworkApplied += 1
-                    } catch {
-                        artworkFailures.append(result.track.fileURL.lastPathComponent)
-                        // The tag changes are still worth writing without it.
-                        if fields.isEmpty { continue }
-                    }
+            guard !outcome.updates.isEmpty else {
+                // Nothing to write. That is silent success unless the reason
+                // was a failed artwork download, which would otherwise leave
+                // the user pressing Apply with no response at all.
+                if !outcome.artworkFailures.isEmpty {
+                    applyErrorMessage = artworkFailureMessage(outcome.artworkFailures, includesOtherChanges: false)
                 }
-
-                updates.append((result.track, update))
+                return
             }
 
-            isApplying = false
-            guard !updates.isEmpty else { return }
-
             do {
-                try onApply(updates)
-                var summary = "Applied \(selectedFieldIDs.count) change"
-                    + "\(selectedFieldIDs.count == 1 ? "" : "s") "
-                    + "across \(updates.count) track\(updates.count == 1 ? "" : "s")."
-                if artworkApplied > 0 {
-                    summary += " Embedded artwork on \(artworkApplied)."
+                try onApply(outcome.updates)
+
+                var summary = "Applied \(changeCount) change\(changeCount == 1 ? "" : "s") "
+                    + "across \(outcome.updates.count) track\(outcome.updates.count == 1 ? "" : "s")."
+                if outcome.artworkApplied > 0 {
+                    summary += " Embedded artwork on \(outcome.artworkApplied)."
                 }
                 appliedSummary = summary
-                selectedFieldIDs = []
-                selectedArtworkIDs = []
 
-                if !artworkFailures.isEmpty {
-                    applyErrorMessage = "Artwork could not be downloaded for "
-                        + "\(artworkFailures.count) track\(artworkFailures.count == 1 ? "" : "s"): "
-                        + artworkFailures.prefix(3).joined(separator: ", ")
-                        + ". Their other tag changes were still applied."
+                if !outcome.artworkFailures.isEmpty {
+                    applyErrorMessage = artworkFailureMessage(outcome.artworkFailures, includesOtherChanges: true)
+                }
+
+                run.forget(tracks: outcome.updates.map(\.0))
+                onApplied?(outcome.updates.count, summary)
+
+                // Nothing more is coming, so the sheet has served its purpose.
+                // While a run is still going, stay open — more results are on
+                // their way into the list just pruned.
+                if run.phase == .finished, applyErrorMessage == nil {
+                    dismiss()
                 }
             } catch {
                 applyErrorMessage = error.localizedDescription
             }
         }
     }
+
+    private func artworkFailureMessage(_ names: [String], includesOtherChanges: Bool) -> String {
+        let count = names.count
+        var message = "Artwork could not be downloaded for \(count) track\(count == 1 ? "" : "s"): "
+            + names.prefix(3).joined(separator: ", ") + "."
+        if includesOtherChanges {
+            message += " Their other tag changes were still applied."
+        }
+        return message
+    }
+
 }

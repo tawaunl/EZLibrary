@@ -100,6 +100,9 @@ struct TracksAndTagsView: View {
     @State private var showWhitespaceCleanupConfirmation = false
     @State private var showOnlyFillEmptyPrompt = false
     @State private var showAITagVerification = false
+    /// Owned here rather than by the sheet so a verification keeps running
+    /// when the sheet is closed, and the results are still there on reopening.
+    @StateObject private var verificationRun = TagVerificationRunModel()
     @State private var showVerifiedApplyPrompt = false
     @State private var verifiedProgress: (done: Int, total: Int)?
     @State private var verifiedApplyTask: Task<Void, Never>?
@@ -203,6 +206,87 @@ struct TracksAndTagsView: View {
     }
 
     var body: some View {
+        contentWithSheets
+        .confirmationDialog(
+            "Re-read Tags From Files",
+            isPresented: $showTagRefreshConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Update \(pendingTagRefreshPlan?.changes.count ?? 0) Track\((pendingTagRefreshPlan?.changes.count ?? 0) == 1 ? "" : "s")") {
+                applyPendingTagRefresh()
+            }
+            Button("Cancel", role: .cancel) {
+                pendingTagRefreshPlan = nil
+            }
+        } message: {
+            Text(tagRefreshConfirmationMessage)
+        }
+        .confirmationDialog(
+            "Check These Tracks?",
+            isPresented: $showVerifiedApplyPrompt,
+            titleVisibility: .visible
+        ) {
+            Button("Check \(selectedTracks.count) Track\(selectedTracks.count == 1 ? "" : "s")") {
+                runVerifiedBulkApply()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(verifiedApplyPromptMessage)
+        }
+        .confirmationDialog(
+            "Apply Verified Tags",
+            isPresented: $showTopHitConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Apply to \(pendingTopHitUpdates.count) Track\(pendingTopHitUpdates.count == 1 ? "" : "s")") {
+                applyPendingTopHitUpdates()
+            }
+            Button("Cancel", role: .cancel) {
+                pendingTopHitUpdates = []
+            }
+        } message: {
+            Text(
+                "Title, Artist, Album, Genre, and Year will be updated on "
+                + "\(pendingTopHitUpdates.count) track\(pendingTopHitUpdates.count == 1 ? "" : "s"). "
+                + "Version wording such as \u{201C}(Extended Mix)\u{201D} is preserved.")
+        }
+        .confirmationDialog(
+            "Clean Tag Whitespace",
+            isPresented: $showWhitespaceCleanupConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Clean \(pendingWhitespaceFindings.count) Track\(pendingWhitespaceFindings.count == 1 ? "" : "s")") {
+                applyWhitespaceCleanup()
+            }
+            Button("Cancel", role: .cancel) {
+                pendingWhitespaceFindings = []
+            }
+        } message: {
+            Text(whitespaceCleanupMessage)
+        }
+        .confirmationDialog(
+            "“Only Fill Empty” is On",
+            isPresented: $showOnlyFillEmptyPrompt,
+            titleVisibility: .visible
+        ) {
+            Button("Turn Off “Only Fill Empty” & Apply") {
+                onlyFillEmpty = false
+                applyBulkMetadata()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The selected tracks already have those fields filled, so nothing changed. Uncheck “Only Fill Empty” to overwrite existing values, or turn it off now to apply.")
+        }
+    }
+
+    /// The pane, its sheets, and its alerts. Split from `body` so the
+    /// confirmation dialogs hang off a shorter chain.
+    ///
+    /// Not a stylistic choice: this view's modifier chain grew long enough that
+    /// the Swift type-checker gave up on it outright ("unable to type-check
+    /// this expression in reasonable time"), and the reported line moved with
+    /// every edit because no single expression was at fault — the chain was.
+    private var contentWithSheets: some View {
         VStack(spacing: 0) {
             HSplitView {
                 crateListPane
@@ -296,15 +380,24 @@ struct TracksAndTagsView: View {
             }
         }
         .sheet(isPresented: $showAITagVerification) {
-            AITagVerificationSheet(tracks: selectedTracks) { updates in
-                if let onApplyMetadataBatch {
-                    try onApplyMetadataBatch(updates)
-                } else {
-                    for (track, metadata) in updates {
-                        try onApplyMetadata(track, metadata)
+            AITagVerificationSheet(
+                tracks: selectedTracks,
+                run: verificationRun,
+                onApply: { updates in
+                    if let onApplyMetadataBatch {
+                        try onApplyMetadataBatch(updates)
+                    } else {
+                        for (track, metadata) in updates {
+                            try onApplyMetadata(track, metadata)
+                        }
                     }
+                },
+                // The sheet closes itself once its run is done, so the
+                // confirmation has to land somewhere still on screen.
+                onApplied: { _, summary in
+                    bulkLookupMessage = summary
                 }
-            }
+            )
         }
         .sheet(item: $audioEditTrack) { track in
             AudioTrimEditorSheet(
@@ -316,76 +409,6 @@ struct TracksAndTagsView: View {
                 // the in-memory library is stale either way.
                 onAudioEdited?()
             }
-        }
-        .confirmationDialog(
-            "Re-read Tags From Files",
-            isPresented: $showTagRefreshConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("Update \(pendingTagRefreshPlan?.changes.count ?? 0) Track\((pendingTagRefreshPlan?.changes.count ?? 0) == 1 ? "" : "s")") {
-                applyPendingTagRefresh()
-            }
-            Button("Cancel", role: .cancel) {
-                pendingTagRefreshPlan = nil
-            }
-        } message: {
-            Text(tagRefreshConfirmationMessage)
-        }
-        .confirmationDialog(
-            "Check These Tracks?",
-            isPresented: $showVerifiedApplyPrompt,
-            titleVisibility: .visible
-        ) {
-            Button("Check \(selectedTracks.count) Track\(selectedTracks.count == 1 ? "" : "s")") {
-                runVerifiedBulkApply()
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text(verifiedApplyPromptMessage)
-        }
-        .confirmationDialog(
-            "Apply Verified Tags",
-            isPresented: $showTopHitConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("Apply to \(pendingTopHitUpdates.count) Track\(pendingTopHitUpdates.count == 1 ? "" : "s")") {
-                applyPendingTopHitUpdates()
-            }
-            Button("Cancel", role: .cancel) {
-                pendingTopHitUpdates = []
-            }
-        } message: {
-            Text(
-                "Title, Artist, Album, Genre, and Year will be updated on "
-                + "\(pendingTopHitUpdates.count) track\(pendingTopHitUpdates.count == 1 ? "" : "s"). "
-                + "Version wording such as \u{201C}(Extended Mix)\u{201D} is preserved.")
-        }
-        .confirmationDialog(
-            "Clean Tag Whitespace",
-            isPresented: $showWhitespaceCleanupConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("Clean \(pendingWhitespaceFindings.count) Track\(pendingWhitespaceFindings.count == 1 ? "" : "s")") {
-                applyWhitespaceCleanup()
-            }
-            Button("Cancel", role: .cancel) {
-                pendingWhitespaceFindings = []
-            }
-        } message: {
-            Text(whitespaceCleanupMessage)
-        }
-        .confirmationDialog(
-            "“Only Fill Empty” is On",
-            isPresented: $showOnlyFillEmptyPrompt,
-            titleVisibility: .visible
-        ) {
-            Button("Turn Off “Only Fill Empty” & Apply") {
-                onlyFillEmpty = false
-                applyBulkMetadata()
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("The selected tracks already have those fields filled, so nothing changed. Uncheck “Only Fill Empty” to overwrite existing values, or turn it off now to apply.")
         }
     }
 
@@ -546,7 +569,7 @@ struct TracksAndTagsView: View {
                     "Check the selected tracks with the engine chosen in \u{201C}Verify Tags with AI\u{201D}, "
                     + "then fill Title, Artist, Album, Genre, and Year. Version wording such as "
                     + "\u{201C}(Extended Mix)\u{201D} is always kept. Shows what will change before writing.")
-                Button("Verify Tags with AI…") {
+                Button(verificationRun.isRunning ? "Verifying…" : "Verify Tags with AI…") {
                     showAITagVerification = true
                 }
                 .disabled(selectedTracks.isEmpty || isBulkLookupRunning)
@@ -640,6 +663,8 @@ struct TracksAndTagsView: View {
                     .font(.caption)
                     .foregroundStyle(.green)
             }
+
+            verificationRunBanner
 
             if let bulkLookupMessage {
                 Text(bulkLookupMessage)
@@ -995,6 +1020,71 @@ struct TracksAndTagsView: View {
 
     private var verificationEngine: TagVerificationEngineKind {
         engineResolution.engine
+    }
+
+    // Pulled out of the view body: a ternary inside string interpolation is
+    // cheap to read and expensive to type-check, and this body had grown long
+    // enough that a few of them tipped the compiler over its budget.
+    /// Keeps a background verification visible while the sheet is closed.
+    ///
+    /// Without it a run that continues after the window closes is invisible —
+    /// the user has no way to tell whether anything is still happening, no way
+    /// to stop it, and no prompt that there are results waiting.
+    @ViewBuilder
+    private var verificationRunBanner: some View {
+        if verificationRun.isRunning {
+            HStack(spacing: 8) {
+                ProgressView()
+                    .controlSize(.small)
+                Text(verificationProgressText)
+                    .font(.caption)
+                Button("Show") { showAITagVerification = true }
+                    .controlSize(.small)
+                Button("Stop") { verificationRun.cancel() }
+                    .controlSize(.small)
+                Spacer(minLength: 0)
+            }
+        } else if verificationRun.hasReviewableResults, !showAITagVerification {
+            HStack(spacing: 8) {
+                Image(systemName: "checkmark.seal")
+                    .foregroundStyle(.green)
+                Text(verificationReadyText)
+                    .font(.caption)
+                Button("Review") { showAITagVerification = true }
+                    .controlSize(.small)
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    private var verificationProgressText: String {
+        let done = verificationRun.completedCount
+        let total = verificationRun.totalCount
+        return "Verifying \(done) of \(total) in the background"
+    }
+
+    private var verificationReadyText: String {
+        let changes = verificationRun.outstandingChangeCount
+        let tracks = verificationRun.results.count
+        return "\(changes) proposed change\(changes == 1 ? "" : "s") across "
+            + "\(tracks) track\(tracks == 1 ? "" : "s") ready to review"
+    }
+
+    private var verifiedCheckButtonTitle: String {
+        let count = selectedTracks.count
+        return "Check \(count) Track\(count == 1 ? "" : "s")"
+    }
+
+    private var verifiedApplyButtonTitle: String {
+        let count = pendingTopHitUpdates.count
+        return "Apply to \(count) Track\(count == 1 ? "" : "s")"
+    }
+
+    private var verifiedApplyConfirmationMessage: String {
+        let count = pendingTopHitUpdates.count
+        let plural = count == 1 ? "" : "s"
+        return "Title, Artist, Album, Genre, and Year will be updated on \(count) track\(plural). "
+            + "Version wording such as \u{201C}(Extended Mix)\u{201D} is preserved."
     }
 
     private var verifiedApplyPromptMessage: String {

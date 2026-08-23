@@ -210,7 +210,11 @@ private let fullVerdictJSON = """
 
     let evidence = await AITagVerificationService.gatherEvidence(for: sampleTrack(), options: options)
 
-    #expect(evidence.contains("FILE: Justice - Neverender.mp3"))
+    // The file name is present but explicitly demoted: a small model copies
+    // whatever looks most like an answer, and "Artist - Title.mp3" looks
+    // exactly like one.
+    #expect(evidence.contains("Justice - Neverender.mp3"))
+    #expect(evidence.contains("weak hint only"))
     #expect(evidence.contains("title: Neverender"))
     #expect(evidence.contains("genre: (empty)"))
     #expect(evidence.contains("AUTOMATED CHECKS FLAGGED:"))

@@ -185,11 +185,10 @@ private func tracks(in env: Env) throws -> [Track] {
     let preview = try TrackBulkRenameService.preview(
         tracks: try tracks(in: env), template: "{artist}-{title}", databaseFileURL: env.databaseFileURL)
 
-    SeratoProcessGuard.isRunningOverride = true
-    defer { TestSeratoEnvironment.pretendSeratoIsClosed() }
-
-    #expect(throws: TrackBulkRenameService.RenameError.self) {
-        try TrackBulkRenameService.apply(preview)
+    TestSeratoEnvironment.withSeratoRunning {
+        #expect(throws: TrackBulkRenameService.RenameError.self) {
+            try TrackBulkRenameService.apply(preview)
+        }
     }
     #expect(FileManager.default.fileExists(atPath: env.musicDirectory.appendingPathComponent("one.mp3").path))
 }

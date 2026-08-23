@@ -304,7 +304,11 @@ public enum OnDeviceTagVerificationService {
     - Keep version wording. "Extended Mix", "Radio Edit", "Dirty", "Clean", "Acapella" and \
     remix credits are part of the title of the version this DJ owns. Never remove one.
     - The title field holds the song name only. Never put the artist name in it, even when \
-    the file name is written that way.
+    the file name is written that way. Judge from the tags, not the file name.
+    - Any form of hip hop — "Hip-Hop/Rap", "Rap/Hip Hop", "hip hop", "rap" — is written exactly \
+    "Hip Hop".
+    - For a remix or edit outside electronic music, use the year the original song came out, not \
+    the year of the remix. In electronic music a remix is its own release, so use its own year.
     - Length matters. If the file is minutes longer than a database result, it is a \
     different version and that result's album and year do not apply to it.
     - Mark a field "incorrect" only when a database clearly contradicts it. Say which \

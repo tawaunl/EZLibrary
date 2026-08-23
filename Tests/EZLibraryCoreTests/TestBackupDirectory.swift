@@ -66,7 +66,21 @@ enum TestSeratoEnvironment {
     /// restore it with `pretendSeratoIsClosed()` rather than `nil` — clearing
     /// it re-exposes the real check to whatever else is running in parallel.
     static func pretendSeratoIsClosed() {
-        SeratoProcessGuard.isRunningOverride = false
+        SeratoProcessGuard.assumesSeratoClosedForTesting = true
+    }
+
+    /// Runs `body` with the guard reporting that Serato is open.
+    ///
+    /// Task-scoped, so tests running in parallel are unaffected — which is the
+    /// whole reason the override moved off a global.
+    @discardableResult
+    static func withSeratoRunning<T>(_ body: () throws -> T) rethrows -> T {
+        try SeratoProcessGuard.$isRunningOverride.withValue(true, operation: body)
+    }
+
+    @discardableResult
+    static func withSeratoRunning<T>(_ body: () async throws -> T) async rethrows -> T {
+        try await SeratoProcessGuard.$isRunningOverride.withValue(true, operation: body)
     }
 
     /// Establish the "Serato is closed" default without stomping a value a
@@ -77,8 +91,6 @@ enum TestSeratoEnvironment {
     /// set it to `true` to exercise the refusal — the guard would silently not
     /// fire and those tests failed at random.
     static func assumeSeratoClosedUnlessSet() {
-        if SeratoProcessGuard.isRunningOverride == nil {
-            SeratoProcessGuard.isRunningOverride = false
-        }
+        SeratoProcessGuard.assumesSeratoClosedForTesting = true
     }
 }

@@ -328,12 +328,19 @@ public enum AITagVerificationService {
     static func gatherEvidence(for track: Track, options: Options) async -> String {
         var lines: [String] = []
 
-        lines.append("FILE: \(track.fileURL.lastPathComponent)")
+        // Listed last-ish and labelled as a hint: the model reproduces the shape
+        // of whatever looks most like an answer, and a filename shaped
+        // "Artist - Title" is exactly that. It has to be present for the cases
+        // where the tags are empty, but it must not read as authoritative.
+        lines.append("FILE NAME (weak hint only, never copy into a field): \(track.fileURL.lastPathComponent)")
         if let duration = track.duration, duration > 0 {
             let minutes = Int(duration) / 60
             let seconds = Int(duration) % 60
             lines.append("DURATION: \(minutes):\(String(format: "%02d", seconds))")
         }
+
+        // Read once: these are both the search terms and the thing being judged.
+        let fileTags = await AudioFileTagReader.readTags(from: track.fileURL)
 
         lines.append("")
         lines.append("CURRENT TAGS:")
@@ -355,9 +362,6 @@ public enum AITagVerificationService {
             lines.append("  label: \(track.label)")
         }
 
-        // The library database and the file's own tags can disagree, and when
-        // they do it is a strong hint about which one was edited by hand.
-        let fileTags = await AudioFileTagReader.readTags(from: track.fileURL)
         if !fileTags.isEmpty {
             var fileLines: [String] = []
             if let value = fileTags.title, !TagIntegrityAudit.looselyMatches(value, track.title) {
@@ -408,14 +412,12 @@ public enum AITagVerificationService {
         }
 
         if options.useOnlineCandidates {
-            let query = OnlineTrackMetadataLookupService.Query(
-                title: track.title,
-                artist: track.artist,
-                album: track.album
-            )
+            // Same rule as the consensus engine: search the file's own tags.
+            let query = TagConsensusService.searchQuery(for: track, fileTags: fileTags)
             let candidates = (try? await OnlineTrackMetadataLookupService.lookup(
                 query: query,
-                maxResultsPerSource: 4
+                maxResultsPerSource: 6,
+                deduplicate: false
             )) ?? []
             if !candidates.isEmpty {
                 lines.append("")
@@ -476,8 +478,9 @@ public enum AITagVerificationService {
     How to weigh evidence:
     - An AcoustID fingerprint match identifies the actual audio. It is the strongest evidence of \
     which recording this is, and it outranks the tags and the filename.
-    - For record-pool and rip downloads the filename is often more reliable than the tags, because \
-    tags are frequently left over from whatever the previous file in the batch was.
+    - Judge from the ID3 tags, not the file name. The file name is shown only as a weak hint for \
+    when the tags are empty or obviously junk; never prefer it to a tag that has a real value, and \
+    never copy it into a field.
     - Database candidates (iTunes, MusicBrainz, Discogs) are reliable for commercial releases and \
     unreliable for edits, bootlegs, mashups, and white labels.
     - Search the web when the candidates disagree, when they are missing, or when the track looks \
@@ -486,9 +489,16 @@ public enum AITagVerificationService {
     the only source that has them right.
 
     Rules:
-    - Keep the version descriptor. "Extended Mix", "Radio Edit", "Dirty", "Clean", "Acapella", \
-    "Intro", "(Rampa Remix)" and the like are part of the title of the version the DJ owns. Never \
-    strip one, and never replace a specific version's metadata with the original release's.
+    - Keep the version descriptor, exactly as written. "Extended Mix", "Radio Edit", "Dirty", \
+    "Clean", "Acapella", "Intro", "(Rampa Remix)" and the like identify which cut of the record \
+    this DJ owns. They are part of the title. Never strip one, never reword one, and never replace \
+    a specific version's metadata with the original release's.
+    - Genre spelling is fixed for one case: any form of hip hop — "Hip-Hop/Rap", "Rap/Hip Hop", \
+    "hip hop", "rap" — must be written exactly "Hip Hop".
+    - Year for a remix or edit depends on the genre. Outside electronic music, use the year the \
+    original song came out, not the year the remix was released: a hip-hop or rock record remixed \
+    later is still that record. In electronic music (house, techno, drum & bass, trance, dance and \
+    the like) a remix is its own release, so use the remix's own year.
     - The artist field holds the credited performing artists. Do not move a remixer there unless the \
     release credits them there.
     - Never invent a value. If the evidence does not settle a field, return verdict "unverified" and \

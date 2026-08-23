@@ -197,7 +197,11 @@ public struct TrackTagVerification: Sendable, Identifiable {
             case .album:
                 update.album = value
             case .genre:
-                update.genre = value
+                // Same choke point as the title, for the same reason: the
+                // sources spell one genre three ways ("Hip-Hop/Rap",
+                // "Rap/Hip Hop", "hip hop") and writing them through verbatim
+                // produces three genres in a library that should have one.
+                update.genre = GenreCanonicalizer.canonical(value)
             case .year:
                 // A year the engine could not express as a number is not a
                 // year; dropping the change beats writing a garbage value.

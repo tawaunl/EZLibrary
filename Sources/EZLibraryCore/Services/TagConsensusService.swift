@@ -60,6 +60,12 @@ public enum TagConsensusService {
         /// treated as a different recording. Generous enough to absorb fade-outs
         /// and silence trimming, tight enough to separate an edit from a mix.
         public var durationToleranceSeconds: Double
+        /// How many tracks are verified at once.
+        ///
+        /// Zero means "decide from the sources", which is almost always right:
+        /// the fast pair has no meaningful pacing, so width is free, while
+        /// MusicBrainz serialises callers to one request a second and extra
+        /// concurrency there only builds a queue.
         public var maxConcurrentTracks: Int
 
         public init(
@@ -67,13 +73,25 @@ public enum TagConsensusService {
             sourceSelection: OnlineTrackMetadataLookupService.SourceSelection = .fastSources,
             minimumAgreeingSources: Int = 2,
             durationToleranceSeconds: Double = 12,
-            maxConcurrentTracks: Int = 3
+            maxConcurrentTracks: Int = 0
         ) {
             self.useFingerprint = useFingerprint
             self.sourceSelection = sourceSelection
             self.minimumAgreeingSources = minimumAgreeingSources
             self.durationToleranceSeconds = durationToleranceSeconds
             self.maxConcurrentTracks = maxConcurrentTracks
+        }
+
+        /// The width actually used, derived from the sources when not pinned.
+        ///
+        /// A rate-limited source is the ceiling regardless of how many tracks
+        /// run at once, so widening past it just queues work; without one,
+        /// throughput scales with width until the network gives up.
+        var effectiveConcurrency: Int {
+            guard maxConcurrentTracks <= 0 else { return maxConcurrentTracks }
+            let paced: Set<OnlineMetadataSource> = [.musicBrainz, .discogs]
+            let hasPacedSource = !Set(sourceSelection.enabledSources).isDisjoint(with: paced)
+            return hasPacedSource ? 3 : 8
         }
     }
 
@@ -127,7 +145,7 @@ public enum TagConsensusService {
                 var verified = 0
                 var failed = 0
                 var iterator = tracks.makeIterator()
-                let parallelism = max(1, min(options.maxConcurrentTracks, tracks.count))
+                let parallelism = max(1, min(options.effectiveConcurrency, tracks.count))
 
                 await withTaskGroup(of: (Track, Result<TrackTagVerification, Error>).self) { group in
                     func addNext() {
@@ -189,12 +207,15 @@ public enum TagConsensusService {
             return (try? await AudioFingerprintService.suggestMetadata(for: track, maxResults: 3)) ?? []
         }()
 
+        // Searched from the file's own ID3 tags, not the library's copy of them
+        // and never the filename. The database row can be stale — it is what
+        // Serato read when the track was imported, and anything that has edited
+        // the file since has not necessarily told Serato. The file is the
+        // current truth about what the track claims to be.
+        let fileTags = await AudioFileTagReader.readTags(from: track.fileURL)
+
         async let candidates: [OnlineTrackMetadataCandidate] = {
-            let query = OnlineTrackMetadataLookupService.Query(
-                title: track.title,
-                artist: track.artist,
-                album: track.album
-            )
+            let query = searchQuery(for: track, fileTags: fileTags)
             return (try? await OnlineTrackMetadataLookupService.lookup(
                 query: query,
                 sourceSelection: options.sourceSelection,
@@ -226,6 +247,28 @@ public enum TagConsensusService {
     }
 
     // MARK: - The consensus itself
+
+    /// The terms to search with.
+    ///
+    /// The file's own ID3 tags win over the library's stored copy wherever the
+    /// file has a value; the stored copy fills the gaps. The filename is never
+    /// used — it is evidence about the track, but it is the least reliable kind
+    /// and searching by it turns "01 - track.mp3" into a query for nothing.
+    static func searchQuery(
+        for track: Track,
+        fileTags: AudioFileTagReader.Tags
+    ) -> OnlineTrackMetadataLookupService.Query {
+        func preferred(_ fileValue: String?, _ storedValue: String) -> String {
+            let fromFile = fileValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return fromFile.isEmpty ? storedValue : fromFile
+        }
+
+        return OnlineTrackMetadataLookupService.Query(
+            title: preferred(fileTags.title, track.title),
+            artist: preferred(fileTags.artist, track.artist),
+            album: preferred(fileTags.album, track.album)
+        )
+    }
 
     /// Pure and offline: everything above this line only gathers the inputs.
     /// Keeping the judgement separate is what makes it testable against exact
@@ -390,7 +433,19 @@ public enum TagConsensusService {
         let currentValue = AITagVerificationService.currentValue(of: field, in: track)
         let claims = claims(for: field, fingerprintMatches: fingerprintMatches, candidates: candidates)
 
-        let resolved = field == .year ? yearConsensus(from: claims) : winningValue(from: claims)
+        let resolved: (value: String, sources: Set<String>)?
+        if field == .year {
+            resolved = yearConsensus(
+                from: claims,
+                preferOriginalRelease: shouldUseOriginalReleaseYear(
+                    for: track,
+                    fingerprintMatches: fingerprintMatches,
+                    candidates: candidates
+                )
+            )
+        } else {
+            resolved = winningValue(from: claims)
+        }
         guard let winner = resolved else {
             return TagFieldVerification(
                 field: field,
@@ -475,6 +530,60 @@ public enum TagConsensusService {
         return "\(sourceList) agree on \"\(proposal)\"."
     }
 
+    /// Whether this track's year should be the original song's rather than
+    /// this version's.
+    ///
+    /// True for a remix or edit outside electronic music. A hip-hop or rock
+    /// record remixed years later is still that record and is tagged with the
+    /// year the song came out; in electronic music a remix is a release in its
+    /// own right and carries its own date.
+    static func shouldUseOriginalReleaseYear(
+        for track: Track,
+        fingerprintMatches: [AudioFingerprintSuggestion],
+        candidates: [OnlineTrackMetadataCandidate]
+    ) -> Bool {
+        guard isVersionOfAnotherRecording(track.title) else { return false }
+        return !GenreCanonicalizer.isElectronic(effectiveGenre(
+            for: track,
+            fingerprintMatches: fingerprintMatches,
+            candidates: candidates
+        ))
+    }
+
+    /// The genre to reason about: what the track already has, or failing that
+    /// what the sources agree on. A track with no genre yet still needs the
+    /// year rule applied.
+    static func effectiveGenre(
+        for track: Track,
+        fingerprintMatches: [AudioFingerprintSuggestion],
+        candidates: [OnlineTrackMetadataCandidate]
+    ) -> String {
+        let current = track.genre.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !current.isEmpty { return current }
+
+        let genreClaims = claims(
+            for: .genre,
+            fingerprintMatches: fingerprintMatches,
+            candidates: candidates
+        )
+        return winningValue(from: genreClaims)?.value ?? ""
+    }
+
+    /// True when the title marks this as a remix, edit, or other version of a
+    /// recording that exists in its own right.
+    static func isVersionOfAnotherRecording(_ title: String) -> Bool {
+        let lowered = title.lowercased()
+        // Only inside brackets or after a dash: a song genuinely called
+        // "Remix Culture" is not a remix.
+        let markers = ["remix", "edit", "rework", "refix", "flip", "bootleg",
+                       "mashup", "mix", "version", "vip", "dub"]
+        guard let range = lowered.range(of: #"[\(\[][^\)\]]*[\)\]]|\s-\s.*$"#, options: .regularExpression) else {
+            return false
+        }
+        let descriptor = String(lowered[range])
+        return markers.contains { descriptor.contains($0) }
+    }
+
     static func claims(
         for field: TagIntegrityAudit.Field,
         fingerprintMatches: [AudioFingerprintSuggestion],
@@ -498,6 +607,20 @@ public enum TagConsensusService {
             ))
         }
 
+        // Genres are canonicalised before they are counted, not just before
+        // they are written: iTunes' "Hip-Hop/Rap" and Deezer's "Rap/Hip Hop"
+        // are the same answer, and left as written they look like two sources
+        // disagreeing rather than two agreeing.
+        if field == .genre {
+            claims = claims.map {
+                Claim(
+                    sourceName: $0.sourceName,
+                    value: GenreCanonicalizer.canonical($0.value),
+                    isFingerprint: $0.isFingerprint
+                )
+            }
+        }
+
         return claims
     }
 
@@ -517,9 +640,17 @@ public enum TagConsensusService {
     /// MusicBrainz is reporting. A genuine gap — a 1977 original against a 2015
     /// remaster — is far wider than the tolerance, so those still do not merge,
     /// and the earliest is the right answer there anyway.
+    ///
+    /// - Parameter preferOriginalRelease: Takes the earliest year any source
+    ///   reports rather than the best-supported one. This is the rule for a
+    ///   remix or edit outside electronic music: a hip-hop record remixed years
+    ///   later is still that record, and its year is the year the song came
+    ///   out. Electronic music works the other way — a remix there is its own
+    ///   release with its own date — so this stays off for those.
     static func yearConsensus(
         from claims: [Claim],
-        tolerance: Int = 1
+        tolerance: Int = 1,
+        preferOriginalRelease: Bool = false
     ) -> (value: String, sources: Set<String>)? {
         let parsed = claims.compactMap { claim -> (year: Int, source: String)? in
             guard let year = Int(claim.value.prefix(4)), (1900...2100).contains(year) else { return nil }
@@ -543,6 +674,13 @@ public enum TagConsensusService {
             } else {
                 best = (earliest, sources)
             }
+        }
+
+        if preferOriginalRelease, let earliest = parsed.map(\.year).min() {
+            // Everything within tolerance of the earliest year is backing the
+            // same original release, so they all count as corroborating it.
+            let backers = Set(parsed.filter { $0.year - earliest <= tolerance }.map(\.source))
+            return (String(earliest), backers)
         }
 
         guard let best else { return nil }

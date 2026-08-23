@@ -115,9 +115,6 @@ private func makeScratchImportEnvironment() throws -> (tempRoot: URL, libraryDir
     let env = try makeScratchImportEnvironment()
     defer { try? FileManager.default.removeItem(at: env.tempRoot) }
 
-    SeratoProcessGuard.isRunningOverride = true
-    defer { TestSeratoEnvironment.pretendSeratoIsClosed() }
-
     let incomingFile = env.tempRoot.appendingPathComponent("Live Add.mp3")
     try Data("live".utf8).write(to: incomingFile)
 
@@ -130,16 +127,18 @@ private func makeScratchImportEnvironment() throws -> (tempRoot: URL, libraryDir
     let fixedDate = try #require(components.date)
     let rootDirectory = SeratoLibraryLocator.rootDirectory(for: env.libraryDirectory, homeDirectory: env.tempRoot)
 
-    #expect(throws: AddMusicImportService.ImportError.self) {
-        _ = try AddMusicImportService.importIntoDatedCrate(
-            inputURLs: [incomingFile],
-            destinationFolderURL: env.destinationRoot,
-            crateNamePrefix: "New Music",
-            transferMode: .move,
-            subcratesDirectory: env.subcratesDirectory,
-            rootDirectory: rootDirectory,
-            date: fixedDate
-        )
+    TestSeratoEnvironment.withSeratoRunning {
+        #expect(throws: AddMusicImportService.ImportError.self) {
+            _ = try AddMusicImportService.importIntoDatedCrate(
+                inputURLs: [incomingFile],
+                destinationFolderURL: env.destinationRoot,
+                crateNamePrefix: "New Music",
+                transferMode: .move,
+                subcratesDirectory: env.subcratesDirectory,
+                rootDirectory: rootDirectory,
+                date: fixedDate
+            )
+        }
     }
 
     // The file must be left where it was rather than half-imported.

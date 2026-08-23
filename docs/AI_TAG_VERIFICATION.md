@@ -101,6 +101,23 @@ track it is not expensive, it simply buys nothing for a track whose identity the
 databases already agree on. It earns its keep on files too badly tagged to
 search with — a rescue pass, not a library sweep.
 
+### Where the remaining time goes
+
+Measured at **0.24s per track** on the fast pair — roughly four minutes for a
+thousand tracks. Two things were tried and one worked:
+
+- **Track concurrency does nothing.** 24 tracks took 7.4s at width 3 and 7.3s at
+  width 8. The pipeline is bound by per-source request pacing, not by how many
+  tracks are in flight, so widening only builds a queue. The default now derives
+  width from the sources rather than pretending more is better.
+- **Fetching one Deezer album instead of two cut 20%** (0.30s → 0.24s per track)
+  and filled exactly the same number of years and genres. The top result's album
+  is the one that matters; the second lookup only bought requests.
+
+What is left is iTunes' own rate limit. Going faster means dropping a source,
+which costs corroboration — so the honest lever for a big library is the stage 1
+pre-screen, not more parallelism.
+
 Three guards keep it from confidently proposing the wrong recording:
 
 - **Distinct sources, not distinct results.** Five iTunes rows agreeing with
@@ -309,6 +326,51 @@ the engine, the cost, and a time estimate. A running job shows a live
 `done / total` count and can be stopped partway, keeping what it already found.
 
 "Fill Missing Genre/Year" still uses the older single-source lookup.
+
+## Runs keep going while you work
+
+A verification belongs to the app, not to the review window. Close the sheet and
+the run carries on; the Tags view shows a banner with live progress, a **Show**
+button to reopen it, and **Stop**. When it finishes, the banner turns into
+*"N proposed changes across M tracks ready to review"*. Reopening finds the
+results, and the ticks you had already made, exactly as you left them.
+
+That matters because a run is not instant: the on-device model is seconds per
+track, and a library-sized consensus pass is minutes. Holding that state in the
+window meant closing it threw the work away.
+
+Applying is unchanged in spirit — nothing is written until you press Apply — but
+the sheet now gets out of the way afterwards: with the run finished it closes,
+and mid-run it drops the tracks it just wrote so what remains is the outstanding
+work.
+
+## What the searches actually use
+
+**The file's own ID3 tags.** Not the filename, and not the library's stored copy
+of the tags. The database row is what Serato read at import, and anything that
+edited the file since has not necessarily told Serato, so the file is the
+current truth about what a track claims to be. Where the file has no value for a
+field, the library's copy fills the gap.
+
+The filename is still shown to the AI tiers, but explicitly labelled as a weak
+hint that must never be copied into a field — a small model reproduces whatever
+looks most like an answer, and `Artist - Title.mp3` looks exactly like one.
+
+## House rules the engines follow
+
+- **Version wording is preserved, always.** Enforced in code at the single point
+  every engine's title change passes through, not merely asked for in a prompt.
+- **Hip hop is spelled "Hip Hop".** The sources return "Hip-Hop/Rap",
+  "Rap/Hip Hop" and "hip hop" for the same genre. They are canonicalised *before
+  being counted*, so three sources spelling it three ways register as three
+  sources agreeing rather than three disagreeing, and *again on write*, so the
+  library ends up with one spelling.
+- **A remix keeps the original song's year — unless it is electronic.** Outside
+  electronic music a remix is still that record, so it carries the year the song
+  came out. In house, techno, drum & bass, trance and the like a remix is a
+  release in its own right and keeps its own date. A title only counts as a
+  version when the marker is inside brackets or after a dash, so a song called
+  "Remix Culture" is not mistaken for one.
 
 ## Nothing is written until you apply it
 
