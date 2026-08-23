@@ -8,11 +8,7 @@
 // any later version. It is distributed WITHOUT ANY WARRANTY; see the GNU
 // General Public License (LICENSE) for more details.
 
-#if os(macOS)
 import AppKit
-#else
-import Foundation
-#endif
 
 /// Detects whether Serato itself is currently running, so callers can
 /// refuse or warn before mutating `database V2`/`.crate` files — writing to
@@ -32,31 +28,12 @@ public enum SeratoProcessGuard {
     /// pattern already used by `SeratoBackupBeforeWrite`.
     public nonisolated(unsafe) static var isRunningOverride: Bool?
 
-    /// Task-scoped answer, checked ahead of `isRunningOverride`.
-    ///
-    /// `isRunningOverride` is one value for the whole process, so a parallel
-    /// test that set it to `true` to exercise the refusal made unrelated
-    /// tests' writes fail at random. A task-local is visible only to the test
-    /// that binds it and the work that test starts, so suites running side by
-    /// side can no longer see each other's answer.
-    @TaskLocal public static var isRunningForCurrentTask: Bool?
-
     public static var isSeratoRunning: Bool {
-        if let taskOverride = isRunningForCurrentTask {
-            return taskOverride
-        }
         if let override = isRunningOverride {
             return override
         }
-        #if os(macOS)
         return NSWorkspace.shared.runningApplications.contains { app in
             app.bundleIdentifier?.hasPrefix(bundleIdentifierPrefix) ?? false
         }
-        #else
-        // Serato is a desktop app, so nothing on this platform can be holding
-        // the library open. Devices that only read snapshots never write to a
-        // Serato file anyway — the Mac is the only thing that applies changes.
-        return false
-        #endif
     }
 }

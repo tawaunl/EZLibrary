@@ -1,6 +1,6 @@
 # EZLibrary Feature Roadmap
 
-## Status at a glance (updated 2026-08-19)
+## Status at a glance (updated 2026-07-18)
 
 Legend: ✅ Done (shipped) · 🚧 In progress / partial · 📋 Planned · ⏸️ Tabled
 
@@ -9,7 +9,6 @@ The app has grown well past the original MVP, and most of the originally-planned
 ### In progress
 
 - 🚧 **ID3 title descriptor preservation** — keep DJ markers like "(Intro)"/"(Clean)" when applying an online title match (branch `feature/id3-title-descriptors`, PR #16).
-- 🚧 **Offline library sync** — browse the library and queue edits from a phone while away from the Mac (branch `feature/offline-library-sync`). Stage 0 engine work landed; see [Offline library sync](#offline-library-sync) below.
 
 ### Planned / not started
 
@@ -69,125 +68,6 @@ Only the file header/envelope was validated on this machine (the local library i
 | 6 | 5 CrateMatch | Spotify ingestion, fuzzy metadata matching | Reuses matching concepts from Phase 3; needs Spotify API credentials decision. |
 | 7 | 8 iTunes Migration | Library.xml (or MediaLibrary framework) reader | One-time-per-user tool, isolated risk, doesn't block others — reuses TrackFileMover/SeratoCrateWriter, no new file-move primitives. |
 | 8 | 11 Sync (Rekordbox) | Rekordbox DB writer, cue→hot-cue conversion, USB export | Highest reverse-engineering risk in the roadmap; pure read-only export from our side (never writes back to Serato), so it can slip without blocking anything. Target the unencrypted `.PDB`/USB-export format first (also what CDJs actually read), not the SQLCipher-encrypted `master.db` — safer and may fully satisfy the "mirror to USB" requirement on its own. |
-
----
-
-## Offline library sync
-
-**Goal:** browse the library, retag tracks, and build crates from a phone while away from the
-Mac — then apply that work safely on return.
-
-**Shape:** the phone plans, the Mac executes. A dated `LibrarySnapshot` goes out; an intent
-queue comes back; the Mac revalidates it against a fresh parse, previews a diff, and only
-then writes through the existing backup-first/atomic/read-back path. The phone never touches
-a Serato file, so it cannot corrupt anything.
-
-**Why it is tractable:** the library's metadata is ~1.76 MB against ~18 GB of audio, so this
-was never a sync-capacity problem — only a question of which operations can be expressed
-without the audio bytes present. Browsing, crate membership, and tag *values* can; playback,
-waveforms, fingerprinting, and the actual ID3 write cannot.
-
-**Transport:** a plain iCloud Drive folder, not CloudKit. CloudKit needs a Developer ID
-provisioning profile, and Gatekeeper checks that profile at every launch — an expired one
-stops the app opening, which is unacceptable for a tool people install and forget. One writer
-per file (`snapshot-<fingerprint>.json` from the Mac, `queue-<uuid>.json` from the phone) so
-iCloud never creates conflict copies. Being just files, it degrades to Dropbox or AirDrop.
-
-### Track identity
-
-`Track.id` is a fresh `UUID()` per parse and means nothing across devices, so identity runs on
-`seratoStoredPath`. Paths are not permanent either, so `TrackIdentityResolver` walks a ladder
-and reports which rung answered:
-
-1. **Exact path** — free and exact.
-2. **Rename journal** — an exact lookup for any move EZLibrary itself performed.
-3. **Filename basename** — consolidation preserves filenames while changing folders.
-4. **Snapshot title + artist** — survives a move *and* a rename.
-5. **Unresolved / ambiguous** — surfaced for the user, never guessed.
-
-Measured against the real 2,362-track library, `(dateAdded, duration)` looked like the ideal
-key — immune to both moves and retagging — but **fails**: 370 tracks are ambiguous under it
-across 83 collision groups, because batch imports share a `uadd` second, and 280 tracks carry
-no duration at all. Path, basename, and title+artist were each unique across that library,
-though that is a property of one library and not a guarantee — hence the corroboration step
-and the explicit ambiguous case.
-
-### Reconciliation
-
-Everything is dated, so an incoming intent falls into one of four buckets: the journal never
-touched it (apply), the journal set the same value (drop silently — do not prompt on
-agreement), the journal set a different value (a real conflict, ask), or the value differs
-with nothing in the journal to explain it (external change by Serato or Finder — ask, but
-there is no second value to offer). Crate membership is a set and merges on its own; only
-crate *ordering* genuinely needs a prompt.
-
-Retention matters: pruning the journal past a snapshot's timestamp makes that snapshot
-unreconcilable. Journal entries are kept for `LibraryChangeJournal.defaultRetention`
-(90 days), and older work is refused rather than guessed at.
-
-### Status
-
-| Stage | Scope | Status |
-|---|---|---|
-| 0 | `Codable` snapshot + journal + resolver, engine only | ✅ landed |
-| 1a | Snapshot export from the Mac ("Offline Sync" tab) | ✅ landed |
-| 1b | Portable snapshot target that builds for iOS | ✅ landed |
-| 1c | Shared crate-tree + search over snapshot types | ✅ landed |
-| 1d | iOS app (unified as **PocketCrates**, browse + edit) | ✅ landed |
-| 1e | Xcode project wrapper so the app can run | ✅ landed (`Mobile/PocketCrates/`) |
-| 2 | Crate intents (create, rename, delete) | ✅ landed |
-| 3 | Queued tag edits + Mac-side reconcile/apply | ✅ landed |
-
-Stages 2–3 shipped the **two-way loop**. The phone composes granular `SnapshotIntent`s
-(shared type in `EZLibrarySnapshotKit`) and writes them to its own `queue-<deviceID>.json`
-outbox in the sync folder. The Mac's "Offline Sync" tab discovers those queues
-(`SnapshotIntentIngestService`), resolves each intent against the current library via
-`TrackIdentityResolver` + the change journal (`SnapshotIntentReconciler` — classifying every
-change as applicable / conflict / unresolved / redundant), previews them for the user, and
-applies the accepted ones through the same guarded, backed-up write path as a desktop edit
-(`SnapshotIntentApplier`), then deletes the consumed queue. A phone never re-exports a whole
-library, so Mac-side edits are never clobbered.
-
-Stage 0 shipped `Sources/EZLibraryCore/Sync/` — `LibrarySnapshot`, `LibrarySnapshotBuilder`,
-`LibraryFingerprint`, `LibraryChangeJournal`, `TrackIdentityResolver` — plus journaling wired
-into `LibraryConsolidationService`, covered by 45 tests.
-
-Stage 1a shipped `LibrarySnapshotExportService` and the "Offline Sync" tab: exports to a
-folder (defaulting to iCloud Drive), skips the write when the fingerprint is unchanged, and
-keeps the most recent few snapshots so a device that has been offline can still find the one
-its pending work was based on.
-
-Stage 1b split the snapshot format into its own target, **`EZLibrarySnapshotKit`**, which is
-pure Foundation and knows nothing about Serato's binary format or where a library lives on
-disk. It holds `LibrarySnapshot`, `SnapshotTrack`, `SnapshotCrate`, `TrackField`, and snapshot
-encoding/decoding/reading. `EZLibraryCore` depends on it and `@_exported`s it, so no app or
-test code needed to change.
-
-The split turned out far cheaper than first estimated. The initial guess assumed a phone would
-need `Track`, `Crate`, and the crate-tree and search helpers — about 37 files. It needs none of
-them: a phone reads *snapshots*, whose types reference `Track`/`Crate` in exactly two places,
-both being export-side conversions that only run on the Mac. Those moved to
-`Sync/SnapshotConversions.swift` as extensions. The journal and `TrackIdentityResolver` also
-stay in Core, because reconciling is the Mac's job — the phone only emits intent.
-
-Portability is enforced rather than assumed: CI cross-compiles `EZLibrarySnapshotKit` against
-the iOS simulator SDK on every change. Both `arm64-apple-ios17.0-simulator` and
-`arm64-apple-ios17.0` were verified locally. `.iOS(.v17)` is now declared in `Package.swift`;
-`EZLibraryCore`, the app, and the CLI remain macOS-only.
-
-Stage 1c added the two things a browsing screen needs, both in the kit so the Mac and the
-phone behave identically rather than drifting: `SnapshotCrateTree` (mirrors `CrateHierarchy`,
-including synthesized parent folders and sibling ordering) and `SnapshotTrackSearch`. The byte
-matcher underneath moved to `ByteTextSearch` in the kit, and `TrackTextSearch` on the Mac now
-delegates to it — one implementation, not two. Tests assert the two sides agree on the same
-input, so a divergence fails the build rather than surfacing as "search finds different things
-on my phone".
-
-This was chosen over `#if os(macOS)` guards (~16 files) specifically because conditional code
-that CI never builds for the other platform rots silently — and guarding
-`AudioFingerprintService` alone would have cascaded through its four dependents. The one guard
-that remains is `SeratoProcessGuard`, which returns `false` off macOS: Serato is a desktop app,
-so nothing on a phone can be holding the library open.
 
 ## Key open risks per feature (decide when that phase starts, not now)
 
@@ -255,34 +135,3 @@ so nothing on a phone can be holding the library open.
 
 The original MVP is done. Rationale it proved out: it kept risk to reversible metadata changes (crate delete → Trash, path rewrite only — no audio files touched), delivered something every Serato user immediately wants, and needed zero external APIs or Xcode/extension work — buildable entirely with `swift build`.
 
-
-### The iOS app
-
-Lives in this repository, not a separate one: `LibrarySnapshot.currentSchemaVersion` is shared
-state between the Mac and the phone, so a schema change is one commit CI checks on both sides.
-
-**Shipped as `Mobile/PocketCrates/`** (an Xcode project, deployment target iOS 26.5). It
-browses the snapshot *and* edits it — track tags and crate create/rename/delete — queuing each
-change as a `SnapshotIntent` and sending them to the Mac via its `queue-<deviceID>.json`
-outbox. The earlier read-only `Mobile/EZLibraryMobile/` sources were retired; PocketCrates is a
-superset, so nothing was lost.
-
-| File | Role |
-|---|---|
-| `PocketCratesApp.swift` | Entry point; restores the saved folder on launch |
-| `SnapshotFolderBookmark.swift` | Security-scoped bookmark so the folder grant survives relaunch |
-| `SnapshotStore.swift` | `@Observable` state machine + pending-intent outbox (`sendToMac()`) |
-| `RootView.swift` | Folder picker, welcome, and failure states |
-| `LibraryBrowser.swift` | Crate tree with create/rename/delete + pending-changes badge |
-| `TrackListView.swift` | Scoped list with search |
-| `TrackDetailView.swift` | Track fields with inline editing that queues intents |
-| `PendingIntentsView.swift` | Review/remove queued changes and send them to the Mac |
-
-Almost all the logic sits in `EZLibrarySnapshotKit` instead of the views — `SnapshotLibrary`
-(crate tree, path index, prebuilt search blobs), `SnapshotFolder` (finds and loads the newest
-snapshot), and the intent model (`SnapshotIntent`, `SnapshotIntentQueue`, `LibrarySnapshot.applying`).
-That keeps it unit-tested by `swift test` and compiled for iOS by CI, rather than trapped in an
-Xcode project nothing else can check.
-
-CI type-checks the app sources against the iOS build of the kit, which catches the breakage
-that actually happens: the kit's API moving under them.

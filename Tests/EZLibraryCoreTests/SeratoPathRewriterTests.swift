@@ -51,10 +51,11 @@ private func makeScratchDatabaseCopy() throws -> URL {
     let scratchFile = try makeScratchDatabaseCopy()
     defer { try? FileManager.default.removeItem(at: scratchFile.deletingLastPathComponent()) }
 
-    TestSeratoEnvironment.withSeratoRunning {
-        #expect(throws: SeratoPathRewriter.RewriteError.seratoIsRunning) {
-            try SeratoPathRewriter.rewritePath("Music/anything.mp3", to: "Music/other.mp3", in: scratchFile)
-        }
+    SeratoProcessGuard.isRunningOverride = true
+    defer { TestSeratoEnvironment.pretendSeratoIsClosed() }
+
+    #expect(throws: SeratoPathRewriter.RewriteError.seratoIsRunning) {
+        try SeratoPathRewriter.rewritePath("Music/anything.mp3", to: "Music/other.mp3", in: scratchFile)
     }
 }
 
