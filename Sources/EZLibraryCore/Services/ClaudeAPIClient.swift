@@ -187,12 +187,27 @@ public enum ClaudeAPIClient {
         public let webSearchCount: Int
         /// URLs the model saw in its search results, in the order returned.
         public let sourceURLs: [String]
+        /// True when the API rejected the JSON-schema reply format and the
+        /// request was retried without it.
+        ///
+        /// Worth surfacing rather than swallowing: the reply is still parsed
+        /// from the prompt's instructions, but it is no longer *guaranteed* to
+        /// be well-formed, and a provider that starts refusing schemas should
+        /// be visible rather than quietly degrading.
+        public let droppedResponseSchema: Bool
 
-        public init(text: String, usage: Usage, webSearchCount: Int, sourceURLs: [String]) {
+        public init(
+            text: String,
+            usage: Usage,
+            webSearchCount: Int,
+            sourceURLs: [String],
+            droppedResponseSchema: Bool = false
+        ) {
             self.text = text
             self.usage = usage
             self.webSearchCount = webSearchCount
             self.sourceURLs = sourceURLs
+            self.droppedResponseSchema = droppedResponseSchema
         }
     }
 
@@ -336,6 +351,7 @@ public enum ClaudeAPIClient {
         // Cleared if the API turns out to reject a schema-constrained reply
         // alongside web search; see `shouldRetryWithoutSchema`.
         var schema = request.jsonSchema
+        var droppedSchema = false
 
         for _ in 0...maxContinuations {
             let body = requestBody(for: request, messages: messages, schema: schema)
@@ -354,6 +370,7 @@ public enum ClaudeAPIClient {
                 // JSON either way, so the reply is still parseable.
                 if schema != nil, shouldRetryWithoutSchema(error) {
                     schema = nil
+                    droppedSchema = true
                     continue
                 }
                 throw error
@@ -384,7 +401,8 @@ public enum ClaudeAPIClient {
                     text: text,
                     usage: Usage(inputTokens: inputTokens, outputTokens: outputTokens),
                     webSearchCount: webSearchCount,
-                    sourceURLs: sourceURLs
+                    sourceURLs: sourceURLs,
+                    droppedResponseSchema: droppedSchema
                 )
             }
 

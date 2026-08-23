@@ -233,9 +233,40 @@ still receive the full evidence bundle — fingerprint match, database candidate
 filename, current tags, stage 1 findings — so they have real material to judge;
 they simply cannot go and look anything else up.
 
-Cost is shown before the run starts. The estimate covers tokens only (Anthropic
-bills web searches separately) and uses standard list prices rather than
-promotional ones, so it does not come in under the real bill.
+### What it actually costs
+
+Measured over ten tracks on Opus 5, August 2026 — not estimated:
+
+| | With web search | Without |
+| --- | --- | --- |
+| Input tokens / track | 28,700 | 2,600 |
+| Output tokens / track | 1,700 | 1,220 |
+| Web searches / track | 1.7 | 0 |
+| **Cost / track** | **$0.203** | **$0.044** |
+| Time / track | 17.4s | 3.6s |
+
+So roughly **$20 per hundred tracks** with search, or **$4.35** without. Sonnet 5
+is about a third less, Haiku 4.5 about a quarter of Opus.
+
+Web search is the whole story: it multiplies input tokens by **eleven**, and
+searches are billed on top of tokens at $10 per 1,000. The first version of this
+estimator assumed search merely quadrupled the input and ignored the search fee
+entirely, and consequently quoted about half the real price.
+
+The sheet shows a running total of **actual** spend during a cloud run —
+reported from each reply's own usage, not projected — so the estimate only has
+to be right enough to decide with.
+
+### The schema and web search do work together
+
+This was the one genuinely unverified thing about the cloud tier for a long
+while: structured outputs are documented as incompatible with citations, and web
+search results carry citations, so `output_config.format` and
+`web_search_20260209` might well have been mutually exclusive. A fallback exists
+that retries without the schema and reports having done so.
+
+Confirmed by the live run: **ten of ten requests succeeded with the schema
+intact and the fallback never fired.** The two compose.
 
 ### Per-model request differences (Anthropic)
 

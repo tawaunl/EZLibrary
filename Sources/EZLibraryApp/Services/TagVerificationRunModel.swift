@@ -187,11 +187,8 @@ final class TagVerificationRunModel: ObservableObject {
         guard let pricing, checkedCount > 0 else { return nil }
         let tokenCost = Double(inputTokens) / 1_000_000 * pricing.inputCostPerMillionTokens
             + Double(outputTokens) / 1_000_000 * pricing.outputCostPerMillionTokens
-        return tokenCost + Double(webSearches) * Self.costPerWebSearch
+        return tokenCost + Double(webSearches) * AITagVerificationService.costPerWebSearch
     }
-
-    /// Anthropic's published rate: $10 per 1,000 searches.
-    static let costPerWebSearch = 0.01
 
     var spendSummary: String? {
         guard let spend = spendSoFar else { return nil }

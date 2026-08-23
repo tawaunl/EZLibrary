@@ -134,16 +134,22 @@ public enum AITagVerificationService {
 
     // MARK: - Cost estimation
 
-    /// Rough per-track token usage, used only for the "about $X" line shown
-    /// before a run starts.
+    /// Per-track usage, **measured** rather than guessed.
     ///
-    /// Input dominates and is dominated in turn by web search results being
-    /// pulled into context, which is why the searching and non-searching
-    /// estimates differ by so much. These are deliberately generous: an
-    /// estimate that comes in under the real bill is worse than useless.
-    static let estimatedInputTokensWithSearch = 14000
-    static let estimatedInputTokensWithoutSearch = 3000
-    static let estimatedOutputTokens = 900
+    /// Taken from a live run of ten tracks on Opus 5 in August 2026. The
+    /// earlier figures here were estimates and they were badly wrong in the
+    /// direction that matters: web search inflates the input by more than ten
+    /// times, not the four times assumed, so the real bill came in at roughly
+    /// double the quote. An estimate that lands under the real cost is worse
+    /// than no estimate, so these are the observed numbers, rounded up.
+    static let estimatedInputTokensWithSearch = 28_700
+    static let estimatedInputTokensWithoutSearch = 2_600
+    static let estimatedOutputTokensWithSearch = 1_700
+    static let estimatedOutputTokensWithoutSearch = 1_220
+    /// Observed 1.7 searches per track over the same run.
+    static let estimatedWebSearchesPerTrack = 1.7
+    /// Anthropic's published rate for the web search tool: $10 per 1,000.
+    public static let costPerWebSearch = 0.01
 
     /// Approximate token cost in USD for verifying `trackCount` tracks.
     /// Excludes Anthropic's per-search web search fee, which is billed
@@ -152,16 +158,26 @@ public enum AITagVerificationService {
         let inputTokens = options.useWebSearch
             ? estimatedInputTokensWithSearch
             : estimatedInputTokensWithoutSearch
+        let outputTokens = options.useWebSearch
+            ? estimatedOutputTokensWithSearch
+            : estimatedOutputTokensWithoutSearch
+
         let inputCost = Double(trackCount * inputTokens) / 1_000_000 * options.model.inputCostPerMillionTokens
-        let outputCost = Double(trackCount * estimatedOutputTokens) / 1_000_000 * options.model.outputCostPerMillionTokens
-        return inputCost + outputCost
+        let outputCost = Double(trackCount * outputTokens) / 1_000_000 * options.model.outputCostPerMillionTokens
+        // Searches are billed on top of tokens, and at 1.7 per track they are
+        // not a rounding error — leaving them out understated the total by
+        // about a tenth.
+        let searchCost = options.useWebSearch
+            ? Double(trackCount) * estimatedWebSearchesPerTrack * costPerWebSearch
+            : 0
+        return inputCost + outputCost + searchCost
     }
 
     public static func estimatedCostText(trackCount: Int, options: Options) -> String {
         let cost = estimatedCost(trackCount: trackCount, options: options)
         let rounded = cost < 0.01 ? "<$0.01" : String(format: "$%.2f", cost)
-        let suffix = options.useWebSearch ? ", plus Anthropic's web search fee" : ""
-        return "about \(rounded) in Claude tokens\(suffix)"
+        let suffix = options.useWebSearch ? " including web search fees" : ""
+        return "about \(rounded)\(suffix)"
     }
 
     // MARK: - Running
@@ -290,7 +306,9 @@ public enum AITagVerificationService {
                 text: response.text,
                 for: track,
                 provenance: Provenance(
-                    engineLabel: "\(engineName) (\(options.model.displayName))",
+                    engineLabel: response.droppedResponseSchema
+                        ? "\(engineName) (\(options.model.displayName), no schema)"
+                        : "\(engineName) (\(options.model.displayName))",
                     sourceURLs: response.sourceURLs.compactMap(URL.init(string:)),
                     webSearchCount: response.webSearchCount,
                     usage: TagVerificationUsage(
