@@ -63,15 +63,20 @@ MusicBrainz, and Deezer separately return the same album, that album is almost
 certainly right. If they disagree, no amount of ranking makes the top one true,
 and the honest answer is "unverified".
 
+The one exception is the album field, where Wikipedia is trusted as a
+specialist — see "Wikipedia is the album authority" below.
+
 Sources, and what each costs. Latencies are measured, not estimated:
 
 | Source | Credential | Latency | On by default |
 | --- | --- | --- | --- |
 | iTunes | none | ~0.22s | yes |
 | Deezer | none | ~0.26s (+0.27s per album lookup) | yes |
+| Wikipedia | none | ~0.3s (search + one summary) | yes |
 | MusicBrainz | none | 0.6s–39s, **1 request/second cap** | no |
 | AcoustID | free key + `fpcalc` | ~0.3s (0.05s `fpcalc`) | no |
 | Discogs | free token | rate limited | no |
+| YouTube | your own API key + quota | rate limited | no |
 
 ### Why the defaults are what they are
 
@@ -95,6 +100,29 @@ Benchmarked over six tracks, fingerprint off:
 **8.6x faster, identical output** on that sample. MusicBrainz still earns its
 place on obscure material the commercial catalogues do not carry, so it is one
 toggle away rather than gone.
+
+### Wikipedia is the album authority
+
+The catalog APIs are reliable for title, artist, and duration, but they answer
+*"what album is this track sold on?"*, which for a single is the single itself
+or a later hits compilation — not the studio album the song first appeared on.
+Wikipedia's prose names that original album, so the consensus reads it out of
+the summary ("…from their fourth studio album *Hyperdrama* (2024)") and gives
+it the final word on the album field: its album wins even when more catalog
+sources agree on a different one, and it alone can fill an empty album.
+
+The safety valve is confidence, not agreement. Filling a blank album from
+Wikipedia is trusted enough to apply unattended; *overwriting* an album the
+user already has is held below the auto-apply threshold, so a questionable
+rewrite surfaces in the review sheet instead of being written by a bulk run.
+Wikipedia carries no duration and only sometimes states a genre, so it
+contributes an album and a year and leaves identity to the sources that report
+length. It is not rate limited, so it enriches the album without lowering the
+run's throughput ceiling.
+
+YouTube is the mirror image: a genre-of-last-resort that needs your own API key
+and spends quota, so it is never on by default and contributes only a genre it
+can read from a video's title and description.
 
 The audio fingerprint is off by default for a different reason: at ~0.3s per
 track it is not expensive, it simply buys nothing for a track whose identity the

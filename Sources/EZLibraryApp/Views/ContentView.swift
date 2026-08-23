@@ -858,6 +858,7 @@ private struct AppSettingsSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var discogsTokenInput = ""
+    @State private var youTubeKeyInput = ""
     @State private var acoustIDKeyInput = ""
     @State private var anthropicKeyInput = ""
     @State private var validatingAnthropicKey = false
@@ -905,6 +906,13 @@ private struct AppSettingsSheet: View {
                             Link("Open the Anthropic Console API keys page", destination: URL(string: "https://console.anthropic.com/settings/keys")!)
                                 .font(.caption)
 
+                            Text("YouTube (genre fallback, optional)")
+                                .font(.caption.weight(.semibold))
+                            Text("1. Create a Google Cloud project. 2. Enable the YouTube Data API v3. 3. Create an API key. Only used as a last resort for genre, and it spends your daily quota.")
+                                .font(.caption)
+                            Link("Open the Google Cloud credentials page", destination: URL(string: "https://console.cloud.google.com/apis/credentials")!)
+                                .font(.caption)
+
                             Text("After creating keys, paste them below and click Save.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
@@ -919,6 +927,18 @@ private struct AppSettingsSheet: View {
                         .textFieldStyle(.roundedBorder)
 
                     Text("Used for Discogs metadata lookup. Stored securely in the app's settings.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Divider()
+
+                    Text("YouTube Data API Key (Genre Fallback)")
+                        .font(.subheadline.weight(.semibold))
+
+                    SecureField("Paste YouTube Data API key", text: $youTubeKeyInput)
+                        .textFieldStyle(.roundedBorder)
+
+                    Text("Optional last resort for inferring genre when the free sources come up empty. Spends your daily YouTube Data API quota, so it stays off until a key is added. Stored securely in the app's settings.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
@@ -984,15 +1004,17 @@ private struct AppSettingsSheet: View {
             HStack {
                 Button("Clear") {
                     UserDefaults.standard.removeObject(forKey: OnlineTrackMetadataLookupService.discogsTokenDefaultsKey)
+                    UserDefaults.standard.removeObject(forKey: OnlineTrackMetadataLookupService.youTubeAPIKeyDefaultsKey)
                     UserDefaults.standard.removeObject(forKey: AudioFingerprintService.tokenDefaultsKey)
                     UserDefaults.standard.removeObject(forKey: ClaudeAPIClient.apiKeyDefaultsKey)
                     UserDefaults.standard.removeObject(forKey: OpenAICompatibleClient.apiKeyDefaultsKey)
                     discogsTokenInput = ""
+                    youTubeKeyInput = ""
                     acoustIDKeyInput = ""
                     anthropicKeyInput = ""
                     statusMessage = "API tokens cleared."
                 }
-                .help("Remove the saved Discogs, AcoustID, and Anthropic API keys.")
+                .help("Remove the saved Discogs, YouTube, AcoustID, and Anthropic API keys.")
 
                 Spacer()
 
@@ -1010,6 +1032,13 @@ private struct AppSettingsSheet: View {
                         UserDefaults.standard.removeObject(forKey: OnlineTrackMetadataLookupService.discogsTokenDefaultsKey)
                     } else {
                         UserDefaults.standard.set(discogsTrimmed, forKey: OnlineTrackMetadataLookupService.discogsTokenDefaultsKey)
+                    }
+
+                    let youTubeTrimmed = youTubeKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if youTubeTrimmed.isEmpty {
+                        UserDefaults.standard.removeObject(forKey: OnlineTrackMetadataLookupService.youTubeAPIKeyDefaultsKey)
+                    } else {
+                        UserDefaults.standard.set(youTubeTrimmed, forKey: OnlineTrackMetadataLookupService.youTubeAPIKeyDefaultsKey)
                     }
 
                     if acoustIDTrimmed.isEmpty {
@@ -1035,6 +1064,7 @@ private struct AppSettingsSheet: View {
         .onAppear {
             initializeFeatureDefaultsIfNeeded()
             discogsTokenInput = UserDefaults.standard.string(forKey: OnlineTrackMetadataLookupService.discogsTokenDefaultsKey) ?? ""
+            youTubeKeyInput = UserDefaults.standard.string(forKey: OnlineTrackMetadataLookupService.youTubeAPIKeyDefaultsKey) ?? ""
             acoustIDKeyInput = UserDefaults.standard.string(forKey: AudioFingerprintService.tokenDefaultsKey) ?? ""
             anthropicKeyInput = UserDefaults.standard.string(forKey: ClaudeAPIClient.apiKeyDefaultsKey) ?? ""
         }

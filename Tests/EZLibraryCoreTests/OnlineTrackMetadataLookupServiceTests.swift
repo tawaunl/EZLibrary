@@ -60,6 +60,83 @@ import Testing
     )
 }
 
+// MARK: - Wikipedia and YouTube
+
+@Test func wikipediaSummaryYieldsOriginalAlbumAndYear() {
+    let parsed = OnlineTrackMetadataLookupService.parseWikipediaSummary(
+        description: "2024 single by Justice",
+        extract: "\"Neverender\" is a song by French electronic duo Justice, released on 22 March 2024 as the third single from their fourth studio album Hyperdrama (2024)."
+    )
+    #expect(parsed.album == "Hyperdrama")
+    #expect(parsed.year == 2024)
+}
+
+@Test func wikipediaAlbumStopsAtPunctuationAndSentenceWords() {
+    let hyperdrama = OnlineTrackMetadataLookupService.wikipediaAlbum(
+        fromExtract: "from their fourth studio album Hyperdrama (2024).")
+    #expect(hyperdrama.name == "Hyperdrama")
+    #expect(hyperdrama.year == 2024)
+
+    #expect(OnlineTrackMetadataLookupService.wikipediaAlbum(
+        fromExtract: "the lead single from the album Future Nostalgia, released in 2020.").name == "Future Nostalgia")
+
+    // Stops before a sentence continuation rather than swallowing it.
+    #expect(OnlineTrackMetadataLookupService.wikipediaAlbum(
+        fromExtract: "from their album Discovery which peaked at number one.").name == "Discovery")
+
+    // A multi-word title is kept whole.
+    #expect(OnlineTrackMetadataLookupService.wikipediaAlbum(
+        fromExtract: "on the album Random Access Memories (2013).").name == "Random Access Memories")
+}
+
+@Test func wikipediaAlbumDoesNotInventOneFromTheSentence() {
+    // No album named — must not capture the sentence as an album.
+    #expect(OnlineTrackMetadataLookupService.wikipediaAlbum(
+        fromExtract: "\"Song\" is a 2020 single by an artist.").name == "")
+}
+
+@Test func inferGenreFindsGenreInFreeText() {
+    #expect(OnlineTrackMetadataLookupService.inferGenre(fromText: "a French electronic duo") == "Electronic")
+    #expect(OnlineTrackMetadataLookupService.inferGenre(fromText: "an American hip hop recording") == "Hip Hop")
+    // Specific beats general: "deep house" wins over "house".
+    #expect(OnlineTrackMetadataLookupService.inferGenre(fromText: "a deep house record") == "Deep House")
+}
+
+@Test func inferGenreIsWordBounded() {
+    // "rock" must not be found inside "rocky", nor "pop" inside "populist".
+    #expect(OnlineTrackMetadataLookupService.inferGenre(fromText: "a rocky mountain populist anthem") == "")
+    #expect(OnlineTrackMetadataLookupService.inferGenre(fromText: "nothing musical stated here") == "")
+}
+
+@Test func likelySongPageUsesTheOneLineDescription() {
+    #expect(OnlineTrackMetadataLookupService.isLikelySongPage(
+        WikipediaSearchPage(key: "X", title: "X", description: "2024 single by Y", excerpt: nil)))
+    #expect(OnlineTrackMetadataLookupService.isLikelySongPage(
+        WikipediaSearchPage(key: "X", title: "X", description: "American singer", excerpt: nil)) == false)
+    #expect(OnlineTrackMetadataLookupService.isLikelySongPage(
+        WikipediaSearchPage(key: "X", title: "X", description: nil, excerpt: nil)) == false)
+}
+
+@Test func youTubeAPIKeyResolvesFromEnvironmentThenDefaults() {
+    let defaults = UserDefaults(suiteName: "youtube-key-\(UUID().uuidString)")!
+
+    // The environment wins when set.
+    #expect(OnlineTrackMetadataLookupService.youTubeAPIKey(
+        environment: [OnlineTrackMetadataLookupService.youTubeAPIKeyEnvironmentKey: "env-key"],
+        userDefaults: defaults
+    ) == "env-key")
+
+    // Falls back to a value saved in settings.
+    defaults.set("saved-key", forKey: OnlineTrackMetadataLookupService.youTubeAPIKeyDefaultsKey)
+    #expect(OnlineTrackMetadataLookupService.youTubeAPIKey(
+        environment: [:], userDefaults: defaults) == "saved-key")
+
+    // Nothing configured means no YouTube lookups.
+    let empty = UserDefaults(suiteName: "youtube-empty-\(UUID().uuidString)")!
+    #expect(OnlineTrackMetadataLookupService.youTubeAPIKey(
+        environment: [:], userDefaults: empty) == nil)
+}
+
 // MARK: - Throttling and caching
 
 import Foundation
@@ -129,6 +206,7 @@ private let itunesHit = Data("""
         await RequestPacer.itunes.resetForTesting()
         await RequestPacer.musicBrainz.resetForTesting()
         await RequestPacer.discogs.resetForTesting()
+        await RequestPacer.wikipedia.resetForTesting()
     }
 
     /// A throttled iTunes reply is a 403 with an empty body. That used to fail the
@@ -219,5 +297,27 @@ private let itunesHit = Data("""
         )
         #expect(second?.count == 1)
         #expect(StubURLProtocol.totalRequests == 0)
+    }
+
+    /// A Wikipedia lookup searches for the page, then reads the summary and
+    /// turns the prose into an album-and-year candidate.
+    @Test func wikipediaLookupBuildsAnAlbumCandidate() async {
+        let search = Data("""
+        {"pages":[{"id":1,"key":"Neverender","title":"Neverender","description":"2024 single by Justice"}]}
+        """.utf8)
+        let summary = Data("""
+        {"title":"Neverender","description":"2024 single by Justice","extract":"\\"Neverender\\" is a song by French electronic duo Justice, released in 2024 as the third single from their fourth studio album Hyperdrama (2024)."}
+        """.utf8)
+        StubURLProtocol.reset(responses: [(200, search), (200, summary)])
+
+        let results = try? await OnlineTrackMetadataLookupService.lookup(
+            query: .init(title: "Neverender \(UUID().uuidString)", artist: "Justice", album: ""),
+            sourceSelection: .wikipedia,
+            session: stubbedSession()
+        )
+
+        #expect(results?.first?.source == .wikipedia)
+        #expect(results?.first?.album == "Hyperdrama")
+        #expect(results?.first?.year == 2024)
     }
 }

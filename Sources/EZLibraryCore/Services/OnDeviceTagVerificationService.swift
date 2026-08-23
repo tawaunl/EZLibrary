@@ -96,9 +96,10 @@ public enum OnDeviceTagVerificationService {
     struct MusicDatabaseSearchTool: Tool {
         let name = "search_music_databases"
         let description = """
-        Search music databases (iTunes, MusicBrainz, Deezer) for a song and get back \
-        the title, artist, album, genre, release year, and length that each database \
-        holds. Use this whenever you need a fact about a release. Never rely on memory.
+        Search music databases (iTunes, MusicBrainz, Deezer, Wikipedia) for a song and get \
+        back the title, artist, album, genre, release year, and length that each database \
+        holds. Wikipedia is the most reliable for the original album a song first appeared \
+        on. Use this whenever you need a fact about a release. Never rely on memory.
         """
 
         let session: URLSession

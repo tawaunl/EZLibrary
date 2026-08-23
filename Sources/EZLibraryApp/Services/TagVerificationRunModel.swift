@@ -39,6 +39,13 @@ final class TagVerificationRunModel: ObservableObject {
     @Published private(set) var appliedCount = 0
     @Published private(set) var abortMessage: String?
     @Published private(set) var engineName = ""
+    /// The track selection these results describe.
+    ///
+    /// The model outlives the sheet on purpose, which means it also outlives
+    /// the selection that produced it. Without remembering what it ran on, a
+    /// finished run kept being shown for a completely different set of tracks
+    /// — the sheet stayed on its results screen with no way back to the start.
+    @Published private(set) var selectionIDs: Set<UUID> = []
 
     /// Tokens and searches actually billed so far.
     ///
@@ -73,13 +80,19 @@ final class TagVerificationRunModel: ObservableObject {
 
     // MARK: - Running
 
+    /// - Parameter selection: everything the sheet was opened with, which may be
+    ///   wider than `tracks` when the run is narrowed to the flagged ones. It
+    ///   is what the results are matched against later.
     func start(
         tracks: [Track],
+        selection: [Track],
         engine: TagVerificationEngineKind,
         consensusOptions: TagConsensusService.Options,
         cloudOptions: AITagVerificationService.Options
     ) {
         cancel()
+
+        selectionIDs = Set(selection.map(\.id))
 
         inputTokens = 0
         outputTokens = 0
@@ -127,6 +140,13 @@ final class TagVerificationRunModel: ObservableObject {
         }
     }
 
+    /// Whether the current results belong to `selection`.
+    ///
+    /// An empty run matches nothing, so a fresh model always starts at setup.
+    func matches(selection: [Track]) -> Bool {
+        !selectionIDs.isEmpty && selectionIDs == Set(selection.map(\.id))
+    }
+
     /// Clears everything, for when a new selection makes the old run irrelevant.
     func reset() {
         cancel()
@@ -139,6 +159,11 @@ final class TagVerificationRunModel: ObservableObject {
         checkedCount = 0
         appliedCount = 0
         abortMessage = nil
+        selectionIDs = []
+        inputTokens = 0
+        outputTokens = 0
+        webSearches = 0
+        pricing = nil
         phase = .idle
     }
 

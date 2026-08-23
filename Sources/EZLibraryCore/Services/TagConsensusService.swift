@@ -45,12 +45,13 @@ public enum TagConsensusService {
         public var useFingerprint: Bool
         /// Which databases to consult.
         ///
-        /// Defaults to the fast pair (iTunes and Deezer). MusicBrainz has the
-        /// best editorial data but paces callers to one request a second and
-        /// its search latency has been measured anywhere from 0.6s to past the
-        /// request timeout, which makes it the ceiling on a whole-library run.
-        /// Deezer's album lookup now supplies the release year that used to be
-        /// the reason MusicBrainz was indispensable.
+        /// Defaults to `.recommended` — the fast pair (iTunes and Deezer) plus
+        /// Wikipedia. The fast pair supplies title, artist, and the duration
+        /// that tells an edit from a mix; Wikipedia supplies the original album
+        /// it names more reliably than either. MusicBrainz has the best
+        /// editorial data but paces callers to one request a second, which
+        /// makes it the ceiling on a whole-library run; Wikipedia is not rate
+        /// limited, so it enriches the album without lowering that ceiling.
         public var sourceSelection: OnlineTrackMetadataLookupService.SourceSelection
         /// How many independent sources must agree before a change is
         /// proposed. Two is the point of the whole design; one source agreeing
@@ -70,7 +71,7 @@ public enum TagConsensusService {
 
         public init(
             useFingerprint: Bool = false,
-            sourceSelection: OnlineTrackMetadataLookupService.SourceSelection = .fastSources,
+            sourceSelection: OnlineTrackMetadataLookupService.SourceSelection = .recommended,
             minimumAgreeingSources: Int = 2,
             durationToleranceSeconds: Double = 12,
             maxConcurrentTracks: Int = 0
@@ -111,6 +112,11 @@ public enum TagConsensusService {
     static func priority(ofSource name: String) -> Int {
         switch name {
         case "AcoustID":
+            return 6
+        // Wikipedia sits above the catalog APIs: it is the one that names the
+        // original album rather than the single or a compilation, which is the
+        // whole reason it was added to the consensus.
+        case "Wikipedia":
             return 5
         case "MusicBrainz":
             return 4
@@ -120,6 +126,8 @@ public enum TagConsensusService {
             return 2
         case "Deezer":
             return 1
+        // YouTube, and anything unknown, carry the least weight: YouTube is a
+        // genre hint of last resort, not an identification.
         default:
             return 0
         }
@@ -443,6 +451,8 @@ public enum TagConsensusService {
                     candidates: candidates
                 )
             )
+        } else if field == .album {
+            resolved = albumConsensus(from: claims)
         } else {
             resolved = winningValue(from: claims)
         }
@@ -460,6 +470,24 @@ public enum TagConsensusService {
         let agreeingSources = winner.sources
         let sourceList = formattedList(agreeingSources.sorted { priority(ofSource: $0) > priority(ofSource: $1) })
         let fingerprintAgrees = winner.sources.contains("AcoustID")
+        let isEmptyField = currentValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+
+        // Wikipedia is trusted as the specialist for the original album, so on
+        // that field its lone verdict stands on its own and is not scored as
+        // the weak single-source guess it would be elsewhere. See
+        // `albumConsensus`.
+        let isWikipediaAlbum = field == .album
+            && winner.sources.contains(OnlineMetadataSource.wikipedia.displayName)
+
+        func scoredConfidence(agreeing: Int) -> Double {
+            let base = confidence(agreeing: agreeing, fingerprintAgrees: fingerprintAgrees)
+            guard isWikipediaAlbum, agreeing <= 1 else { return base }
+            // High enough to fill an empty album unattended; held below the
+            // auto-apply bar when it would overwrite an album already there, so
+            // a questionable rewrite still surfaces for review rather than being
+            // written unseen by a bulk run.
+            return max(base, isEmptyField ? 0.82 : 0.6)
+        }
 
         // The proposal is built from the winning value, then re-dressed with
         // any DJ descriptor the current title carries — the databases return
@@ -476,7 +504,7 @@ public enum TagConsensusService {
                 verdict: .correct,
                 currentValue: currentValue,
                 proposedValue: "",
-                confidence: confidence(agreeing: agreeingSources.count, fingerprintAgrees: fingerprintAgrees),
+                confidence: scoredConfidence(agreeing: agreeingSources.count),
                 evidence: "\(sourceList) agree with the current value."
             )
         }
@@ -485,8 +513,9 @@ public enum TagConsensusService {
         // chose, so one source is allowed to *suggest* into an empty field. The
         // confidence that carries (0.5) sits below the auto-apply bar, so it
         // surfaces in the review sheet without a bulk run writing it unseen.
-        let isEmptyField = currentValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let requiredSources = isEmptyField ? 1 : options.minimumAgreeingSources
+        // The album field also accepts a lone verdict when Wikipedia is the one
+        // giving it, since that is the original-album answer we added it for.
+        let requiredSources = (isEmptyField || isWikipediaAlbum) ? 1 : options.minimumAgreeingSources
 
         guard agreeingSources.count >= requiredSources else {
             return TagFieldVerification(
@@ -494,7 +523,7 @@ public enum TagConsensusService {
                 verdict: .unverified,
                 currentValue: currentValue,
                 proposedValue: "",
-                confidence: confidence(agreeing: agreeingSources.count, fingerprintAgrees: fingerprintAgrees),
+                confidence: scoredConfidence(agreeing: agreeingSources.count),
                 evidence: agreeingSources.count == 1
                     ? "Only \(sourceList) offered \"\(proposal)\" — not enough agreement to change it."
                     : "Sources disagreed on this field."
@@ -506,7 +535,7 @@ public enum TagConsensusService {
             verdict: .incorrect,
             currentValue: currentValue,
             proposedValue: proposal,
-            confidence: confidence(agreeing: agreeingSources.count, fingerprintAgrees: fingerprintAgrees),
+            confidence: scoredConfidence(agreeing: agreeingSources.count),
             evidence: evidenceText(
                 isEmptyField: isEmptyField,
                 sourceList: sourceList,
@@ -685,6 +714,31 @@ public enum TagConsensusService {
 
         guard let best else { return nil }
         return (String(best.year), best.sources)
+    }
+
+    /// The album the sources settle on, giving Wikipedia the final word.
+    ///
+    /// The catalog APIs routinely return a track's "album" as the single it was
+    /// released on or a later hits compilation, where Wikipedia names the
+    /// record the song first appeared on. The user asked for that original
+    /// album, so when Wikipedia offers one it is taken even if more sources back
+    /// a different value — the count-based winner is exactly the "single"
+    /// answer we are trying to override. Any source that happens to agree with
+    /// Wikipedia is folded in as corroboration so the evidence line still names
+    /// them and the confidence still rises.
+    ///
+    /// With no Wikipedia claim this is ordinary agreement counting.
+    static func albumConsensus(from claims: [Claim]) -> (value: String, sources: Set<String>)? {
+        let wikipedia = OnlineMetadataSource.wikipedia.displayName
+        guard let wikipediaClaim = claims.first(where: {
+            $0.sourceName == wikipedia && !TagIntegrityAudit.normalize($0.value).isEmpty
+        }) else {
+            return winningValue(from: claims)
+        }
+
+        let key = TagIntegrityAudit.normalize(wikipediaClaim.value)
+        let backers = Set(claims.filter { TagIntegrityAudit.normalize($0.value) == key }.map(\.sourceName))
+        return (wikipediaClaim.value, backers)
     }
 
     /// Groups claims by their normalised value and picks the one the most

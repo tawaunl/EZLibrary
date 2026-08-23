@@ -1044,7 +1044,9 @@ struct TracksAndTagsView: View {
                     .controlSize(.small)
                 Spacer(minLength: 0)
             }
-        } else if verificationRun.hasReviewableResults, !showAITagVerification {
+        } else if verificationRun.hasReviewableResults,
+                  verificationRun.matches(selection: selectedTracks),
+                  !showAITagVerification {
             HStack(spacing: 8) {
                 Image(systemName: "checkmark.seal")
                     .foregroundStyle(.green)

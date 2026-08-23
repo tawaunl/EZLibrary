@@ -360,6 +360,66 @@ private func field(
     #expect(result.fields.count == AITagVerificationService.verifiableFields.count)
 }
 
+// MARK: - Wikipedia is the album authority
+
+@Test func wikipediaAlbumOverridesTheAgreeingCatalogSingle() {
+    // iTunes and Deezer both call the album the single the track sits on;
+    // Wikipedia names the record it first appeared on. The original album must
+    // win even though more sources back the single — but overwriting a value
+    // the user already has stays below the auto-apply bar so it is reviewed.
+    let result = TagConsensusService.consensus(
+        for: track(album: "Neverender - Single"),
+        fingerprintMatches: [],
+        candidates: [
+            candidate(.itunes, album: "Neverender - Single"),
+            candidate(.deezer, album: "Neverender - Single"),
+            candidate(.wikipedia, album: "Hyperdrama")
+        ]
+    )
+
+    let album = field(result, .album)
+    #expect(album?.verdict == .incorrect)
+    #expect(album?.proposedValue == "Hyperdrama")
+    #expect((album?.confidence ?? 1) < 0.7)
+}
+
+@Test func wikipediaAloneFillsAnEmptyAlbumWithConfidence() {
+    // A single Wikipedia claim is enough for the album field specifically,
+    // where any other lone source would leave it unverified, and filling a
+    // blank is trusted enough to apply unattended.
+    let result = TagConsensusService.consensus(
+        for: track(album: ""),
+        fingerprintMatches: [],
+        candidates: [candidate(.wikipedia, album: "Hyperdrama")]
+    )
+
+    let album = field(result, .album)
+    #expect(album?.verdict == .incorrect)
+    #expect(album?.proposedValue == "Hyperdrama")
+    #expect((album?.confidence ?? 0) >= 0.8)
+}
+
+@Test func aLoneCatalogAlbumStillCannotChangeAPopulatedField() {
+    // The authority is Wikipedia's alone: a single iTunes album must still not
+    // change a field the user already filled, exactly as before.
+    let result = TagConsensusService.consensus(
+        for: track(album: "Existing"),
+        fingerprintMatches: [],
+        candidates: [candidate(.itunes, album: "Hyperdrama")]
+    )
+    #expect(field(result, .album)?.verdict == .unverified)
+}
+
+@Test func wikipediaIsTheMostAuthoritativeSource() {
+    // Its word breaks a tie over every catalog source.
+    #expect(TagConsensusService.priority(ofSource: "Wikipedia")
+            > TagConsensusService.priority(ofSource: "MusicBrainz"))
+    #expect(TagConsensusService.priority(ofSource: "Wikipedia")
+            > TagConsensusService.priority(ofSource: "iTunes"))
+    #expect(TagConsensusService.priority(ofSource: "AcoustID")
+            > TagConsensusService.priority(ofSource: "Wikipedia"))
+}
+
 // MARK: - On-device proposal sanitising
 //
 // These guard the repairs applied to a small model's output. They live here

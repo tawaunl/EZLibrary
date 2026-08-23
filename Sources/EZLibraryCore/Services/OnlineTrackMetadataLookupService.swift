@@ -15,6 +15,15 @@ public enum OnlineMetadataSource: String, CaseIterable, Sendable {
     case musicBrainz
     case deezer
     case discogs
+    /// Free, keyless, and the best of the sources at naming the *original*
+    /// album a song first appeared on — the catalog APIs routinely return the
+    /// single or a compilation instead. The consensus engine gives it the last
+    /// word on the album field for exactly that reason.
+    case wikipedia
+    /// A last resort for genre only, and the one source that costs quota: it
+    /// needs a YouTube Data API key supplied at runtime and returns nothing
+    /// without one. Never included in the free/fast sets.
+    case youTube
 
     public var displayName: String {
         switch self {
@@ -26,6 +35,10 @@ public enum OnlineMetadataSource: String, CaseIterable, Sendable {
             return "Deezer"
         case .discogs:
             return "Discogs"
+        case .wikipedia:
+            return "Wikipedia"
+        case .youTube:
+            return "YouTube"
         }
     }
 
@@ -33,9 +46,9 @@ public enum OnlineMetadataSource: String, CaseIterable, Sendable {
     /// verifier leans on these because they are the ones every user has.
     public var requiresCredential: Bool {
         switch self {
-        case .itunes, .musicBrainz, .deezer:
+        case .itunes, .musicBrainz, .deezer, .wikipedia:
             return false
-        case .discogs:
+        case .discogs, .youTube:
             return true
         }
     }
@@ -137,6 +150,12 @@ actor RequestPacer {
     static let discogs = RequestPacer(floor: 1.0)
     /// Deezer's public catalog allows roughly 50 requests per 5 seconds.
     static let deezer = RequestPacer(floor: 0.1)
+    /// Wikipedia sets no hard published rate limit for these read endpoints, so
+    /// this floor is politeness rather than a documented ceiling.
+    static let wikipedia = RequestPacer(floor: 0.1)
+    /// YouTube's limit is a daily quota, not a per-second rate, so this only
+    /// keeps a burst civil.
+    static let youTube = RequestPacer(floor: 0.1)
 
     /// Scales every wait this pacer hands out. Tests set it to 0 so they exercise
     /// the retry and backoff logic without sleeping through the real intervals.
@@ -187,6 +206,19 @@ public enum OnlineTrackMetadataLookupService {
     public static let legacyDiscogsTokenEnvironmentKey = "SERATOTOOLS_DISCOGS_TOKEN"
     public static let discogsTokenDefaultsKey = "SeratoToolsDiscogsToken"
 
+    /// The YouTube Data API key is read at runtime and never bundled: YouTube
+    /// is the only source that costs quota, so it stays opt-in. Supply it in
+    /// the environment or in settings; with none present the YouTube source
+    /// simply returns nothing.
+    public static let youTubeAPIKeyEnvironmentKey = "EZLIBRARY_YOUTUBE_API_KEY"
+    /// Legacy environment key, still honored for backward compatibility.
+    public static let legacyYouTubeAPIKeyEnvironmentKey = "SERATOTOOLS_YOUTUBE_API_KEY"
+    public static let youTubeAPIKeyDefaultsKey = "SeratoToolsYouTubeAPIKey"
+
+    /// The User-Agent Wikimedia's policy asks callers to send so a runaway
+    /// client can be identified and contacted rather than simply blocked.
+    static let wikipediaUserAgent = "EZLibrary/1.0 (https://github.com/tawaunl/EZLibrary; metadata lookup)"
+
     /// A session with a much shorter timeout than `.shared`'s 60s default, so a
     /// stalled source (MusicBrainz in particular) fails fast instead of stalling
     /// the whole search.
@@ -204,6 +236,8 @@ public enum OnlineTrackMetadataLookupService {
         case musicBrainz
         case deezer
         case discogs
+        case wikipedia
+        case youTube
         /// Every source that needs no credential — what a user with no keys
         /// configured can actually reach.
         case freeSources
@@ -213,6 +247,12 @@ public enum OnlineTrackMetadataLookupService {
         /// under a second to well past the request timeout, which makes it the
         /// throughput ceiling for a whole-library run.
         case fastSources
+        /// The fast pair plus Wikipedia. This is the consensus default: the two
+        /// quick catalog sources for title/artist/duration, and Wikipedia for
+        /// the original album it names more reliably than either. Wikipedia
+        /// costs a request or two more per track than the fast pair alone, but
+        /// it is not rate limited, so it does not lower the run's ceiling.
+        case recommended
 
         public var displayName: String {
             switch self {
@@ -226,10 +266,16 @@ public enum OnlineTrackMetadataLookupService {
                 return "Deezer"
             case .discogs:
                 return "Discogs"
+            case .wikipedia:
+                return "Wikipedia"
+            case .youTube:
+                return "YouTube"
             case .freeSources:
                 return "Free Sources"
             case .fastSources:
                 return "Fast Sources"
+            case .recommended:
+                return "Recommended (adds Wikipedia)"
             }
         }
 
@@ -245,10 +291,16 @@ public enum OnlineTrackMetadataLookupService {
                 return [.deezer]
             case .discogs:
                 return [.discogs]
+            case .wikipedia:
+                return [.wikipedia]
+            case .youTube:
+                return [.youTube]
             case .freeSources:
                 return OnlineMetadataSource.allCases.filter { !$0.requiresCredential }
             case .fastSources:
                 return [.itunes, .deezer]
+            case .recommended:
+                return [.itunes, .deezer, .wikipedia]
             }
         }
 
@@ -274,6 +326,7 @@ public enum OnlineTrackMetadataLookupService {
     public enum LookupError: LocalizedError {
         case missingSearchTerms
         case missingDiscogsToken
+        case missingYouTubeKey
         case sourceRequestFailed(OnlineMetadataSource, String)
         case rateLimited(OnlineMetadataSource)
 
@@ -283,6 +336,8 @@ public enum OnlineTrackMetadataLookupService {
                 return "Enter at least a title, artist, or album before searching online."
             case .missingDiscogsToken:
                 return "Discogs lookup requires an API token. Set EZLIBRARY_DISCOGS_TOKEN or save a Discogs token in the app settings."
+            case .missingYouTubeKey:
+                return "YouTube lookup requires a YouTube Data API key. Set EZLIBRARY_YOUTUBE_API_KEY or save a YouTube API key in the app settings."
             case let .sourceRequestFailed(source, message):
                 return "\(source.displayName) lookup failed: \(message)"
             case let .rateLimited(source):
@@ -304,7 +359,9 @@ public enum OnlineTrackMetadataLookupService {
         switch source {
         case .itunes:
             return [403, 429, 503]
-        case .musicBrainz, .discogs, .deezer:
+        case .musicBrainz, .discogs, .deezer, .wikipedia, .youTube:
+            // YouTube's 403 means the daily quota is spent, not that we asked
+            // too fast, so it is deliberately not retried here.
             return [429, 503]
         }
     }
@@ -604,6 +661,18 @@ public enum OnlineTrackMetadataLookupService {
                 return []
             }
             return try await fetchDiscogs(query: query, maxResults: maxResults, session: session, token: discogsToken)
+        case .wikipedia:
+            return try await fetchWikipedia(query: query, maxResults: maxResults, session: session)
+        case .youTube:
+            guard let apiKey = youTubeAPIKey() else {
+                // Missing key is only an error when YouTube was asked for on its
+                // own; inside a wider selection it just contributes nothing.
+                if sourceSelection == .youTube {
+                    throw LookupError.missingYouTubeKey
+                }
+                return []
+            }
+            return try await fetchYouTube(query: query, maxResults: maxResults, session: session, apiKey: apiKey)
         }
     }
 
@@ -1060,6 +1129,326 @@ public enum OnlineTrackMetadataLookupService {
         guard let value, value.count >= 4 else { return nil }
         return Int(value.prefix(4))
     }
+
+    // MARK: - Wikipedia
+
+    /// How many Wikipedia pages to pull a summary for per search.
+    ///
+    /// Each summary is a second request, and only the top song page carries the
+    /// original album we want, so this is kept small deliberately: two is
+    /// enough to survive the top hit being a disambiguation or artist page
+    /// without turning a whole-library run into three requests a track.
+    private static let maxWikipediaSummaries = 2
+
+    /// Wikipedia is free, keyless, and unusually good at naming the *original*
+    /// album a song first appeared on, which the catalog APIs get wrong by
+    /// returning the single or a compilation. It carries no duration and its
+    /// genre is only sometimes stated, so it contributes an album and a year
+    /// and leaves identity to the sources that report length.
+    private static func fetchWikipedia(
+        query: Query,
+        maxResults: Int,
+        session: URLSession
+    ) async throws -> [OnlineTrackMetadataCandidate] {
+        let searchTerm = [query.artist, query.title]
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        guard !searchTerm.isEmpty else { return [] }
+
+        var components = URLComponents(string: "https://en.wikipedia.org/w/rest.php/v1/search/page")
+        components?.queryItems = [
+            URLQueryItem(name: "q", value: searchTerm),
+            URLQueryItem(name: "limit", value: String(min(max(1, maxResults), 5)))
+        ]
+        guard let url = components?.url else { return [] }
+
+        var request = URLRequest(url: url)
+        request.setValue(wikipediaUserAgent, forHTTPHeaderField: "User-Agent")
+
+        let data = try await performRequest(request, source: .wikipedia, pacer: .wikipedia, session: session)
+        let decoded: WikipediaSearchResponse
+        do {
+            decoded = try JSONDecoder().decode(WikipediaSearchResponse.self, from: data)
+        } catch {
+            throw LookupError.sourceRequestFailed(.wikipedia, "Received an unexpected response format from Wikipedia.")
+        }
+
+        // Prefer pages that read like a song or single; only if none do is it
+        // worth spending a summary request on the rest.
+        let songPages = decoded.pages.filter(isLikelySongPage)
+        let pages = Array((songPages.isEmpty ? decoded.pages : songPages).prefix(maxWikipediaSummaries))
+        guard !pages.isEmpty else { return [] }
+
+        let summaries = await withTaskGroup(
+            of: (Int, WikipediaSummary?).self
+        ) { group -> [Int: WikipediaSummary] in
+            for (index, page) in pages.enumerated() {
+                let title = page.key ?? page.title
+                group.addTask {
+                    (index, await fetchWikipediaSummary(title: title, session: session))
+                }
+            }
+            var byIndex: [Int: WikipediaSummary] = [:]
+            for await (index, summary) in group {
+                byIndex[index] = summary
+            }
+            return byIndex
+        }
+
+        var candidates: [OnlineTrackMetadataCandidate] = []
+        for (index, page) in pages.enumerated() {
+            guard let summary = summaries[index] else { continue }
+            let parsed = parseWikipediaSummary(
+                description: summary.description ?? page.description,
+                extract: summary.extract ?? ""
+            )
+            // A page that names no album, year, or genre is not evidence about
+            // any of them, and its own title is the song — never something to
+            // write over the tag with.
+            guard !parsed.album.isEmpty || parsed.year != nil || !parsed.genre.isEmpty else { continue }
+            candidates.append(OnlineTrackMetadataCandidate(
+                source: .wikipedia,
+                title: query.title,
+                artist: query.artist,
+                album: parsed.album,
+                genre: parsed.genre,
+                year: parsed.year,
+                bpm: nil,
+                comment: "Wikipedia: \(page.title)"
+            ))
+        }
+        return candidates
+    }
+
+    /// Best-effort: a page whose summary won't load costs its album and year,
+    /// nothing more, so it must never fail the whole search.
+    private static func fetchWikipediaSummary(
+        title: String,
+        session: URLSession
+    ) async -> WikipediaSummary? {
+        let allowed = CharacterSet.urlPathAllowed
+        let encoded = title.addingPercentEncoding(withAllowedCharacters: allowed) ?? title
+        guard let url = URL(string: "https://en.wikipedia.org/api/rest_v1/page/summary/\(encoded)") else {
+            return nil
+        }
+        var request = URLRequest(url: url)
+        request.setValue(wikipediaUserAgent, forHTTPHeaderField: "User-Agent")
+
+        guard let data = try? await performRequest(
+            request,
+            source: .wikipedia,
+            pacer: .wikipedia,
+            session: session
+        ) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(WikipediaSummary.self, from: data)
+    }
+
+    /// True when a search result's one-line description marks it as a song or
+    /// single rather than an artist, album, or disambiguation page.
+    static func isLikelySongPage(_ page: WikipediaSearchPage) -> Bool {
+        guard let description = page.description?.lowercased() else { return false }
+        return description.contains("song") || description.contains("single")
+    }
+
+    /// Reads the album, year, and (when stated) genre out of a Wikipedia
+    /// summary. Pure so it can be tested against real summary text without the
+    /// network.
+    static func parseWikipediaSummary(
+        description: String?,
+        extract: String
+    ) -> (album: String, year: Int?, genre: String) {
+        let album = wikipediaAlbum(fromExtract: extract)
+        let year = album.year ?? wikipediaReleaseYear(description: description, extract: extract)
+        let genre = inferGenre(fromText: [description ?? "", extract].joined(separator: " "))
+        return (album: album.name, year: year, genre: genre)
+    }
+
+    /// Pulls the album a summary says a song appeared on, plus the year in
+    /// parentheses beside it when present.
+    ///
+    /// Bounded on purpose. Wikipedia leads phrase this as "…from their fourth
+    /// studio album Hyperdrama (2024)." or "…, released in 2024." The capture
+    /// stops at the parenthesised year, at punctuation, or at a word that
+    /// clearly continues the sentence ("released", "which", "was"), and a
+    /// result longer than a plausible album title is discarded as an
+    /// over-capture rather than written into a tag.
+    static func wikipediaAlbum(fromExtract extract: String) -> (name: String, year: Int?) {
+        let pattern = #"\balbums?\s+(?:titled\s+|called\s+|named\s+)?([A-Z][^.,;:\n(]*?)(?=\s*\((?:19|20)\d{2}\)|\s*[.,;:)\n]|\s+(?:released|which|featuring|feat\.?|was|is|has|had|peaked|reached|became|debuted|spent)\b|$)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return ("", nil) }
+        let range = NSRange(extract.startIndex..., in: extract)
+        guard let match = regex.firstMatch(in: extract, options: [], range: range),
+              let nameRange = Range(match.range(at: 1), in: extract) else {
+            return ("", nil)
+        }
+
+        let name = String(extract[nameRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+        // Real album titles are short; anything longer is a captured sentence.
+        guard !name.isEmpty, name.split(separator: " ").count <= 8 else { return ("", nil) }
+
+        // A "(YYYY)" immediately after the album is that album's year.
+        var year: Int?
+        let tail = extract[nameRange.upperBound...]
+        if let yearMatch = tail.range(of: #"^\s*\(((?:19|20)\d{2})\)"#, options: .regularExpression) {
+            year = Int(tail[yearMatch].filter(\.isNumber))
+        }
+        return (name, year)
+    }
+
+    /// The release year, preferring a year the one-line description leads with
+    /// ("2024 single by …"), then a year stated next to "released", then the
+    /// first plausible year anywhere in the summary.
+    static func wikipediaReleaseYear(description: String?, extract: String) -> Int? {
+        if let description,
+           let match = description.range(of: #"^\s*((?:19|20)\d{2})\b"#, options: .regularExpression) {
+            return Int(description[match].filter(\.isNumber))
+        }
+        if let match = extract.range(of: #"released\b[^.]*?\b((?:19|20)\d{2})\b"#, options: [.regularExpression, .caseInsensitive]),
+           let year = extract[match].range(of: #"(?:19|20)\d{2}"#, options: .regularExpression) {
+            return Int(extract[match][year])
+        }
+        if let match = extract.range(of: #"\b(?:19|20)\d{2}\b"#, options: .regularExpression) {
+            return Int(extract[match])
+        }
+        return nil
+    }
+
+    // MARK: - YouTube
+
+    /// A genre-of-last-resort source. It needs a runtime API key and spends
+    /// quota, so it is never in the free or fast sets and returns a candidate
+    /// only when a genre can actually be read from the video's text — there is
+    /// no point spending a quota unit to contribute nothing.
+    private static func fetchYouTube(
+        query: Query,
+        maxResults: Int,
+        session: URLSession,
+        apiKey: String
+    ) async throws -> [OnlineTrackMetadataCandidate] {
+        let searchTerm = [query.artist, query.title]
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        guard !searchTerm.isEmpty else { return [] }
+
+        var components = URLComponents(string: "https://www.googleapis.com/youtube/v3/search")
+        components?.queryItems = [
+            URLQueryItem(name: "part", value: "snippet"),
+            URLQueryItem(name: "type", value: "video"),
+            URLQueryItem(name: "videoCategoryId", value: "10"),
+            URLQueryItem(name: "maxResults", value: String(min(max(1, maxResults), 3))),
+            URLQueryItem(name: "q", value: searchTerm),
+            URLQueryItem(name: "key", value: apiKey)
+        ]
+        guard let url = components?.url else { return [] }
+
+        var request = URLRequest(url: url)
+        request.setValue("EZLibrary/1.0 (metadata lookup)", forHTTPHeaderField: "User-Agent")
+
+        let data = try await performRequest(
+            request,
+            source: .youTube,
+            pacer: .youTube,
+            session: session,
+            errorMessage: { body in
+                (try? JSONDecoder().decode(YouTubeErrorResponse.self, from: body))?.error?.message
+            }
+        )
+
+        let decoded: YouTubeSearchResponse
+        do {
+            decoded = try JSONDecoder().decode(YouTubeSearchResponse.self, from: data)
+        } catch {
+            throw LookupError.sourceRequestFailed(.youTube, "Received an unexpected response format from YouTube.")
+        }
+
+        return decoded.items.compactMap { item -> OnlineTrackMetadataCandidate? in
+            guard let snippet = item.snippet else { return nil }
+            let text = [snippet.title, snippet.channelTitle, snippet.description]
+                .compactMap { $0 }
+                .joined(separator: " ")
+            let genre = inferGenre(fromText: text)
+            guard !genre.isEmpty else { return nil }
+            return OnlineTrackMetadataCandidate(
+                source: .youTube,
+                title: query.title,
+                artist: query.artist,
+                album: "",
+                genre: genre,
+                year: nil,
+                bpm: nil,
+                comment: "YouTube: \(snippet.title ?? "")"
+            )
+        }
+    }
+
+    static func youTubeAPIKey(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        userDefaults: UserDefaults = .standard
+    ) -> String? {
+        if let key = (environment[youTubeAPIKeyEnvironmentKey] ?? environment[legacyYouTubeAPIKeyEnvironmentKey])?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !key.isEmpty {
+            return key
+        }
+        if let key = userDefaults.string(forKey: youTubeAPIKeyDefaultsKey)?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !key.isEmpty {
+            return key
+        }
+        return nil
+    }
+
+    // MARK: - Genre inference from free text
+
+    /// Display genre paired with the lowercased needle to find it by. Ordered
+    /// most specific first so "deep house" wins over "house" and "hip hop" is
+    /// not shadowed by "pop".
+    private static let genreKeywords: [(needle: String, genre: String)] = [
+        ("drum and bass", "Drum & Bass"), ("drum & bass", "Drum & Bass"), ("drum n bass", "Drum & Bass"),
+        ("hip hop", "Hip Hop"), ("hip-hop", "Hip Hop"),
+        ("rhythm and blues", "R&B"), ("r&b", "R&B"),
+        ("deep house", "Deep House"), ("tech house", "Tech House"), ("progressive house", "Progressive House"),
+        ("future house", "Future House"), ("electro house", "Electro House"),
+        ("nu disco", "Nu Disco"), ("big room", "Big Room"),
+        ("synth-pop", "Synth-pop"), ("synthpop", "Synth-pop"), ("new wave", "New Wave"),
+        ("dream pop", "Dream Pop"), ("indie pop", "Indie Pop"), ("indie rock", "Indie Rock"),
+        ("hard rock", "Hard Rock"), ("classic rock", "Classic Rock"), ("punk rock", "Punk Rock"),
+        ("pop punk", "Pop Punk"), ("heavy metal", "Heavy Metal"), ("death metal", "Death Metal"),
+        ("black metal", "Black Metal"), ("dancehall", "Dancehall"), ("reggaeton", "Reggaeton"),
+        ("afrobeats", "Afrobeats"), ("afrobeat", "Afrobeat"), ("trip hop", "Trip Hop"),
+        ("lo-fi", "Lo-fi"),
+        ("house", "House"), ("techno", "Techno"), ("trance", "Trance"), ("dubstep", "Dubstep"),
+        ("electro", "Electro"), ("electronica", "Electronica"), ("electronic", "Electronic"),
+        ("disco", "Disco"), ("funk", "Funk"), ("soul", "Soul"), ("gospel", "Gospel"),
+        ("jazz", "Jazz"), ("blues", "Blues"), ("reggae", "Reggae"), ("grime", "Grime"),
+        ("country", "Country"), ("folk", "Folk"), ("classical", "Classical"), ("ambient", "Ambient"),
+        ("bluegrass", "Bluegrass"), ("salsa", "Salsa"), ("bachata", "Bachata"), ("cumbia", "Cumbia"),
+        ("metal", "Metal"), ("punk", "Punk"), ("indie", "Indie"), ("rap", "Hip Hop"),
+        ("rock", "Rock"), ("pop", "Pop"), ("latin", "Latin")
+    ]
+
+    /// The first genre named in a block of free text, or an empty string.
+    ///
+    /// Shared by Wikipedia and YouTube, whose payloads carry genre only in
+    /// prose. Word-boundary matched so "rock" is not found inside "rocky" and
+    /// "pop" not inside "populist".
+    static func inferGenre(fromText text: String) -> String {
+        let lowered = text.lowercased()
+        guard !lowered.isEmpty else { return "" }
+
+        var earliest: (index: String.Index, genre: String)?
+        for (needle, genre) in genreKeywords {
+            let escaped = NSRegularExpression.escapedPattern(for: needle)
+            // Word-boundary matched so "rock" is not found in "rocky" nor "pop"
+            // in "populist". A trailing \b still matches a genre butted against
+            // punctuation ("house." / "hip hop,").
+            guard let range = lowered.range(of: "\\b\(escaped)\\b", options: .regularExpression) else { continue }
+            if earliest == nil || range.lowerBound < earliest!.index {
+                earliest = (range.lowerBound, genre)
+            }
+        }
+        guard let earliest else { return "" }
+        return GenreCanonicalizer.canonical(earliest.genre)
+    }
 }
 
 private struct ITunesSearchResponse: Decodable {
@@ -1194,5 +1583,46 @@ private struct DiscogsSearchResult: Decodable {
 }
 
 private struct DiscogsErrorResponse: Decodable {
+    let message: String?
+}
+
+// Internal rather than private so the page-classification helper and its tests
+// can name the type.
+struct WikipediaSearchResponse: Decodable {
+    let pages: [WikipediaSearchPage]
+}
+
+struct WikipediaSearchPage: Decodable {
+    let key: String?
+    let title: String
+    let description: String?
+    let excerpt: String?
+}
+
+struct WikipediaSummary: Decodable {
+    let title: String?
+    let description: String?
+    let extract: String?
+}
+
+private struct YouTubeSearchResponse: Decodable {
+    let items: [YouTubeSearchItem]
+}
+
+private struct YouTubeSearchItem: Decodable {
+    let snippet: YouTubeSnippet?
+}
+
+private struct YouTubeSnippet: Decodable {
+    let title: String?
+    let channelTitle: String?
+    let description: String?
+}
+
+private struct YouTubeErrorResponse: Decodable {
+    let error: YouTubeErrorDetail?
+}
+
+private struct YouTubeErrorDetail: Decodable {
     let message: String?
 }

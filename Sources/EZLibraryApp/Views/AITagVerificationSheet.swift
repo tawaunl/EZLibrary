@@ -101,12 +101,14 @@ struct AITagVerificationSheet: View {
     }
 
     /// Fast by default; each extra source is an explicit trade of speed for
-    /// coverage, so the sheet names the cost rather than hiding it.
+    /// coverage, so the sheet names the cost rather than hiding it. The default
+    /// is the fast pair plus Wikipedia, which is not rate limited and is the
+    /// most reliable at naming a track's original album.
     private var sourceSelection: OnlineTrackMetadataLookupService.SourceSelection {
         if useDiscogs {
             return .all
         }
-        return useThoroughSources ? .freeSources : .fastSources
+        return useThoroughSources ? .freeSources : .recommended
     }
 
     private var options: AITagVerificationService.Options {
@@ -144,6 +146,14 @@ struct AITagVerificationSheet: View {
                     if phase == .setup {
                         setupSection
                     } else {
+                        if !run.matches(selection: tracks) {
+                            calloutRow(
+                                text: "These results are from a different track selection. "
+                                    + "Stop it or press Start Over to check the tracks selected now.",
+                                symbol: "arrow.triangle.branch",
+                                tint: .orange
+                            )
+                        }
                         progressSection
                     }
 
@@ -169,6 +179,15 @@ struct AITagVerificationSheet: View {
         .padding(16)
         .frame(width: 760, height: 620)
         .task {
+            // The run outlives this window, so it can outlive the selection
+            // that produced it. Results for a different set of tracks must not
+            // be shown as if they were for this one — and because the setup
+            // panel and the Verify button only appear in the idle phase, a
+            // stale finished run left the sheet with no way to start a new one.
+            if !run.isRunning, !run.matches(selection: tracks) {
+                run.reset()
+            }
+
             // The offline pass is the free half of the feature, so it runs as
             // soon as the sheet opens — before any key or network is involved.
             let selection = tracks
@@ -372,6 +391,8 @@ struct AITagVerificationSheet: View {
         switch sourceSelection {
         case .fastSources:
             return "Fast: iTunes and Deezer answer in about a quarter-second each."
+        case .recommended:
+            return "iTunes and Deezer answer in about a quarter-second; Wikipedia adds a request or two per track for a more accurate original album."
         case .freeSources:
             return "MusicBrainz limits callers to one request a second, so expect about one track per second."
         case .all:
@@ -687,6 +708,11 @@ struct AITagVerificationSheet: View {
 
     // MARK: - Footer
 
+    private var verifyButtonTitle: String {
+        let count = tracksToVerify.count
+        return "Verify \(count) Track\(count == 1 ? "" : "s")"
+    }
+
     private var applyButtonTitle: String {
         let total = selectedFieldIDs.count + selectedArtworkIDs.count
         return "Apply \(total) Change\(total == 1 ? "" : "s")"
@@ -714,8 +740,15 @@ struct AITagVerificationSheet: View {
             }
             .keyboardShortcut(.cancelAction)
 
+            if phase == .finished {
+                Button("Start Over") {
+                    run.reset()
+                }
+                .help("Clear these results and set up a new run for the current selection.")
+            }
+
             if phase == .setup {
-                Button("Verify \(tracksToVerify.count) Track\(tracksToVerify.count == 1 ? "" : "s")") {
+                Button(verifyButtonTitle) {
                     startVerification()
                 }
                 .keyboardShortcut(.defaultAction)
@@ -742,6 +775,7 @@ struct AITagVerificationSheet: View {
         // The model owns the run, so it outlives this window.
         run.start(
             tracks: targets,
+            selection: tracks,
             engine: engine,
             consensusOptions: consensusOptions,
             cloudOptions: options
