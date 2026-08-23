@@ -401,6 +401,14 @@ public enum AITagVerificationService {
             }
         }
 
+        // A year the ID3 tag lacks but the file name or library still carries,
+        // so the model can fill it instead of leaving the year blank.
+        if track.year == nil, fileTags.year == nil,
+           let fallback = TagConsensusService.fallbackReleaseYear(for: track) {
+            lines.append("")
+            lines.append("POSSIBLE YEAR (from the file name, not the ID3 tag; use it only if no source gives another): \(fallback)")
+        }
+
         let auditIssues = TagIntegrityAudit.audit(track)
         if !auditIssues.isEmpty {
             lines.append("")

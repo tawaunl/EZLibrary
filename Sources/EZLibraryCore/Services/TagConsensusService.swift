@@ -444,7 +444,7 @@ public enum TagConsensusService {
         let resolved: (value: String, sources: Set<String>)?
         if field == .year {
             resolved = yearConsensus(
-                from: claims,
+                from: yearClaimsIncludingFallback(claims, for: track, currentValue: currentValue),
                 preferOriginalRelease: shouldUseOriginalReleaseYear(
                     for: track,
                     fingerprintMatches: fingerprintMatches,
@@ -651,6 +651,35 @@ public enum TagConsensusService {
         }
 
         return claims
+    }
+
+    /// A year to fall back on when the databases return none and the tag is
+    /// blank. The library's own stored year wins first (Serato may have read it
+    /// from an ID3 frame the file no longer carries), then a year in the file
+    /// name, then one in the album title — the places a year survives when the
+    /// ID3 year frame is empty. Nil when none of them carries one.
+    static func fallbackReleaseYear(for track: Track) -> Int? {
+        if let year = track.year { return year }
+        let fileName = track.fileURL.deletingPathExtension().lastPathComponent
+        return OnlineTrackMetadataLookupService.inferReleaseYear(fromText: fileName)
+            ?? OnlineTrackMetadataLookupService.inferReleaseYear(fromText: track.album)
+    }
+
+    /// The year claims, plus a file-name/album fallback — but only when the tag
+    /// is blank and no source returned a year, so real database and fingerprint
+    /// evidence is never diluted. This is what stops a track whose year lives
+    /// only in its file name from being left blank.
+    static func yearClaimsIncludingFallback(
+        _ claims: [Claim],
+        for track: Track,
+        currentValue: String
+    ) -> [Claim] {
+        let currentEmpty = currentValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasYearClaim = claims.contains { Int($0.value.prefix(4)) != nil }
+        guard currentEmpty, !hasYearClaim, let fallback = fallbackReleaseYear(for: track) else {
+            return claims
+        }
+        return claims + [Claim(sourceName: "File name", value: String(fallback), isFingerprint: false)]
     }
 
     /// Year needs its own rule, because the sources are not answering the same

@@ -464,6 +464,39 @@ private func field(
     #expect(OnDeviceTagVerificationService.sanitized("nineties", for: .year, track: subject).isEmpty)
     #expect(OnDeviceTagVerificationService.sanitized("1997", for: .year, track: subject) == "1997")
 }
+
+@available(macOS 26.0, *)
+@Test func onDeviceBackfillsAnEmptyYearFromTheFileName() {
+    // The model left the year blank, but the file is named "... (2016).mp3".
+    let subject = Track(
+        seratoStoredPath: "Music/Artist - Song (2016).mp3",
+        fileURL: URL(fileURLWithPath: "/Music/Artist - Song (2016).mp3"),
+        title: "Song", artist: "Artist", album: "", genre: "", year: nil, duration: nil
+    )
+    var fields: [TagFieldVerification] = []
+    OnDeviceTagVerificationService.fillEmptyYearFromFallback(&fields, track: subject)
+
+    let year = fields.first { $0.field == .year }
+    #expect(year?.verdict == .incorrect)
+    #expect(year?.proposedValue == "2016")
+}
+
+@available(macOS 26.0, *)
+@Test func onDeviceKeepsAYearTheModelAlreadyProposed() {
+    let subject = Track(
+        seratoStoredPath: "Music/Artist - Song (2016).mp3",
+        fileURL: URL(fileURLWithPath: "/Music/Artist - Song (2016).mp3"),
+        title: "Song", artist: "Artist", album: "", genre: "", year: nil, duration: nil
+    )
+    var fields: [TagFieldVerification] = [
+        TagFieldVerification(
+            field: .year, verdict: .incorrect, currentValue: "",
+            proposedValue: "2018", confidence: 0.9, evidence: "MusicBrainz returned 2018."
+        )
+    ]
+    OnDeviceTagVerificationService.fillEmptyYearFromFallback(&fields, track: subject)
+    #expect(fields.first { $0.field == .year }?.proposedValue == "2018")
+}
 #endif
 
 // MARK: - Year
@@ -529,6 +562,68 @@ private func field(
         TagConsensusService.Claim(sourceName: "MusicBrainz", value: "1997", isFingerprint: false)
     ]
     #expect(TagConsensusService.yearConsensus(from: claims)?.value == "1997")
+}
+
+// MARK: - Year filled from the file name when the tag is blank
+
+@Test func fallbackReleaseYearPrefersLibraryThenFileNameThenAlbum() {
+    func named(_ path: String, album: String = "", year: Int? = nil) -> Track {
+        Track(
+            seratoStoredPath: path,
+            fileURL: URL(fileURLWithPath: path),
+            title: "Song", artist: "Artist", album: album, genre: "", year: year, duration: nil
+        )
+    }
+    // The library's own stored year wins.
+    #expect(TagConsensusService.fallbackReleaseYear(for: named("/Music/Song (2016).mp3", year: 1990)) == 1990)
+    // Then the file name.
+    #expect(TagConsensusService.fallbackReleaseYear(for: named("/Music/Song (2016).mp3")) == 2016)
+    // Then the album title.
+    #expect(TagConsensusService.fallbackReleaseYear(for: named("/Music/track01.mp3", album: "Live 1985")) == 1985)
+    // Nothing anywhere.
+    #expect(TagConsensusService.fallbackReleaseYear(for: named("/Music/track01.mp3")) == nil)
+}
+
+@Test func aBlankYearIsFilledFromTheFileNameWhenNoSourceCoversIt() {
+    // The exact case the user hit: the year lives in the file name, not the
+    // ID3 tag, and the databases return none — so it used to stay blank.
+    let subject = Track(
+        seratoStoredPath: "Music/Artist - Song (2016).mp3",
+        fileURL: URL(fileURLWithPath: "/Music/Artist - Song (2016).mp3"),
+        title: "Song", artist: "Artist", album: "", genre: "", year: nil, duration: nil
+    )
+    let result = TagConsensusService.consensus(
+        for: subject,
+        fingerprintMatches: [],
+        candidates: [candidate(.itunes, title: "Song", artist: "Artist")]
+    )
+
+    let year = field(result, .year)
+    #expect(year?.verdict == .incorrect)
+    #expect(year?.proposedValue == "2016")
+    #expect(year?.evidence.contains("File name") == true)
+}
+
+@Test func aDatabaseYearIsPreferredOverTheFileName() {
+    // The fallback must never dilute real evidence: when the databases return
+    // a year, that wins and the file name is not consulted.
+    let subject = Track(
+        seratoStoredPath: "Music/Artist - Song (2016).mp3",
+        fileURL: URL(fileURLWithPath: "/Music/Artist - Song (2016).mp3"),
+        title: "Song", artist: "Artist", album: "", genre: "", year: nil, duration: nil
+    )
+    let result = TagConsensusService.consensus(
+        for: subject,
+        fingerprintMatches: [],
+        candidates: [
+            candidate(.itunes, title: "Song", artist: "Artist", year: 2020),
+            candidate(.deezer, title: "Song", artist: "Artist", year: 2020)
+        ]
+    )
+
+    let year = field(result, .year)
+    #expect(year?.proposedValue == "2020")
+    #expect(year?.evidence.contains("File name") == false)
 }
 
 // MARK: - Empty fields accept a single source as a suggestion

@@ -137,6 +137,20 @@ import Testing
         environment: [:], userDefaults: empty) == nil)
 }
 
+@Test func inferReleaseYearReadsAYearFromText() {
+    // A bracketed year is taken as the release year.
+    #expect(OnlineTrackMetadataLookupService.inferReleaseYear(fromText: "Artist - Title (2019)") == 2019)
+    #expect(OnlineTrackMetadataLookupService.inferReleaseYear(fromText: "Artist - Title [1998]") == 1998)
+    // A standalone year works too.
+    #expect(OnlineTrackMetadataLookupService.inferReleaseYear(fromText: "2001 - Artist - Title") == 2001)
+    // The earliest plausible year when several appear (original over remaster).
+    #expect(OnlineTrackMetadataLookupService.inferReleaseYear(fromText: "Title 1999 (2021 Remaster)") == 1999)
+    // Nothing plausible: no year, a BPM, or an out-of-range number.
+    #expect(OnlineTrackMetadataLookupService.inferReleaseYear(fromText: "Artist - Title") == nil)
+    #expect(OnlineTrackMetadataLookupService.inferReleaseYear(fromText: "128 BPM Mix") == nil)
+    #expect(OnlineTrackMetadataLookupService.inferReleaseYear(fromText: "Track 3200") == nil)
+}
+
 // MARK: - Throttling and caching
 
 import Foundation

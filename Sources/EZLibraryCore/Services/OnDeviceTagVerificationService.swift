@@ -96,10 +96,10 @@ public enum OnDeviceTagVerificationService {
     struct MusicDatabaseSearchTool: Tool {
         let name = "search_music_databases"
         let description = """
-        Search music databases (iTunes, MusicBrainz, Deezer, Wikipedia) for a song and get \
-        back the title, artist, album, genre, release year, and length that each database \
-        holds. Wikipedia is the most reliable for the original album a song first appeared \
-        on. Use this whenever you need a fact about a release. Never rely on memory.
+        Search music databases (iTunes, MusicBrainz, Deezer, Discogs, Wikipedia) for a song \
+        and get back the title, artist, album, genre, release year, and length that each \
+        database holds. Wikipedia is the most reliable for the original album a song first \
+        appeared on. Use this whenever you need a fact about a release. Never rely on memory.
         """
 
         let session: URLSession
@@ -222,7 +222,7 @@ public enum OnDeviceTagVerificationService {
 
     public static func verify(
         tracks: [Track],
-        sourceSelection: OnlineTrackMetadataLookupService.SourceSelection = .freeSources,
+        sourceSelection: OnlineTrackMetadataLookupService.SourceSelection = .all,
         session: URLSession = OnlineTrackMetadataLookupService.defaultSession
     ) -> AsyncStream<TagVerificationEvent> {
         AsyncStream { continuation in
@@ -276,18 +276,22 @@ public enum OnDeviceTagVerificationService {
 
     public static func verify(
         track: Track,
-        sourceSelection: OnlineTrackMetadataLookupService.SourceSelection = .freeSources,
+        sourceSelection: OnlineTrackMetadataLookupService.SourceSelection = .all,
         session: URLSession = OnlineTrackMetadataLookupService.defaultSession
     ) async throws -> TrackTagVerification {
         if let unavailable = availabilityError {
             throw unavailable
         }
 
+        // Read once: the file's own ID3 tags are both what the model searches
+        // with and what it judges, the same rule the consensus and cloud
+        // engines follow. The library row can be stale.
+        let fileTags = await AudioFileTagReader.readTags(from: track.fileURL)
         let tool = MusicDatabaseSearchTool(session: session, sourceSelection: sourceSelection)
         let modelSession = LanguageModelSession(tools: [tool], instructions: instructions)
 
         let response = try await modelSession.respond(
-            to: prompt(for: track),
+            to: prompt(for: track, fileTags: fileTags),
             generating: TrackVerdict.self
         )
 
@@ -305,11 +309,18 @@ public enum OnDeviceTagVerificationService {
     - Keep version wording. "Extended Mix", "Radio Edit", "Dirty", "Clean", "Acapella" and \
     remix credits are part of the title of the version this DJ owns. Never remove one.
     - The title field holds the song name only. Never put the artist name in it, even when \
-    the file name is written that way. Judge from the tags, not the file name.
+    the file name is written that way. Judge from the ID3 tags, not the file name.
+    - The artist field holds the credited performing artists. Do not move a remixer there \
+    unless the release credits them there.
     - Any form of hip hop — "Hip-Hop/Rap", "Rap/Hip Hop", "hip hop", "rap" — is written exactly \
-    "Hip Hop".
+    "Hip Hop". Otherwise a genre must be an actual genre, at roughly the specificity the \
+    library already uses.
+    - A pure capitalization or punctuation difference is worth correcting only when the current \
+    value is clearly malformed, such as ALL CAPS or missing spaces.
     - For a remix or edit outside electronic music, use the year the original song came out, not \
     the year of the remix. In electronic music a remix is its own release, so use its own year.
+    - The year is often missing from the ID3 tag but present in the file name or the library. If \
+    no database returns a year, propose the possible year shown rather than leaving it blank.
     - Length matters. If the file is minutes longer than a database result, it is a \
     different version and that result's album and year do not apply to it.
     - Mark a field "incorrect" only when a database clearly contradicts it. Say which \
@@ -324,20 +335,38 @@ public enum OnDeviceTagVerificationService {
     - Leave proposedValue as an empty string unless the verdict is "incorrect".
     """
 
-    static func prompt(for track: Track) -> String {
+    static func prompt(for track: Track, fileTags: AudioFileTagReader.Tags) -> String {
+        // Prefer the file's own ID3 tag over the library's stored copy for
+        // every field, so the model searches and judges from the file, not the
+        // file name — which is shown only as a last-resort hint.
+        func preferred(_ fileValue: String?, _ stored: String) -> String {
+            let fromFile = fileValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return fromFile.isEmpty ? stored : fromFile
+        }
+
         var lines: [String] = []
-        lines.append("File name: \(track.fileURL.lastPathComponent)")
+        lines.append("FILE NAME (weak hint only, never copy into a field): \(track.fileURL.lastPathComponent)")
         if let duration = track.duration, duration > 0 {
             lines.append("File length: \(Int(duration) / 60)m\(Int(duration) % 60)s")
         }
-        lines.append("Current tags:")
-        lines.append("- title: \(displayValue(track.title))")
-        lines.append("- artist: \(displayValue(track.artist))")
-        lines.append("- album: \(displayValue(track.album))")
-        lines.append("- genre: \(displayValue(track.genre))")
-        lines.append("- year: \(track.year.map(String.init) ?? "(empty)")")
         lines.append("")
-        lines.append("Search the databases for this song, then give a verdict for each of the five fields.")
+        lines.append("Current tags (from the file's ID3 tags — search with these, not the file name):")
+        lines.append("- title: \(displayValue(preferred(fileTags.title, track.title)))")
+        lines.append("- artist: \(displayValue(preferred(fileTags.artist, track.artist)))")
+        lines.append("- album: \(displayValue(preferred(fileTags.album, track.album)))")
+        lines.append("- genre: \(displayValue(preferred(fileTags.genre, track.genre)))")
+
+        let effectiveYear = preferred(fileTags.year.map(String.init), track.year.map(String.init) ?? "")
+        lines.append("- year: \(effectiveYear.isEmpty ? "(empty)" : effectiveYear)")
+        // The year is often absent from the ID3 frame but present in the file
+        // name or the library. Offer it so an empty year gets filled rather
+        // than left blank.
+        if effectiveYear.isEmpty, let fallback = TagConsensusService.fallbackReleaseYear(for: track) {
+            lines.append("- possible year (from the file name/library; use it unless a database gives another): \(fallback)")
+        }
+
+        lines.append("")
+        lines.append("Search the databases for this song using the tags above, then give a verdict for each of the five fields.")
         return lines.joined(separator: "\n")
     }
 
@@ -384,6 +413,12 @@ public enum OnDeviceTagVerificationService {
             ))
         }
 
+        // The model is asked to fill an empty year from the file name, but a
+        // small model does not always. Deterministic backstop: if the year is
+        // still blank and the file name or library carries one, propose it at a
+        // review-level confidence so it surfaces rather than staying empty.
+        fillEmptyYearFromFallback(&fields, track: track)
+
         return TrackTagVerification(
             track: track,
             engineName: engineName,
@@ -391,6 +426,33 @@ public enum OnDeviceTagVerificationService {
             identitySummary: verdict.identitySummary,
             fields: fields
         )
+    }
+
+    /// Backfills the year field from the file name or library when the model
+    /// left it blank. Kept separate so it can be tested without a model.
+    static func fillEmptyYearFromFallback(_ fields: inout [TagFieldVerification], track: Track) {
+        let currentYear = AITagVerificationService.currentValue(of: .year, in: track)
+        guard currentYear.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+
+        let existing = fields.firstIndex { $0.field == .year }
+        if let existing, fields[existing].verdict == .incorrect, !fields[existing].proposedValue.isEmpty {
+            return
+        }
+        guard let fallback = TagConsensusService.fallbackReleaseYear(for: track) else { return }
+
+        let filled = TagFieldVerification(
+            field: .year,
+            verdict: .incorrect,
+            currentValue: currentYear,
+            proposedValue: String(fallback),
+            confidence: 0.5,
+            evidence: "Year is empty; the file name suggests \(fallback)."
+        )
+        if let existing {
+            fields[existing] = filled
+        } else {
+            fields.append(filled)
+        }
     }
 
     /// Repairs the small-model mistakes that would otherwise be written into

@@ -1449,6 +1449,33 @@ public enum OnlineTrackMetadataLookupService {
         guard let earliest else { return "" }
         return GenreCanonicalizer.canonical(earliest.genre)
     }
+
+    /// A 4-digit release year read out of free text like a file name or an
+    /// album title, for the common case where the ID3 year frame is empty but
+    /// the file is named "… (2019).mp3" or the album is "Greatest Hits 1999".
+    /// Prefers a bracketed year, then the earliest plausible standalone
+    /// 19xx/20xx. Nil when nothing in range is found.
+    static func inferReleaseYear(fromText text: String) -> Int? {
+        func inRange(_ year: Int) -> Bool { (1900...2100).contains(year) }
+
+        // A parenthesised or bracketed year is almost always the release year.
+        if let range = text.range(of: #"[\(\[]((?:19|20)\d{2})[\)\]]"#, options: .regularExpression) {
+            let digits = text[range].filter(\.isNumber)
+            if let year = Int(digits.prefix(4)), inRange(year) { return year }
+        }
+
+        // Otherwise the earliest plausible standalone year; earliest so a name
+        // like "1999 (2021 Remaster)" reads as the original release.
+        guard let scanner = try? NSRegularExpression(pattern: #"\b(?:19|20)\d{2}\b"#) else { return nil }
+        let ns = text as NSString
+        var years: [Int] = []
+        scanner.enumerateMatches(in: text, range: NSRange(location: 0, length: ns.length)) { match, _, _ in
+            if let match, let year = Int(ns.substring(with: match.range)), inRange(year) {
+                years.append(year)
+            }
+        }
+        return years.min()
+    }
 }
 
 private struct ITunesSearchResponse: Decodable {
