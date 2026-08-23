@@ -263,3 +263,124 @@ private let allWritable: Set<TagIntegrityAudit.Field> = [.artist, .album, .genre
     // The on-device model is seconds per track, so it crosses the line sooner.
     #expect(TagVerificationCoordinator.estimatedDurationText(for: .onDevice, trackCount: 10)?.contains("minute") == true)
 }
+
+// MARK: - Version descriptors must survive every correction
+//
+// A DJ owns a specific cut of a record, and the version wording is what
+// identifies it. The databases return the plain song title, so a correction
+// that is right about the song is still destructive if it drops the version.
+// This is enforced at the single point every engine's title change passes
+// through, so no engine can bypass it.
+
+private func titleVerification(current: String, proposed: String) -> TrackTagVerification {
+    TrackTagVerification(
+        track: Track(
+            seratoStoredPath: "a.mp3",
+            fileURL: URL(fileURLWithPath: "/a.mp3"),
+            title: current,
+            artist: "Justice"
+        ),
+        engineName: "test",
+        identityConfidence: 0.95,
+        identitySummary: "",
+        fields: [
+            TagFieldVerification(
+                field: .title,
+                verdict: .incorrect,
+                currentValue: current,
+                proposedValue: proposed,
+                confidence: 0.95,
+                evidence: ""
+            )
+        ]
+    )
+}
+
+@Test func aCorrectionThatDropsTheVersionHasItRestored() {
+    let update = titleVerification(
+        current: "Neverendr (Extended Mix)",
+        proposed: "Neverender"
+    ).metadataUpdate(applying: [.title])
+
+    #expect(update.title == "Neverender (Extended Mix)")
+}
+
+@Test func everyCommonDJDescriptorSurvivesACorrection() {
+    for descriptor in ["(Extended Mix)", "(Dirty)", "(Clean)", "(Acapella)",
+                       "(Radio Edit)", "(Rampa Remix)", "(Intro)", "(Instrumental)"] {
+        let update = titleVerification(
+            current: "Sng \(descriptor)",
+            proposed: "Song"
+        ).metadataUpdate(applying: [.title])
+
+        #expect(update.title == "Song \(descriptor)", "lost \(descriptor)")
+    }
+}
+
+@Test func aDescriptorAlreadyOnTheProposalIsNotDuplicated() {
+    let update = titleVerification(
+        current: "Song (Extended Mix)",
+        proposed: "Song (Extended Mix)"
+    ).metadataUpdate(applying: [.title])
+
+    #expect(update.title == "Song (Extended Mix)")
+}
+
+@Test func aTitleWithNoDescriptorIsCorrectedNormally() {
+    let update = titleVerification(current: "Nevrender", proposed: "Neverender")
+        .metadataUpdate(applying: [.title])
+    #expect(update.title == "Neverender")
+}
+
+// MARK: - Filling every field
+
+@Test func anEmptyFieldIsFilledOnWeakerEvidenceThanAnOverwrite() {
+    // The goal is a library with all five fields populated, and filling a blank
+    // from one source cannot destroy anything.
+    let emptyField = verification(fields: [
+        change(.genre, current: "", proposed: "House", confidence: 0.5)
+    ])
+    let populatedField = verification(fields: [
+        change(.genre, current: "Techno", proposed: "House", confidence: 0.5)
+    ])
+
+    #expect(TagVerificationCoordinator.autoApplicableFields(
+        in: emptyField, engine: .consensus,
+        limitedTo: [.title, .artist, .album, .genre, .year], onlyFillEmpty: false
+    ) == [.genre])
+
+    // Replacing a value the user already has still needs corroboration.
+    #expect(TagVerificationCoordinator.autoApplicableFields(
+        in: populatedField, engine: .consensus,
+        limitedTo: [.title, .artist, .album, .genre, .year], onlyFillEmpty: false
+    ).isEmpty)
+}
+
+@Test func aWeakProposalStillCannotFillAnEmptyField() {
+    // "Lower bar" is not "no bar" — a near-guess is still refused.
+    let result = verification(fields: [
+        change(.genre, current: "", proposed: "House", confidence: 0.3)
+    ])
+    #expect(TagVerificationCoordinator.autoApplicableFields(
+        in: result, engine: .consensus,
+        limitedTo: [.genre], onlyFillEmpty: false
+    ).isEmpty)
+}
+
+@Test func allFiveFieldsCanBeFilledInOnePass() {
+    let result = verification(fields: [
+        change(.title, current: "", proposed: "Neverender", confidence: 0.9),
+        change(.artist, current: "", proposed: "Justice", confidence: 0.9),
+        change(.album, current: "", proposed: "Hyperdrama", confidence: 0.9),
+        change(.genre, current: "", proposed: "Electronic", confidence: 0.6),
+        change(.year, current: "", proposed: "2024", confidence: 0.75)
+    ])
+
+    let applied = TagVerificationCoordinator.autoApplicableFields(
+        in: result,
+        engine: .consensus,
+        limitedTo: [.title, .artist, .album, .genre, .year],
+        onlyFillEmpty: false
+    )
+    #expect(applied == [.title, .artist, .album, .genre, .year])
+}

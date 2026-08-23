@@ -35,9 +35,22 @@ public enum TagConsensusService {
     public struct Options: Sendable {
         /// Include AcoustID fingerprint matches. Needs a key and `fpcalc`;
         /// skipped silently when either is missing.
+        ///
+        /// Off by default. Measured cost is about 0.3s per track (0.05s in
+        /// `fpcalc`, the rest the AcoustID round trip) — small, but it buys
+        /// nothing for the majority of tracks whose identity the databases
+        /// already agree on. It earns its keep on files whose tags are too
+        /// wrong to search with, so it is worth turning on for a rescue pass
+        /// rather than for a whole library.
         public var useFingerprint: Bool
-        /// Which databases to consult. Defaults to the ones needing no
-        /// credential, so the result does not depend on the user having keys.
+        /// Which databases to consult.
+        ///
+        /// Defaults to the fast pair (iTunes and Deezer). MusicBrainz has the
+        /// best editorial data but paces callers to one request a second and
+        /// its search latency has been measured anywhere from 0.6s to past the
+        /// request timeout, which makes it the ceiling on a whole-library run.
+        /// Deezer's album lookup now supplies the release year that used to be
+        /// the reason MusicBrainz was indispensable.
         public var sourceSelection: OnlineTrackMetadataLookupService.SourceSelection
         /// How many independent sources must agree before a change is
         /// proposed. Two is the point of the whole design; one source agreeing
@@ -50,8 +63,8 @@ public enum TagConsensusService {
         public var maxConcurrentTracks: Int
 
         public init(
-            useFingerprint: Bool = true,
-            sourceSelection: OnlineTrackMetadataLookupService.SourceSelection = .freeSources,
+            useFingerprint: Bool = false,
+            sourceSelection: OnlineTrackMetadataLookupService.SourceSelection = .fastSources,
             minimumAgreeingSources: Int = 2,
             durationToleranceSeconds: Double = 12,
             maxConcurrentTracks: Int = 3
@@ -185,8 +198,16 @@ public enum TagConsensusService {
             return (try? await OnlineTrackMetadataLookupService.lookup(
                 query: query,
                 sourceSelection: options.sourceSelection,
-                maxResultsPerSource: 5,
-                session: session
+                // A deeper pool per source, because the duration filter throws
+                // most of it away: for one real query only 1 of 9 candidates
+                // was the right length, and the matching entry from the second
+                // source sat just outside the top five.
+                maxResultsPerSource: 12,
+                session: session,
+                // Never deduplicated here — see `lookup(deduplicate:)`. Folding
+                // two sources' identical answers into one is precisely the
+                // signal this engine exists to count.
+                deduplicate: false
             )) ?? []
         }()
 
@@ -244,7 +265,9 @@ public enum TagConsensusService {
             engineName: engineName,
             identityConfidence: identityConfidence(
                 fingerprint: bestFingerprint,
-                sourceCount: contributingSources.count
+                titleAgreement: agreementCount(for: .title, fingerprintMatches: fingerprintMatches, candidates: plausible),
+                artistAgreement: agreementCount(for: .artist, fingerprintMatches: fingerprintMatches, candidates: plausible),
+                durationCorroborated: durationCorroborated(plausible, fileDuration: track.duration)
             ),
             identitySummary: identitySummary(
                 track: track,
@@ -253,35 +276,89 @@ public enum TagConsensusService {
                 rejectedForLength: rejectedForLength
             ),
             fields: verifications,
-            artwork: artworkProposal(from: plausible, fileHasArtwork: fileHasArtwork)
+            artwork: artworkProposal(
+                from: plausible,
+                matchingAlbum: agreedAlbum(in: verifications, track: track),
+                fileHasArtwork: fileHasArtwork
+            )
         )
     }
 
-    /// Picks the cover art to offer, preferring the source that serves the
-    /// largest image.
+    /// The album this track is being said to belong to — the proposed value
+    /// when the album is being corrected, otherwise what is already there.
+    static func agreedAlbum(in verifications: [TagFieldVerification], track: Track) -> String {
+        guard let album = verifications.first(where: { $0.field == .album }) else { return track.album }
+        return album.isChange ? album.proposedValue : track.album
+    }
+
+    /// How many distinct sources back the winning value for one field.
+    static func agreementCount(
+        for field: TagIntegrityAudit.Field,
+        fingerprintMatches: [AudioFingerprintSuggestion],
+        candidates: [OnlineTrackMetadataCandidate]
+    ) -> Int {
+        let fieldClaims = claims(
+            for: field,
+            fingerprintMatches: fingerprintMatches,
+            candidates: candidates
+        )
+        return winningValue(from: fieldClaims)?.sources.count ?? 0
+    }
+
+    /// True when at least one source that actually reported a length matched
+    /// the file's. Candidates with no length are not evidence either way.
+    static func durationCorroborated(
+        _ candidates: [OnlineTrackMetadataCandidate],
+        fileDuration: TimeInterval?,
+        tolerance: Double = 12
+    ) -> Bool {
+        guard let fileDuration, fileDuration > 0 else { return false }
+        return candidates.contains { candidate in
+            guard let length = candidate.durationSeconds, length > 0 else { return false }
+            return abs(length - fileDuration) <= tolerance
+        }
+    }
+
+    /// Picks the cover art to offer.
     ///
-    /// Ordering here is by image size rather than by the source-authority order
-    /// used for text, because every candidate has already survived the same
-    /// filters — what differs is resolution. Deezer serves 1000px, iTunes 600px
-    /// after upscaling the URL, MusicBrainz whatever the Cover Art Archive has.
-    /// Embedded art is looked at on phones and controllers, so bigger wins.
+    /// Art must belong to the release the other fields settled on. Picking
+    /// purely by image size attached the cover of a remixes EP to a track whose
+    /// album consensus was a different record — observed against the live APIs,
+    /// and exactly the kind of quietly-wrong result this whole design exists to
+    /// avoid. So candidates matching the agreed album are considered first, and
+    /// only if none has art does it fall back to any plausible candidate.
+    ///
+    /// Within each group the order is by image size rather than the
+    /// source-authority order used for text: every candidate already survived
+    /// the same filters, so what differs is resolution. Deezer serves 1000px,
+    /// iTunes 600px after the URL is upscaled, MusicBrainz whatever the Cover
+    /// Art Archive holds. Embedded art gets looked at on phones and
+    /// controllers, so bigger wins.
     static func artworkProposal(
         from candidates: [OnlineTrackMetadataCandidate],
+        matchingAlbum album: String,
         fileHasArtwork: Bool
     ) -> ArtworkProposal? {
         let preference: [OnlineMetadataSource] = [.deezer, .itunes, .musicBrainz, .discogs]
+        let normalizedAlbum = TagIntegrityAudit.normalize(album)
 
-        for source in preference {
-            guard let match = candidates.first(where: { $0.source == source && $0.artworkURL != nil }),
-                  let url = match.artworkURL else {
-                continue
+        let onAlbum = normalizedAlbum.isEmpty
+            ? []
+            : candidates.filter { TagIntegrityAudit.normalize($0.album) == normalizedAlbum }
+
+        for group in [onAlbum, candidates] {
+            for source in preference {
+                guard let match = group.first(where: { $0.source == source && $0.artworkURL != nil }),
+                      let url = match.artworkURL else {
+                    continue
+                }
+                return ArtworkProposal(
+                    sourceName: source.displayName,
+                    url: url,
+                    fileIsMissingArtwork: !fileHasArtwork,
+                    albumTitle: match.album
+                )
             }
-            return ArtworkProposal(
-                sourceName: source.displayName,
-                url: url,
-                fileIsMissingArtwork: !fileHasArtwork,
-                albumTitle: match.album
-            )
         }
         return nil
     }
@@ -527,25 +604,45 @@ public enum TagConsensusService {
         return min(0.97, fingerprintAgrees ? base + 0.05 : base)
     }
 
-    private static func identityConfidence(
+    /// How sure we are that this is the right recording.
+    ///
+    /// This used to count how many sources *answered*, which is not what
+    /// identity means — three sources returning three different songs is not
+    /// three-fold confidence. It now rests on how many independently agreed on
+    /// the two fields that identify a recording, title and artist, and whether
+    /// a source that reported a length matched the file's.
+    ///
+    /// The distinction stopped being academic when the default source set
+    /// shrank to two: the old scale returned 0.65 for two sources, just under
+    /// the 0.7 floor for trusting a verdict, so every bulk apply was silently
+    /// refused no matter how well the sources agreed.
+    static func identityConfidence(
         fingerprint: AudioFingerprintSuggestion?,
-        sourceCount: Int
+        titleAgreement: Int,
+        artistAgreement: Int,
+        durationCorroborated: Bool
     ) -> Double {
-        // A fingerprint identifies the audio, so it dominates. Without one,
-        // identity rests on how many independent searches converged at all.
+        // A fingerprint identifies the audio itself, so it dominates.
         if let score = fingerprint?.confidence, score > 0 {
             return min(0.97, score)
         }
-        switch sourceCount {
+
+        // Both fields have to be corroborated; a title everyone agrees on is
+        // worth little if they disagree about who made it.
+        let corroborated = min(titleAgreement, artistAgreement)
+        let base: Double
+        switch corroborated {
         case 0:
-            return 0
+            base = 0.3
         case 1:
-            return 0.45
+            base = 0.55
         case 2:
-            return 0.65
+            base = 0.78
         default:
-            return 0.75
+            base = 0.88
         }
+
+        return min(0.95, durationCorroborated ? base + 0.05 : base)
     }
 
     private static func identitySummary(

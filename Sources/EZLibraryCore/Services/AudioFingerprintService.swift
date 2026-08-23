@@ -45,6 +45,18 @@ public struct AudioFingerprintSuggestion: Sendable, Hashable, Identifiable {
 }
 
 public enum AudioFingerprintService {
+    /// `URLSession.shared` defaults to a 60-second request timeout, so a single
+    /// unresponsive AcoustID lookup could stall a bulk run for a minute per
+    /// track. The service normally answers in under half a second, so anything
+    /// past a few seconds is not worth waiting for.
+    public static let defaultSession: URLSession = {
+        let configuration = URLSessionConfiguration.default
+        configuration.timeoutIntervalForRequest = 8
+        configuration.timeoutIntervalForResource = 15
+        configuration.waitsForConnectivity = false
+        return URLSession(configuration: configuration)
+    }()
+
     public static let tokenEnvironmentKey = "EZLIBRARY_ACOUSTID_KEY"
     /// Legacy environment key, still honored for backward compatibility.
     public static let legacyTokenEnvironmentKey = "SERATOTOOLS_ACOUSTID_KEY"
@@ -93,7 +105,7 @@ public enum AudioFingerprintService {
     public static func suggestMetadata(
         for track: Track,
         maxResults: Int = 5,
-        session: URLSession = .shared
+        session: URLSession = defaultSession
     ) async throws -> [AudioFingerprintSuggestion] {
         guard let tokenInfo = tokenWithSource() else {
             throw FingerprintError.missingToken
@@ -147,7 +159,7 @@ public enum AudioFingerprintService {
 
     public static func validateClientKey(
         _ key: String,
-        session: URLSession = .shared
+        session: URLSession = defaultSession
     ) async -> TokenValidationResult {
         let token = key.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !token.isEmpty else {

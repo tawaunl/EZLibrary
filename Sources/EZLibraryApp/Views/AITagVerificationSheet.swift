@@ -40,8 +40,9 @@ struct AITagVerificationSheet: View {
     @State private var phase: Phase = .setup
     @State private var onlyFlaggedTracks = true
     @State private var useWebSearch = true
-    @State private var useFingerprint = true
-    @State private var useOnlineCandidates = true
+    @State private var useFingerprint = false
+    @State private var useThoroughSources = false
+    @State private var useDiscogs = false
     @State private var showAdvanced = false
 
     @State private var results: [AITagVerificationService.TrackVerification] = []
@@ -55,6 +56,7 @@ struct AITagVerificationSheet: View {
     /// otherwise re-scan on every render.
     @State private var auditFindings: [TagIntegrityAudit.Finding] = []
     @State private var isAuditing = true
+    @State private var isApplying = false
     @State private var abortMessage: String?
     @State private var applyErrorMessage: String?
     @State private var appliedSummary: String?
@@ -75,16 +77,26 @@ struct AITagVerificationSheet: View {
     private var consensusOptions: TagConsensusService.Options {
         TagConsensusService.Options(
             useFingerprint: useFingerprint,
-            sourceSelection: useOnlineCandidates ? .all : .freeSources
+            sourceSelection: sourceSelection
         )
+    }
+
+    /// Fast by default; each extra source is an explicit trade of speed for
+    /// coverage, so the sheet names the cost rather than hiding it.
+    private var sourceSelection: OnlineTrackMetadataLookupService.SourceSelection {
+        if useDiscogs {
+            return .all
+        }
+        return useThoroughSources ? .freeSources : .fastSources
     }
 
     private var options: AITagVerificationService.Options {
         AITagVerificationService.Options(
+            provider: AITagVerificationService.selectedProvider(),
             model: model,
             useWebSearch: useWebSearch,
             useFingerprint: useFingerprint,
-            useOnlineCandidates: useOnlineCandidates
+            useOnlineCandidates: useDiscogs
         )
     }
 
@@ -236,7 +248,11 @@ struct AITagVerificationSheet: View {
                         .fixedSize(horizontal: false, vertical: true)
 
                     if let reason = engineAvailability.unavailableReason {
-                        calloutRow(text: reason, symbol: "exclamationmark.triangle.fill", tint: .orange)
+                        calloutRow(
+                            text: reason + " Runs will use the free cross-check until this is set up.",
+                            symbol: "exclamationmark.triangle.fill",
+                            tint: .orange
+                        )
                     }
 
                     if engine == .cloudModel {
@@ -264,20 +280,28 @@ struct AITagVerificationSheet: View {
 
                     DisclosureGroup("Evidence sources", isExpanded: $showAdvanced) {
                         VStack(alignment: .leading, spacing: 6) {
+                            Toggle("Also check MusicBrainz (slower)", isOn: $useThoroughSources)
+                                .toggleStyle(.switch)
+                                .controlSize(.small)
+                                .help(
+                                    "MusicBrainz has the best editorial data, but it limits callers to one "
+                                    + "request a second and its search can take ten seconds or more. "
+                                    + "Expect roughly one track per second with this on.")
+
                             Toggle("Audio fingerprint (AcoustID)", isOn: $useFingerprint)
                                 .toggleStyle(.switch)
                                 .controlSize(.small)
                                 .help(
-                                    "Identifies the actual audio rather than trusting the tags. "
-                                    + "Needs an AcoustID key and fpcalc; skipped automatically if either is missing.")
+                                    "Identifies the actual audio instead of trusting the tags — worth it for "
+                                    + "files too badly tagged to search with. Adds about a third of a second "
+                                    + "per track. Needs an AcoustID key and fpcalc.")
 
-                            Toggle("Include sources that need a key (Discogs)", isOn: $useOnlineCandidates)
+                            Toggle("Also check Discogs (needs a token)", isOn: $useDiscogs)
                                 .toggleStyle(.switch)
                                 .controlSize(.small)
                                 .help(
-                                    "iTunes, MusicBrainz, and Deezer are always used and need no key. "
-                                    + "Turn this on to also consult Discogs, which needs a token but is the "
-                                    + "best source for vinyl, bootlegs, and white labels.")
+                                    "The best source for vinyl, bootlegs, and white labels, but it needs a "
+                                    + "token and adds another paced request per track.")
                         }
                         .padding(.top, 4)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -288,6 +312,13 @@ struct AITagVerificationSheet: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+
+                    if engine == .consensus {
+                        Text(speedNote)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             } label: {
@@ -315,6 +346,22 @@ struct AITagVerificationSheet: View {
     }
 
     // MARK: - Progress
+
+    /// Names what the current source choice costs in speed, because the
+    /// difference between the fast pair and MusicBrainz is not marginal — it is
+    /// the difference between several tracks a second and one.
+    private var speedNote: String {
+        switch sourceSelection {
+        case .fastSources:
+            return "Fast: iTunes and Deezer answer in about a quarter-second each."
+        case .freeSources:
+            return "MusicBrainz limits callers to one request a second, so expect about one track per second."
+        case .all:
+            return "MusicBrainz and Discogs are both rate limited, so expect around one track per second."
+        default:
+            return ""
+        }
+    }
 
     private var progressSection: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -612,6 +659,11 @@ struct AITagVerificationSheet: View {
 
     // MARK: - Footer
 
+    private var applyButtonTitle: String {
+        let total = selectedFieldIDs.count + selectedArtworkIDs.count
+        return "Apply \(total) Change\(total == 1 ? "" : "s")"
+    }
+
     private var footer: some View {
         HStack(spacing: 8) {
             if let appliedSummary {
@@ -644,11 +696,11 @@ struct AITagVerificationSheet: View {
                 .disabled(isAuditing || tracksToVerify.isEmpty || !canRunSelectedEngine)
                 .help("Send each track to Claude with its evidence and get back per-field verdicts.")
             } else {
-                Button("Apply \(selectedFieldIDs.count) Change\(selectedFieldIDs.count == 1 ? "" : "s")") {
+                Button(applyButtonTitle) {
                     applySelectedChanges()
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(selectedFieldIDs.isEmpty)
+                .disabled(isApplying || (selectedFieldIDs.isEmpty && selectedArtworkIDs.isEmpty))
                 .help("Write the checked changes to the Serato library and the files' ID3 tags.")
             }
         }
@@ -663,6 +715,7 @@ struct AITagVerificationSheet: View {
         results = []
         failures = []
         selectedFieldIDs = []
+        selectedArtworkIDs = []
         abortMessage = nil
         appliedSummary = nil
         completedCount = 0
@@ -713,31 +766,70 @@ struct AITagVerificationSheet: View {
         for change in result.proposedChanges where change.confidence >= minimumConfidence {
             selectedFieldIDs.insert(change.id)
         }
+        if let artwork = result.artwork, artwork.fileIsMissingArtwork {
+            selectedArtworkIDs.insert(artwork.id)
+        }
     }
 
     private func applySelectedChanges() {
-        var updates: [(Track, SeratoTrackMetadataUpdate)] = []
+        isApplying = true
+        Task {
+            var updates: [(Track, SeratoTrackMetadataUpdate)] = []
+            var artworkApplied = 0
+            var artworkFailures: [String] = []
 
-        for result in results {
-            let fields = Set(
-                result.proposedChanges
-                    .filter { selectedFieldIDs.contains($0.id) }
-                    .map(\.field)
-            )
-            guard !fields.isEmpty else { continue }
-            updates.append((result.track, result.metadataUpdate(applying: fields)))
-        }
+            for result in results {
+                let fields = Set(
+                    result.proposedChanges
+                        .filter { selectedFieldIDs.contains($0.id) }
+                        .map(\.field)
+                )
+                let artwork = result.artwork
+                let wantsArtwork = artwork.map { selectedArtworkIDs.contains($0.id) } ?? false
+                guard !fields.isEmpty || wantsArtwork else { continue }
 
-        guard !updates.isEmpty else { return }
+                var update = result.metadataUpdate(applying: fields)
 
-        do {
-            try onApply(updates)
-            let changeCount = selectedFieldIDs.count
-            appliedSummary = "Applied \(changeCount) change\(changeCount == 1 ? "" : "s") "
-                + "across \(updates.count) track\(updates.count == 1 ? "" : "s")."
-            selectedFieldIDs = []
-        } catch {
-            applyErrorMessage = error.localizedDescription
+                // Downloaded here rather than up front: fetching art for every
+                // result would pull images the user never asked to apply.
+                if wantsArtwork, let artwork {
+                    do {
+                        update.artwork = try await ArtworkFetchService.fetchArtwork(from: artwork.url)
+                        artworkApplied += 1
+                    } catch {
+                        artworkFailures.append(result.track.fileURL.lastPathComponent)
+                        // The tag changes are still worth writing without it.
+                        if fields.isEmpty { continue }
+                    }
+                }
+
+                updates.append((result.track, update))
+            }
+
+            isApplying = false
+            guard !updates.isEmpty else { return }
+
+            do {
+                try onApply(updates)
+                var summary = "Applied \(selectedFieldIDs.count) change"
+                    + "\(selectedFieldIDs.count == 1 ? "" : "s") "
+                    + "across \(updates.count) track\(updates.count == 1 ? "" : "s")."
+                if artworkApplied > 0 {
+                    summary += " Embedded artwork on \(artworkApplied)."
+                }
+                appliedSummary = summary
+                selectedFieldIDs = []
+                selectedArtworkIDs = []
+
+                if !artworkFailures.isEmpty {
+                    applyErrorMessage = "Artwork could not be downloaded for "
+                        + "\(artworkFailures.count) track\(artworkFailures.count == 1 ? "" : "s"): "
+                        + artworkFailures.prefix(3).joined(separator: ", ")
+                        + ". Their other tag changes were still applied."
+                }
+            } catch {
+                applyErrorMessage = error.localizedDescription
+            }
         }
     }
 }

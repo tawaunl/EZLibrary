@@ -15,6 +15,12 @@ import EZLibraryCore
 @MainActor
 final class EZLibraryAppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Before anything reads a setting: this app has written preferences
+        // under three different domain names across its history (the bundle id,
+        // the executable name under `swift run`, and the old SeratoTools name),
+        // so a key saved by one build is invisible to another until adopted.
+        LegacyDefaultsMigration.migrateIfNeeded()
+
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
 

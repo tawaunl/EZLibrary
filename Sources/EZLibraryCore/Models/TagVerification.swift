@@ -179,7 +179,19 @@ public struct TrackTagVerification: Sendable, Identifiable {
             let value = verification.proposedValue.trimmingCharacters(in: .whitespacesAndNewlines)
             switch verification.field {
             case .title:
-                update.title = value
+                // The one place every engine's title correction passes through,
+                // and therefore the right place to guarantee the thing that
+                // must never break: a DJ owns a specific version of a record,
+                // and "(Extended Mix)", "(Dirty)", "(Rampa Remix)" identify it.
+                // The databases return the plain song title, so a correction
+                // that is right about the song is still destructive if it drops
+                // the version. Re-attaching here means no engine — present or
+                // future — can lose one, whatever its prompt or its scoring
+                // says.
+                update.title = OnlineTrackMetadataLookupService.titlePreservingDescriptors(
+                    from: value,
+                    original: track.title
+                )
             case .artist:
                 update.artist = value
             case .album:

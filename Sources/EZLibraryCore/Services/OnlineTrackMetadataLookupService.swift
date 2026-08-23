@@ -207,6 +207,12 @@ public enum OnlineTrackMetadataLookupService {
         /// Every source that needs no credential — what a user with no keys
         /// configured can actually reach.
         case freeSources
+        /// iTunes and Deezer only: the two sources that answer in about a
+        /// quarter of a second each. MusicBrainz is excluded because it paces
+        /// callers to one request a second and its search latency ranges from
+        /// under a second to well past the request timeout, which makes it the
+        /// throughput ceiling for a whole-library run.
+        case fastSources
 
         public var displayName: String {
             switch self {
@@ -222,6 +228,8 @@ public enum OnlineTrackMetadataLookupService {
                 return "Discogs"
             case .freeSources:
                 return "Free Sources"
+            case .fastSources:
+                return "Fast Sources"
             }
         }
 
@@ -239,6 +247,8 @@ public enum OnlineTrackMetadataLookupService {
                 return [.discogs]
             case .freeSources:
                 return OnlineMetadataSource.allCases.filter { !$0.requiresCredential }
+            case .fastSources:
+                return [.itunes, .deezer]
             }
         }
 
@@ -343,18 +353,29 @@ public enum OnlineTrackMetadataLookupService {
         throw lastThrottle ?? .rateLimited(source)
     }
 
+    /// - Parameter deduplicate: Collapses candidates that describe the same
+    ///   release into one, which is right for a picker the user chooses from
+    ///   and wrong for anything counting corroboration. Two sources
+    ///   independently returning the same album *is the signal*, and folding
+    ///   them together makes agreement look like a single opinion. Consensus
+    ///   verification passes `false`.
     public static func lookup(
         query: Query,
         sourceSelection: SourceSelection = .all,
         maxResultsPerSource: Int = 8,
-        session: URLSession = defaultSession
+        session: URLSession = defaultSession,
+        deduplicate: Bool = true
     ) async throws -> [OnlineTrackMetadataCandidate] {
         let normalized = normalize(query: query)
         guard !normalized.title.isEmpty || !normalized.artist.isEmpty || !normalized.album.isEmpty else {
             throw LookupError.missingSearchTerms
         }
 
-        let cacheKey = cacheKey(for: normalized, sourceSelection: sourceSelection)
+        let cacheKey = cacheKey(
+            for: normalized,
+            sourceSelection: sourceSelection,
+            deduplicate: deduplicate
+        )
         if let cached = await OnlineMetadataLookupCache.shared.get(cacheKey) {
             return cached
         }
@@ -401,7 +422,7 @@ public enum OnlineTrackMetadataLookupService {
                 throw failure
             }
 
-            result = deduplicated(candidates: combined)
+            result = deduplicate ? deduplicated(candidates: combined) : combined
         } else {
             let results = try await fetchCandidates(
                 from: sourceSelection.enabledSources[0],
@@ -412,7 +433,7 @@ public enum OnlineTrackMetadataLookupService {
                 sourceSelection: sourceSelection
             )
 
-            result = deduplicated(candidates: results)
+            result = deduplicate ? deduplicated(candidates: results) : results
         }
 
         // Only cache hits. Caching an empty result meant one throttled or
@@ -546,9 +567,14 @@ public enum OnlineTrackMetadataLookupService {
         }
     }
 
-    private static func cacheKey(for query: Query, sourceSelection: SourceSelection) -> String {
+    private static func cacheKey(
+        for query: Query,
+        sourceSelection: SourceSelection,
+        deduplicate: Bool = true
+    ) -> String {
         [
             sourceSelection.rawValue,
+            deduplicate ? "dedup" : "raw",
             query.title.lowercased(),
             query.artist.lowercased(),
             query.album.lowercased()
@@ -778,19 +804,62 @@ public enum OnlineTrackMetadataLookupService {
             throw LookupError.sourceRequestFailed(.deezer, "Received an unexpected response format from Deezer.")
         }
 
+        // Search results carry no release date or genre — those live on the
+        // album object. One extra request per distinct album (about a quarter
+        // of a second) buys a second fast source for year and genre, which is
+        // what lets a run skip MusicBrainz without losing the release year.
+        let albumIDs = decoded.data.compactMap(\.album?.id).reduce(into: [Int]()) { unique, id in
+            if !unique.contains(id), unique.count < maxAlbumLookups {
+                unique.append(id)
+            }
+        }
+        var albumDetails: [Int: DeezerAlbumDetail] = [:]
+        for albumID in albumIDs {
+            if let detail = await fetchDeezerAlbumDetail(id: albumID, session: session) {
+                albumDetails[albumID] = detail
+            }
+        }
+
         return decoded.data.map { item in
-            OnlineTrackMetadataCandidate(
+            let detail = item.album?.id.flatMap { albumDetails[$0] }
+            return OnlineTrackMetadataCandidate(
                 source: .deezer,
                 title: item.title ?? "",
                 artist: item.artist?.name ?? "",
                 album: item.album?.title ?? "",
-                genre: "",
-                year: nil,
+                genre: detail?.primaryGenre ?? "",
+                year: yearFromDateString(detail?.releaseDate),
                 bpm: nil,
                 artworkURL: (item.album?.coverXL ?? item.album?.coverBig).flatMap(URL.init(string:)),
                 durationSeconds: item.duration.map(Double.init)
             )
         }
+    }
+
+    /// How many distinct Deezer albums to look up per search. Two covers the
+    /// common case (the single and the album it is on) without turning one
+    /// lookup into a dozen requests.
+    private static let maxAlbumLookups = 2
+
+    /// Best-effort: a failed album lookup costs the extra year and genre for
+    /// that candidate, nothing more, so it must never fail the search.
+    private static func fetchDeezerAlbumDetail(
+        id: Int,
+        session: URLSession
+    ) async -> DeezerAlbumDetail? {
+        guard let url = URL(string: "https://api.deezer.com/album/\(id)") else { return nil }
+        var request = URLRequest(url: url)
+        request.setValue("EZLibrary/1.0 (metadata lookup)", forHTTPHeaderField: "User-Agent")
+
+        guard let data = try? await performRequest(
+            request,
+            source: .deezer,
+            pacer: .deezer,
+            session: session
+        ) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(DeezerAlbumDetail.self, from: data)
     }
 
     private static func fetchMusicBrainz(
@@ -1008,12 +1077,36 @@ private struct DeezerArtist: Decodable {
     let name: String?
 }
 
+private struct DeezerAlbumDetail: Decodable {
+    let releaseDate: String?
+    let genres: DeezerGenreList?
+
+    var primaryGenre: String {
+        genres?.data?.first?.name ?? ""
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case releaseDate = "release_date"
+        case genres
+    }
+}
+
+private struct DeezerGenreList: Decodable {
+    let data: [DeezerGenre]?
+}
+
+private struct DeezerGenre: Decodable {
+    let name: String?
+}
+
 private struct DeezerAlbum: Decodable {
+    let id: Int?
     let title: String?
     let coverBig: String?
     let coverXL: String?
 
     enum CodingKeys: String, CodingKey {
+        case id
         case title
         case coverBig = "cover_big"
         case coverXL = "cover_xl"

@@ -356,9 +356,9 @@ struct TracksAndTagsView: View {
             }
         } message: {
             Text(
-                "Artist, Album, Genre, and Year will be updated on "
-                + "\(pendingTopHitUpdates.count) track\(pendingTopHitUpdates.count == 1 ? "" : "s") "
-                + "where the sources agreed. Titles are never changed here.")
+                "Title, Artist, Album, Genre, and Year will be updated on "
+                + "\(pendingTopHitUpdates.count) track\(pendingTopHitUpdates.count == 1 ? "" : "s"). "
+                + "Version wording such as \u{201C}(Extended Mix)\u{201D} is preserved.")
         }
         .confirmationDialog(
             "Clean Tag Whitespace",
@@ -538,14 +538,14 @@ struct TracksAndTagsView: View {
                 }
                 .disabled(selectedTracks.isEmpty || isBulkLookupRunning)
                 .help("Look up genre and year online and fill them in for the selected tracks.")
-                Button("Apply Verified Tags (A/Al/G/Y)") {
+                Button("Apply Verified Tags") {
                     startVerifiedBulkApply()
                 }
                 .disabled(selectedTracks.isEmpty || isBulkLookupRunning)
                 .help(
                     "Check the selected tracks with the engine chosen in \u{201C}Verify Tags with AI\u{201D}, "
-                    + "then apply the Artist, Album, Genre, and Year it is confident about. "
-                    + "Shows what will change before writing.")
+                    + "then fill Title, Artist, Album, Genre, and Year. Version wording such as "
+                    + "\u{201C}(Extended Mix)\u{201D} is always kept. Shows what will change before writing.")
                 Button("Verify Tags with AI…") {
                     showAITagVerification = true
                 }
@@ -977,7 +977,9 @@ struct TracksAndTagsView: View {
         // Verifying is no longer nearly free: the cloud tier bills per track and
         // the on-device tier takes seconds per track. Confirm before spending
         // either, rather than after.
-        if verificationEngine.isPaid || selectedTracks.count > Self.bulkConfirmThreshold {
+        if engineResolution.didFallBack
+            || verificationEngine.isPaid
+            || selectedTracks.count > Self.bulkConfirmThreshold {
             showVerifiedApplyPrompt = true
         } else {
             runVerifiedBulkApply()
@@ -987,15 +989,27 @@ struct TracksAndTagsView: View {
     /// Selections at or below this run without a pre-flight prompt.
     private static let bulkConfirmThreshold = 25
 
+    private var engineResolution: TagVerificationCoordinator.EngineResolution {
+        TagVerificationCoordinator.resolveEngine()
+    }
+
     private var verificationEngine: TagVerificationEngineKind {
-        TagVerificationCoordinator.defaultEngine()
+        engineResolution.engine
     }
 
     private var verifiedApplyPromptMessage: String {
         let engine = verificationEngine
         let count = selectedTracks.count
         let cost = TagVerificationCoordinator.costText(for: engine, trackCount: count)
-        var message = "\(count) track\(count == 1 ? "" : "s") will be checked with \(engine.displayName). \(cost)"
+        var message = ""
+        // If the chosen engine cannot run, say so here rather than quietly
+        // running something else and letting the results imply it.
+        if let requested = engineResolution.requested {
+            message += "\(requested.displayName) can't run: "
+                + "\(engineResolution.fallbackReason ?? "it is not configured."). "
+                + "Using \(engine.displayName) instead. "
+        }
+        message += "\(count) track\(count == 1 ? "" : "s") will be checked with \(engine.displayName). \(cost)"
         if let duration = TagVerificationCoordinator.estimatedDurationText(for: engine, trackCount: count) {
             message += " This will take \(duration) — you can stop it partway and keep what it found."
         }
@@ -1011,8 +1025,11 @@ struct TracksAndTagsView: View {
         let tracksSnapshot = selectedTracks
         let onlyFillEmptySnapshot = onlyFillEmpty
         let engine = verificationEngine
-        // Exactly the fields this button has always written.
-        let writableFields: Set<TagIntegrityAudit.Field> = [.artist, .album, .genre, .year]
+        // All five. Title is included now that every engine's title correction
+        // passes through the descriptor-preserving choke point in
+        // `metadataUpdate(applying:)`, so a bulk run cannot strip the version
+        // wording that identifies which cut of a record this is.
+        let writableFields: Set<TagIntegrityAudit.Field> = [.title, .artist, .album, .genre, .year]
 
         verifiedApplyTask = Task {
             var updates: [(Track, SeratoTrackMetadataUpdate)] = []
@@ -1021,7 +1038,12 @@ struct TracksAndTagsView: View {
             var completed = 0
             var total = tracksSnapshot.count
 
-            for await event in TagVerificationCoordinator.verify(tracks: tracksSnapshot, using: engine) {
+            let events = TagVerificationCoordinator.verify(
+                tracks: tracksSnapshot,
+                using: engine,
+                cloudOptions: TagVerificationCoordinator.cloudOptionsFromSettings()
+            )
+            for await event in events {
                 if Task.isCancelled { break }
                 switch event {
                 case let .started(count):

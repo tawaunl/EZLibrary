@@ -519,3 +519,234 @@ private func field(
     #expect(evidence.contains("says"))
     #expect(!evidence.contains("agree it"))
 }
+
+// MARK: - Artwork
+
+private func artCandidate(
+    _ source: OnlineMetadataSource,
+    art: String?,
+    album: String = "Hyperdrama"
+) -> OnlineTrackMetadataCandidate {
+    OnlineTrackMetadataCandidate(
+        source: source,
+        title: "Neverender",
+        artist: "Justice",
+        album: album,
+        genre: "",
+        year: nil,
+        bpm: nil,
+        artworkURL: art.flatMap(URL.init(string:))
+    )
+}
+
+@Test func artworkIsOfferedWhenTheFileHasNone() {
+    let result = TagConsensusService.consensus(
+        for: track(),
+        fingerprintMatches: [],
+        candidates: [artCandidate(.itunes, art: "https://example.com/cover.jpg")],
+        fileHasArtwork: false
+    )
+
+    let artwork = result.artwork
+    #expect(artwork?.fileIsMissingArtwork == true)
+    #expect(artwork?.sourceName == "iTunes")
+    #expect(artwork?.albumTitle == "Hyperdrama")
+}
+
+@Test func artworkIsStillReportedWhenTheFileAlreadyHasSome() {
+    // Reported, but flagged as not missing — the UI only offers to fill a gap,
+    // never to replace art the user may have chosen.
+    let result = TagConsensusService.consensus(
+        for: track(),
+        fingerprintMatches: [],
+        candidates: [artCandidate(.itunes, art: "https://example.com/cover.jpg")],
+        fileHasArtwork: true
+    )
+    #expect(result.artwork?.fileIsMissingArtwork == false)
+}
+
+@Test func artworkComesFromTheReleaseTheOtherFieldsAgreedOn() {
+    // Observed against the live APIs: picking art purely by image size attached
+    // a remixes-EP cover to a track whose album consensus was a different
+    // record. The cover has to belong to the album being proposed.
+    let agreedAlbum = OnlineTrackMetadataCandidate(
+        source: .itunes, title: "D.A.N.C.E.", artist: "Justice", album: "Cross",
+        genre: "", year: nil, bpm: nil,
+        artworkURL: URL(string: "https://example.com/cross.jpg")
+    )
+    let otherRelease = OnlineTrackMetadataCandidate(
+        source: .deezer, title: "D.A.N.C.E.", artist: "Justice", album: "D.A.N.C.E. (Remixes)",
+        genre: "", year: nil, bpm: nil,
+        artworkURL: URL(string: "https://example.com/remixes.jpg")
+    )
+
+    // Deezer would win on size alone, but it is the wrong release.
+    let proposal = TagConsensusService.artworkProposal(
+        from: [otherRelease, agreedAlbum],
+        matchingAlbum: "Cross",
+        fileHasArtwork: false
+    )
+    #expect(proposal?.albumTitle == "Cross")
+    #expect(proposal?.sourceName == "iTunes")
+}
+
+@Test func artworkFallsBackToAnyCandidateWhenTheAlbumHasNone() {
+    let onAlbumNoArt = OnlineTrackMetadataCandidate(
+        source: .itunes, title: "T", artist: "A", album: "Cross",
+        genre: "", year: nil, bpm: nil, artworkURL: nil
+    )
+    let otherWithArt = OnlineTrackMetadataCandidate(
+        source: .deezer, title: "T", artist: "A", album: "Other",
+        genre: "", year: nil, bpm: nil,
+        artworkURL: URL(string: "https://example.com/other.jpg")
+    )
+    let proposal = TagConsensusService.artworkProposal(
+        from: [onAlbumNoArt, otherWithArt],
+        matchingAlbum: "Cross",
+        fileHasArtwork: false
+    )
+    #expect(proposal?.sourceName == "Deezer")
+}
+
+@Test func theLargestAvailableCoverIsPreferred() {
+    // Deezer serves 1000px, iTunes 600px. Embedded art gets looked at on
+    // phones and controllers, so resolution decides here rather than source
+    // authority.
+    let result = TagConsensusService.consensus(
+        for: track(),
+        fingerprintMatches: [],
+        candidates: [
+            artCandidate(.itunes, art: "https://example.com/itunes.jpg"),
+            artCandidate(.deezer, art: "https://example.com/deezer.jpg")
+        ],
+        fileHasArtwork: false
+    )
+    #expect(result.artwork?.sourceName == "Deezer")
+}
+
+@Test func aSourceWithNoCoverIsSkippedForOneThatHasIt() {
+    let result = TagConsensusService.consensus(
+        for: track(),
+        fingerprintMatches: [],
+        candidates: [
+            artCandidate(.deezer, art: nil),
+            artCandidate(.musicBrainz, art: "https://example.com/caa.jpg")
+        ],
+        fileHasArtwork: false
+    )
+    #expect(result.artwork?.sourceName == "MusicBrainz")
+}
+
+@Test func noArtworkAnywhereMeansNoProposal() {
+    let result = TagConsensusService.consensus(
+        for: track(),
+        fingerprintMatches: [],
+        candidates: [artCandidate(.deezer, art: nil)],
+        fileHasArtwork: false
+    )
+    #expect(result.artwork == nil)
+}
+
+@Test func artworkComesOnlyFromCandidatesThatPassedTheLengthFilter() {
+    // A cover belonging to the three-minute radio edit must not be attached to
+    // a seven-minute extended mix.
+    let wrongLength = OnlineTrackMetadataCandidate(
+        source: .deezer, title: "Neverender", artist: "Justice", album: "Radio Single",
+        genre: "", year: nil, bpm: nil,
+        artworkURL: URL(string: "https://example.com/radio.jpg"), durationSeconds: 200
+    )
+    let rightLength = OnlineTrackMetadataCandidate(
+        source: .itunes, title: "Neverender", artist: "Justice", album: "Hyperdrama",
+        genre: "", year: nil, bpm: nil,
+        artworkURL: URL(string: "https://example.com/album.jpg"), durationSeconds: 421
+    )
+
+    let result = TagConsensusService.consensus(
+        for: track(duration: 420),
+        fingerprintMatches: [],
+        candidates: [wrongLength, rightLength],
+        fileHasArtwork: false
+    )
+    #expect(result.artwork?.albumTitle == "Hyperdrama")
+    #expect(result.artwork?.sourceName == "iTunes")
+}
+
+// MARK: - Identity confidence rests on agreement, not on how many replied
+
+@Test func identityRestsOnTitleAndArtistBothBeingCorroborated() {
+    // Three sources naming three different songs is not three-fold confidence.
+    let agreeing = TagConsensusService.identityConfidence(
+        fingerprint: nil, titleAgreement: 2, artistAgreement: 2, durationCorroborated: true
+    )
+    let titleOnly = TagConsensusService.identityConfidence(
+        fingerprint: nil, titleAgreement: 3, artistAgreement: 1, durationCorroborated: true
+    )
+
+    #expect(agreeing > titleOnly)
+    // Two corroborated sources plus a length match must clear the bar for
+    // trusting a verdict, or the default two-source setup can never apply
+    // anything — which is exactly what a miscalibrated scale caused.
+    #expect(agreeing >= TagVerificationCoordinator.identityConfidenceFloor)
+}
+
+@Test func aLengthMatchAddsConfidenceAndAFingerprintDominates() {
+    let withLength = TagConsensusService.identityConfidence(
+        fingerprint: nil, titleAgreement: 2, artistAgreement: 2, durationCorroborated: true
+    )
+    let withoutLength = TagConsensusService.identityConfidence(
+        fingerprint: nil, titleAgreement: 2, artistAgreement: 2, durationCorroborated: false
+    )
+    #expect(withLength > withoutLength)
+
+    let fingerprinted = TagConsensusService.identityConfidence(
+        fingerprint: fingerprint(confidence: 0.96),
+        titleAgreement: 0, artistAgreement: 0, durationCorroborated: false
+    )
+    #expect(fingerprinted > 0.9)
+}
+
+@Test func noCorroborationMeansLowIdentityConfidence() {
+    let alone = TagConsensusService.identityConfidence(
+        fingerprint: nil, titleAgreement: 1, artistAgreement: 1, durationCorroborated: false
+    )
+    #expect(alone < TagVerificationCoordinator.identityConfidenceFloor)
+}
+
+@Test func durationCorroborationIgnoresSourcesThatReportNoLength() {
+    // A candidate with no length is not evidence either way.
+    #expect(!TagConsensusService.durationCorroborated(
+        [candidate(.musicBrainz)], fileDuration: 420
+    ))
+    #expect(TagConsensusService.durationCorroborated(
+        [candidate(.deezer, duration: 424)], fileDuration: 420
+    ))
+    #expect(!TagConsensusService.durationCorroborated(
+        [candidate(.deezer, duration: 200)], fileDuration: 420
+    ))
+    // No length on the file means nothing to corroborate against.
+    #expect(!TagConsensusService.durationCorroborated(
+        [candidate(.deezer, duration: 424)], fileDuration: nil
+    ))
+}
+
+@Test func twoSourcesReturningIdenticalRecordsCountAsTwo() {
+    // The lookup layer can collapse identical records across sources, which is
+    // right for a picker and destroys the signal here: two sources
+    // independently returning the same album *is* the corroboration. Consensus
+    // therefore asks for un-deduplicated candidates, and must count them as the
+    // separate opinions they are.
+    let itunes = candidate(.itunes, album: "Homework", year: 1997, duration: 430)
+    let deezer = candidate(.deezer, album: "Homework", year: 1997, duration: 430)
+
+    let result = TagConsensusService.consensus(
+        for: track(album: "", year: nil, duration: 429),
+        fingerprintMatches: [],
+        candidates: [itunes, deezer]
+    )
+
+    #expect(field(result, .album)?.confidence ?? 0 >= 0.75)
+    #expect(result.identityConfidence >= TagVerificationCoordinator.identityConfidenceFloor)
+    #expect(TagConsensusService.agreementCount(
+        for: .album, fingerprintMatches: [], candidates: [itunes, deezer]
+    ) == 2)
+}

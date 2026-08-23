@@ -63,15 +63,43 @@ MusicBrainz, and Deezer separately return the same album, that album is almost
 certainly right. If they disagree, no amount of ranking makes the top one true,
 and the honest answer is "unverified".
 
-Sources, and what each needs:
+Sources, and what each costs. Latencies are measured, not estimated:
 
-| Source | Credential | Notes |
+| Source | Credential | Latency | On by default |
+| --- | --- | --- | --- |
+| iTunes | none | ~0.22s | yes |
+| Deezer | none | ~0.26s (+0.27s per album lookup) | yes |
+| MusicBrainz | none | 0.6s–39s, **1 request/second cap** | no |
+| AcoustID | free key + `fpcalc` | ~0.3s (0.05s `fpcalc`) | no |
+| Discogs | free token | rate limited | no |
+
+### Why the defaults are what they are
+
+MusicBrainz has the best editorial data and was originally in the default set.
+Measured, it is the throughput ceiling for a whole-library run: its search
+latency ranges from under a second to past the 10-second request timeout, and it
+paces callers to one request a second, so no amount of concurrency gets past
+about one track per second.
+
+It was indispensable for one reason — it was the only free source reporting a
+release year. Deezer's album endpoint reports `release_date` (and a genre) in
+about a quarter of a second, so fetching that removed the dependency.
+
+Benchmarked over six tracks, fingerprint off:
+
+| Sources | Per track | Result |
 | --- | --- | --- |
-| iTunes | none | broad commercial coverage |
-| MusicBrainz | none | best editorial data; 1 request/second |
-| Deezer | none | catalogue plus **track length** |
-| AcoustID | free key + `fpcalc` | identifies the actual audio |
-| Discogs | free token | best for vinyl, bootlegs, white labels; off by default |
+| iTunes + Deezer | **0.33s** | 18 changes, year on 6/6, art on 6/6 |
+| + MusicBrainz | 2.85s | 18 changes, year on 6/6, art on 6/6 |
+
+**8.6x faster, identical output** on that sample. MusicBrainz still earns its
+place on obscure material the commercial catalogues do not carry, so it is one
+toggle away rather than gone.
+
+The audio fingerprint is off by default for a different reason: at ~0.3s per
+track it is not expensive, it simply buys nothing for a track whose identity the
+databases already agree on. It earns its keep on files too badly tagged to
+search with — a rescue pass, not a library sweep.
 
 Three guards keep it from confidently proposing the wrong recording:
 
@@ -90,6 +118,41 @@ Three guards keep it from confidently proposing the wrong recording:
 Confidence comes from how many independent sources agreed, plus a bump when the
 audio fingerprint is one of them. It means something specific, which is why
 proposals at 0.75 and above are pre-checked.
+
+### Year is a special case
+
+The sources are not answering the same question. Measured against the live APIs
+for one track (Daft Punk — Around The World): iTunes returns the date of *the
+release it matched* (1997), MusicBrainz returns the recording's *first* release
+date (1996), and Deezer's search results carry no date at all.
+
+Requiring exact agreement therefore left year unverified on almost everything —
+two sources, two different questions, one apparent disagreement, nothing
+proposed. Years within a year of each other are now treated as corroborating the
+same record, and the earliest is taken: that is the original release year, which
+is the convention a library tags to. A genuine gap — a 1977 original against a
+2015 remaster — is far wider than the tolerance, so those still do not merge,
+and the earliest is the right answer there anyway.
+
+### Empty fields accept a single source
+
+Filling a blank is a different risk from overwriting a value someone chose, so
+one source is enough to *suggest* into an empty field. That carries 0.5
+confidence, which sits below the auto-apply bar — it appears in the review sheet
+for you to accept, and a bulk run will not write it unseen.
+
+### Cover art
+
+Art is offered only when the file has **no embedded cover at all**, so applying
+it fills a gap and never replaces a cover you chose. It is taken from the
+release the other fields agreed on — picking purely by image size once attached
+a remixes-EP cover to a track whose album consensus was a different record.
+Within that release, the largest available image wins (Deezer serves 1000px,
+iTunes 600px, MusicBrainz whatever the Cover Art Archive holds), because
+embedded art gets looked at on phones and controllers.
+
+Artwork is applied from the **review sheet only** — the bulk button writes text
+fields and nothing else.
 
 ## Stage 2, tier 2 — Apple on-device model
 
@@ -175,6 +238,51 @@ assistant turn is echoed back verbatim to resume, and adding a "continue"
 message would derail it) and **throttling** (429 honours `retry-after`;
 429/529/5xx retry with backoff).
 
+## Filling every field, and keeping the version
+
+The goal is a library where **title, artist, album, genre, and year are all
+populated**. Two rules get there without turning it into a guessing machine:
+
+- **An empty field is filled on weaker evidence than a populated one is
+  overwritten.** One source is enough to fill a blank (confidence 0.5); replacing
+  a value the user already has still needs corroboration (0.75). Filling a blank
+  cannot destroy anything. "Lower bar" is not "no bar" — a near-guess is still
+  refused.
+- **Version wording always survives.** Every engine's title correction passes
+  through one choke point in `TrackTagVerification.metadataUpdate(applying:)`,
+  which re-attaches any DJ descriptor the current title carries. The databases
+  return the plain song title, so a correction that is right about the *song* is
+  still destructive if it drops the *version* — and it is the version that says
+  which cut of the record this is. Enforcing it there means no engine, present
+  or future, can lose one regardless of what its prompt or scoring says.
+
+Searching already ignores those descriptors (`searchableTerm` strips them before
+querying), so "Neverender (Extended Mix)" is looked up as "Neverender" and the
+descriptor is put back on the way out.
+
+### Identity confidence
+
+Nothing is auto-applied unless the engine was confident it identified the right
+recording, because a confident verdict about the wrong recording is still wrong.
+
+That confidence rests on how many sources independently agreed on **title and
+artist together**, plus whether a source reporting a length matched the file's.
+It deliberately does *not* count how many sources merely answered — three
+sources naming three different songs is not three-fold confidence.
+
+This distinction stopped being academic when the default source set shrank to
+two: an earlier scale keyed on reply count returned 0.65 for two sources, just
+under the 0.7 floor, so every bulk apply was silently refused no matter how well
+the sources agreed.
+
+### One subtlety worth knowing
+
+Candidate lists are **not deduplicated** before consensus counts them. Collapsing
+identical records across sources is right for a picker a human chooses from, and
+destroys the entire signal here: two sources independently returning the same
+album *is* the corroboration. `lookup(deduplicate:)` exists for exactly this
+distinction.
+
 ## The bulk button uses the same engines
 
 "Apply Top Hit (A/Al/G/Y)" is now **"Apply Verified Tags (A/Al/G/Y)"** and runs
@@ -185,14 +293,9 @@ The old behaviour was the problem this whole feature exists to fix: for a
 seven-minute extended mix, iTunes' first hit is the three-minute original
 single, so the album and year it wrote belonged to a different recording.
 
-Two properties of the old button are kept on purpose:
-
-- **It writes only Artist, Album, Genre, and Year — never the title.** A title
-  carries version descriptors, and rewriting titles in bulk without a field-by-
-  field look is not something this path should do. Use the review sheet for
-  titles.
-- **"Only Fill Empty" still applies**, and whitespace-only values count as
-  empty.
+It writes all five fields, including the title — safe because every title
+correction goes through the descriptor-preserving choke point described above.
+**"Only Fill Empty" still applies**, and whitespace-only values count as empty.
 
 On top of those it now gates on confidence: a proposal is written only if it
 clears the engine's threshold (0.75 for consensus and cloud, 0.85 for the
@@ -262,3 +365,30 @@ A saved key takes precedence over the environment variable.
 
 There is no official Anthropic SDK for Swift, so `ClaudeAPIClient` speaks the
 HTTP API directly and the package keeps its zero-dependency build.
+
+## Settings live in more than one place
+
+`UserDefaults.standard` keys off the bundle identifier for a packaged app
+(`com.seratotools.app`) and off the executable name for a plain binary
+(`EZLibrary` under `swift run`), and this project was previously called
+SeratoTools. The same person can therefore end up with API keys and preferences
+in three separate plists, and whichever build they launch sees only its own.
+
+The symptom is not an error, it is worse: settings that look saved but have no
+effect. An Anthropic key entered in one build leaves the other reporting "no API
+key", and a cloud engine chosen in one silently runs the free one in the other.
+
+`LegacyDefaultsMigration` runs once at launch and adopts any `SeratoTools*` key
+from the legacy domains that the current domain does not already have. It never
+overwrites, and it runs only once so a setting the user deliberately cleared does
+not reappear.
+
+Relatedly, the engine fallback is no longer silent: when the chosen tier cannot
+run, the run says which tier it wanted, why it could not, and what it used
+instead, rather than quietly producing free-tier results that look like paid ones.
+
+> **Note for anyone running the tests:** `UserDefaults(suiteName:)` searches the
+> process's application domain as well as the suite, and under `swift test` that
+> resolves to a real domain. Tests touching defaults should use fixture key names
+> and read `persistentDomain(forName:)` explicitly, or they will pick up — and
+> can overwrite — the machine's actual saved settings.

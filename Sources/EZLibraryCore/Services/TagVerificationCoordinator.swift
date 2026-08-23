@@ -97,6 +97,14 @@ public enum TagVerificationCoordinator {
         }
     }
 
+    /// The bar for writing into a field that is currently **empty**.
+    ///
+    /// Lower than the bar for replacing a value, and deliberately so: the goal
+    /// is a library where artist, album, genre, year, and title are all filled,
+    /// and there is nothing to lose by filling a blank from a single source.
+    /// Overwriting something the user already has still needs corroboration.
+    public static let emptyFieldConfidenceFloor = 0.5
+
     /// Below this, the engine was unsure it identified the right recording at
     /// all — and a confident verdict about the wrong recording is still wrong,
     /// so none of its field verdicts are auto-trusted.
@@ -118,12 +126,14 @@ public enum TagVerificationCoordinator {
         let threshold = confidenceThreshold(for: engine)
 
         var applicable: Set<TagIntegrityAudit.Field> = []
-        for change in verification.proposedChanges
-        where fields.contains(change.field) && change.confidence >= threshold {
-            if onlyFillEmpty,
-               !change.currentValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                continue
-            }
+        for change in verification.proposedChanges where fields.contains(change.field) {
+            let isEmpty = change.currentValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            if onlyFillEmpty, !isEmpty { continue }
+
+            // An empty field is filled on weaker evidence than a populated one
+            // is overwritten — filling a blank cannot destroy anything.
+            let bar = isEmpty ? emptyFieldConfidenceFloor : threshold
+            guard change.confidence >= bar else { continue }
             applicable.insert(change.field)
         }
         return applicable
@@ -162,12 +172,16 @@ public enum TagVerificationCoordinator {
             #endif
 
         case .cloudModel:
-            guard ClaudeAPIClient.hasAPIKey() else {
-                return Availability(
-                    kind: kind,
-                    isAvailable: false,
-                    unavailableReason: "Add an API key in Settings → API Keys to use a cloud model."
-                )
+            // Asks the service, not Anthropic specifically: with an
+            // OpenAI-compatible provider selected there may be no Anthropic key
+            // at all, and checking for one reported the tier as unavailable and
+            // silently dropped the user back to the free one.
+            guard AITagVerificationService.isConfigured() else {
+                let provider = AITagVerificationService.selectedProvider()
+                let detail = provider == .anthropic
+                    ? "Add an Anthropic API key in Settings → API Keys to use a cloud model."
+                    : "Set the base URL, model name, and key for your provider in Settings → API Keys."
+                return Availability(kind: kind, isAvailable: false, unavailableReason: detail)
             }
             return Availability(kind: kind, isAvailable: true, unavailableReason: nil)
         }
@@ -177,15 +191,67 @@ public enum TagVerificationCoordinator {
         TagVerificationEngineKind.allCases.map(availability(of:))
     }
 
+    /// What a run will actually use, and what the user asked for if those
+    /// differ.
+    ///
+    /// The fallback used to be silent, which is the worst way to fail here: the
+    /// user picks the cloud model, the run quietly uses the free cross-check
+    /// instead, and nothing anywhere says so. Callers get both values and are
+    /// expected to say when they diverge.
+    public struct EngineResolution: Sendable {
+        public let engine: TagVerificationEngineKind
+        /// Set when the stored choice could not run and was substituted.
+        public let requested: TagVerificationEngineKind?
+        public let fallbackReason: String?
+
+        public var didFallBack: Bool { requested != nil }
+
+        public init(
+            engine: TagVerificationEngineKind,
+            requested: TagVerificationEngineKind?,
+            fallbackReason: String?
+        ) {
+            self.engine = engine
+            self.requested = requested
+            self.fallbackReason = fallbackReason
+        }
+    }
+
+    public static func resolveEngine(userDefaults: UserDefaults = .standard) -> EngineResolution {
+        guard let raw = userDefaults.string(forKey: engineDefaultsKey),
+              let stored = TagVerificationEngineKind(rawValue: raw) else {
+            return EngineResolution(engine: .consensus, requested: nil, fallbackReason: nil)
+        }
+
+        let status = availability(of: stored)
+        guard !status.isAvailable else {
+            return EngineResolution(engine: stored, requested: nil, fallbackReason: nil)
+        }
+        return EngineResolution(
+            engine: .consensus,
+            requested: stored,
+            fallbackReason: status.unavailableReason
+        )
+    }
+
     /// The engine to start on: whatever the user last chose, as long as it can
     /// actually run, and the free universal one otherwise.
     public static func defaultEngine(userDefaults: UserDefaults = .standard) -> TagVerificationEngineKind {
-        if let raw = userDefaults.string(forKey: engineDefaultsKey),
-           let stored = TagVerificationEngineKind(rawValue: raw),
-           availability(of: stored).isAvailable {
-            return stored
-        }
-        return .consensus
+        resolveEngine(userDefaults: userDefaults).engine
+    }
+
+    /// The cloud settings the user actually configured.
+    ///
+    /// Without this a bulk run built `Options()` from scratch and silently used
+    /// Anthropic and Opus 5 regardless of the provider and model chosen in
+    /// Settings.
+    public static func cloudOptionsFromSettings(
+        userDefaults: UserDefaults = .standard
+    ) -> AITagVerificationService.Options {
+        AITagVerificationService.Options(
+            provider: AITagVerificationService.selectedProvider(userDefaults: userDefaults),
+            model: ClaudeAPIClient.selectedModel(userDefaults: userDefaults)
+        )
     }
 
     /// Runs `kind` over `tracks`, yielding the same events whichever tier does
