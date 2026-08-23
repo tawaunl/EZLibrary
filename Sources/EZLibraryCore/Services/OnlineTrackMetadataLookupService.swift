@@ -13,6 +13,7 @@ import Foundation
 public enum OnlineMetadataSource: String, CaseIterable, Sendable {
     case itunes
     case musicBrainz
+    case deezer
     case discogs
 
     public var displayName: String {
@@ -21,8 +22,21 @@ public enum OnlineMetadataSource: String, CaseIterable, Sendable {
             return "iTunes"
         case .musicBrainz:
             return "MusicBrainz"
+        case .deezer:
+            return "Deezer"
         case .discogs:
             return "Discogs"
+        }
+    }
+
+    /// True when the source works with no credential at all. The consensus
+    /// verifier leans on these because they are the ones every user has.
+    public var requiresCredential: Bool {
+        switch self {
+        case .itunes, .musicBrainz, .deezer:
+            return false
+        case .discogs:
+            return true
         }
     }
 }
@@ -39,6 +53,13 @@ public struct OnlineTrackMetadataCandidate: Identifiable, Sendable, Hashable {
     public let comment: String
     /// URL to downloadable cover art for this candidate, when available.
     public let artworkURL: URL?
+    /// Track length in seconds, when the source reports it.
+    ///
+    /// This is the cheapest way to tell two recordings of the same song apart:
+    /// a radio edit and an extended mix share a title and differ by minutes.
+    /// The consensus verifier uses it to reject candidates that cannot be the
+    /// file it is looking at.
+    public let durationSeconds: Double?
 
     public init(
         id: UUID = UUID(),
@@ -50,7 +71,8 @@ public struct OnlineTrackMetadataCandidate: Identifiable, Sendable, Hashable {
         year: Int?,
         bpm: Double?,
         comment: String = "",
-        artworkURL: URL? = nil
+        artworkURL: URL? = nil,
+        durationSeconds: Double? = nil
     ) {
         self.id = id
         self.source = source
@@ -62,6 +84,7 @@ public struct OnlineTrackMetadataCandidate: Identifiable, Sendable, Hashable {
         self.bpm = bpm
         self.comment = comment
         self.artworkURL = artworkURL
+        self.durationSeconds = durationSeconds
     }
 }
 
@@ -112,6 +135,8 @@ actor RequestPacer {
     static let musicBrainz = RequestPacer(floor: 1.0)
     /// Discogs allows 60 authenticated requests a minute.
     static let discogs = RequestPacer(floor: 1.0)
+    /// Deezer's public catalog allows roughly 50 requests per 5 seconds.
+    static let deezer = RequestPacer(floor: 0.1)
 
     /// Scales every wait this pacer hands out. Tests set it to 0 so they exercise
     /// the retry and backoff logic without sleeping through the real intervals.
@@ -177,7 +202,11 @@ public enum OnlineTrackMetadataLookupService {
         case all
         case itunes
         case musicBrainz
+        case deezer
         case discogs
+        /// Every source that needs no credential — what a user with no keys
+        /// configured can actually reach.
+        case freeSources
 
         public var displayName: String {
             switch self {
@@ -187,12 +216,16 @@ public enum OnlineTrackMetadataLookupService {
                 return "iTunes"
             case .musicBrainz:
                 return "MusicBrainz"
+            case .deezer:
+                return "Deezer"
             case .discogs:
                 return "Discogs"
+            case .freeSources:
+                return "Free Sources"
             }
         }
 
-        fileprivate var enabledSources: [OnlineMetadataSource] {
+        var enabledSources: [OnlineMetadataSource] {
             switch self {
             case .all:
                 return OnlineMetadataSource.allCases
@@ -200,9 +233,19 @@ public enum OnlineTrackMetadataLookupService {
                 return [.itunes]
             case .musicBrainz:
                 return [.musicBrainz]
+            case .deezer:
+                return [.deezer]
             case .discogs:
                 return [.discogs]
+            case .freeSources:
+                return OnlineMetadataSource.allCases.filter { !$0.requiresCredential }
             }
+        }
+
+        /// True when this selection fans out across several sources and so
+        /// needs the concurrent path.
+        var isMultiSource: Bool {
+            enabledSources.count > 1
         }
     }
 
@@ -251,7 +294,7 @@ public enum OnlineTrackMetadataLookupService {
         switch source {
         case .itunes:
             return [403, 429, 503]
-        case .musicBrainz, .discogs:
+        case .musicBrainz, .discogs, .deezer:
             return [429, 503]
         }
     }
@@ -321,7 +364,7 @@ public enum OnlineTrackMetadataLookupService {
         // partial result would keep serving the sources that happened to
         // succeed for the next five minutes.
         var isComplete = true
-        if sourceSelection == .all {
+        if sourceSelection.isMultiSource {
             let token = discogsToken()
             let outcomes = await withTaskGroup(of: Result<[OnlineTrackMetadataCandidate], Error>.self) { group in
                 for source in sourceSelection.enabledSources {
@@ -423,7 +466,7 @@ public enum OnlineTrackMetadataLookupService {
                     return
                 }
 
-                guard sourceSelection == .all else {
+                guard sourceSelection.isMultiSource else {
                     do {
                         let results = try await fetchCandidates(
                             from: sourceSelection.enabledSources[0],
@@ -525,6 +568,8 @@ public enum OnlineTrackMetadataLookupService {
             return try await fetchITunes(query: query, maxResults: maxResults, session: session)
         case .musicBrainz:
             return try await fetchMusicBrainz(query: query, maxResults: maxResults, session: session)
+        case .deezer:
+            return try await fetchDeezer(query: query, maxResults: maxResults, session: session)
         case .discogs:
             guard let discogsToken else {
                 if sourceSelection == .discogs {
@@ -683,7 +728,8 @@ public enum OnlineTrackMetadataLookupService {
                 genre: item.primaryGenreName ?? "",
                 year: yearFromDateString(item.releaseDate),
                 bpm: nil,
-                artworkURL: upscaledITunesArtworkURL(item.artworkUrl100)
+                artworkURL: upscaledITunesArtworkURL(item.artworkUrl100),
+                durationSeconds: item.trackTimeMillis.map { $0 / 1000 }
             )
         }
     }
@@ -693,6 +739,58 @@ public enum OnlineTrackMetadataLookupService {
         guard let raw, !raw.isEmpty else { return nil }
         let upscaled = raw.replacingOccurrences(of: "100x100bb", with: "600x600bb")
         return URL(string: upscaled) ?? URL(string: raw)
+    }
+
+    /// Deezer's public catalog needs no credential and reports track length,
+    /// which is what makes it worth a fourth request: duration is how a radio
+    /// edit and an extended mix of the same song are told apart.
+    ///
+    /// Search results carry no genre or release year — those live on the album
+    /// object behind a second request — so this fills what one call can answer
+    /// and leaves the rest to the other sources.
+    private static func fetchDeezer(
+        query: Query,
+        maxResults: Int,
+        session: URLSession
+    ) async throws -> [OnlineTrackMetadataCandidate] {
+        let searchTerm = [query.artist, query.title]
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+
+        guard !searchTerm.isEmpty else { return [] }
+
+        var components = URLComponents(string: "https://api.deezer.com/search")
+        components?.queryItems = [
+            URLQueryItem(name: "q", value: searchTerm),
+            URLQueryItem(name: "limit", value: String(max(1, maxResults)))
+        ]
+
+        guard let url = components?.url else { return [] }
+
+        var request = URLRequest(url: url)
+        request.setValue("EZLibrary/1.0 (metadata lookup)", forHTTPHeaderField: "User-Agent")
+
+        let data = try await performRequest(request, source: .deezer, pacer: .deezer, session: session)
+        let decoded: DeezerSearchResponse
+        do {
+            decoded = try JSONDecoder().decode(DeezerSearchResponse.self, from: data)
+        } catch {
+            throw LookupError.sourceRequestFailed(.deezer, "Received an unexpected response format from Deezer.")
+        }
+
+        return decoded.data.map { item in
+            OnlineTrackMetadataCandidate(
+                source: .deezer,
+                title: item.title ?? "",
+                artist: item.artist?.name ?? "",
+                album: item.album?.title ?? "",
+                genre: "",
+                year: nil,
+                bpm: nil,
+                artworkURL: (item.album?.coverXL ?? item.album?.coverBig).flatMap(URL.init(string:)),
+                durationSeconds: item.duration.map(Double.init)
+            )
+        }
     }
 
     private static func fetchMusicBrainz(
@@ -892,6 +990,34 @@ private struct ITunesTrack: Decodable {
     let primaryGenreName: String?
     let releaseDate: String?
     let artworkUrl100: String?
+    let trackTimeMillis: Double?
+}
+
+private struct DeezerSearchResponse: Decodable {
+    let data: [DeezerTrack]
+}
+
+private struct DeezerTrack: Decodable {
+    let title: String?
+    let duration: Int?
+    let artist: DeezerArtist?
+    let album: DeezerAlbum?
+}
+
+private struct DeezerArtist: Decodable {
+    let name: String?
+}
+
+private struct DeezerAlbum: Decodable {
+    let title: String?
+    let coverBig: String?
+    let coverXL: String?
+
+    enum CodingKeys: String, CodingKey {
+        case title
+        case coverBig = "cover_big"
+        case coverXL = "cover_xl"
+    }
 }
 
 private struct MusicBrainzResponse: Decodable {

@@ -859,6 +859,9 @@ private struct AppSettingsSheet: View {
 
     @State private var discogsTokenInput = ""
     @State private var acoustIDKeyInput = ""
+    @State private var anthropicKeyInput = ""
+    @State private var validatingAnthropicKey = false
+    @AppStorage(ClaudeAPIClient.modelDefaultsKey) private var anthropicModel = ClaudeModel.opus5.rawValue
     @State private var statusMessage: String?
     @State private var validatingAcoustIDKey = false
     @State private var showHelp = false
@@ -890,6 +893,16 @@ private struct AppSettingsSheet: View {
                             Link("Open AcoustID new application", destination: URL(string: "https://acoustid.org/new-application")!)
                                 .font(.caption)
                             Link("Install Chromaprint (Homebrew)", destination: URL(string: "https://formulae.brew.sh/formula/chromaprint")!)
+                                .font(.caption)
+
+                            Text("Anthropic (AI tag verification)")
+                                .font(.caption.weight(.semibold))
+                            Text(
+                                "1. Create an Anthropic account. 2. Create an API key in the Console. "
+                                + "3. Add credit to the account — AI tag verification is billed to you per track."
+                            )
+                            .font(.caption)
+                            Link("Open the Anthropic Console API keys page", destination: URL(string: "https://console.anthropic.com/settings/keys")!)
                                 .font(.caption)
 
                             Text("After creating keys, paste them below and click Save.")
@@ -934,6 +947,15 @@ private struct AppSettingsSheet: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
+                    Divider()
+
+                    CloudModelProviderSection(
+                        anthropicKeyInput: $anthropicKeyInput,
+                        validatingAnthropicKey: $validatingAnthropicKey,
+                        anthropicModel: $anthropicModel,
+                        statusMessage: $statusMessage
+                    )
+
                     if let statusMessage {
                         Text(statusMessage)
                             .font(.caption)
@@ -963,11 +985,14 @@ private struct AppSettingsSheet: View {
                 Button("Clear") {
                     UserDefaults.standard.removeObject(forKey: OnlineTrackMetadataLookupService.discogsTokenDefaultsKey)
                     UserDefaults.standard.removeObject(forKey: AudioFingerprintService.tokenDefaultsKey)
+                    UserDefaults.standard.removeObject(forKey: ClaudeAPIClient.apiKeyDefaultsKey)
+                    UserDefaults.standard.removeObject(forKey: OpenAICompatibleClient.apiKeyDefaultsKey)
                     discogsTokenInput = ""
                     acoustIDKeyInput = ""
+                    anthropicKeyInput = ""
                     statusMessage = "API tokens cleared."
                 }
-                .help("Remove the saved Discogs and AcoustID API keys.")
+                .help("Remove the saved Discogs, AcoustID, and Anthropic API keys.")
 
                 Spacer()
 
@@ -979,6 +1004,7 @@ private struct AppSettingsSheet: View {
                 Button("Save") {
                     let discogsTrimmed = discogsTokenInput.trimmingCharacters(in: .whitespacesAndNewlines)
                     let acoustIDTrimmed = acoustIDKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let anthropicTrimmed = anthropicKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
 
                     if discogsTrimmed.isEmpty {
                         UserDefaults.standard.removeObject(forKey: OnlineTrackMetadataLookupService.discogsTokenDefaultsKey)
@@ -990,6 +1016,12 @@ private struct AppSettingsSheet: View {
                         UserDefaults.standard.removeObject(forKey: AudioFingerprintService.tokenDefaultsKey)
                     } else {
                         UserDefaults.standard.set(acoustIDTrimmed, forKey: AudioFingerprintService.tokenDefaultsKey)
+                    }
+
+                    if anthropicTrimmed.isEmpty {
+                        UserDefaults.standard.removeObject(forKey: ClaudeAPIClient.apiKeyDefaultsKey)
+                    } else {
+                        UserDefaults.standard.set(anthropicTrimmed, forKey: ClaudeAPIClient.apiKeyDefaultsKey)
                     }
 
                     statusMessage = "API tokens saved."
@@ -1004,6 +1036,7 @@ private struct AppSettingsSheet: View {
             initializeFeatureDefaultsIfNeeded()
             discogsTokenInput = UserDefaults.standard.string(forKey: OnlineTrackMetadataLookupService.discogsTokenDefaultsKey) ?? ""
             acoustIDKeyInput = UserDefaults.standard.string(forKey: AudioFingerprintService.tokenDefaultsKey) ?? ""
+            anthropicKeyInput = UserDefaults.standard.string(forKey: ClaudeAPIClient.apiKeyDefaultsKey) ?? ""
         }
     }
 
@@ -1033,6 +1066,202 @@ private struct AppSettingsSheet: View {
                     statusMessage = "AcoustID key is valid."
                 case let .invalid(message):
                     statusMessage = message
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Cloud Model Provider Section
+
+/// Settings for the bring-your-own-key tier.
+///
+/// Two providers rather than a long list: Anthropic natively, because it is the
+/// only one offering a server-side web search, and then anything speaking
+/// OpenAI's `/chat/completions` shape — which covers OpenAI, OpenRouter, Groq,
+/// Mistral, DeepSeek, and locally-run models under Ollama or LM Studio. A base
+/// URL and a model name reach all of them, including the free local ones.
+private struct CloudModelProviderSection: View {
+    @Binding var anthropicKeyInput: String
+    @Binding var validatingAnthropicKey: Bool
+    @Binding var anthropicModel: String
+    @Binding var statusMessage: String?
+
+    @AppStorage(AITagVerificationService.providerDefaultsKey)
+    private var providerRawValue = AITagVerificationService.Provider.anthropic.rawValue
+    @AppStorage(OpenAICompatibleClient.baseURLDefaultsKey)
+    private var baseURL = OpenAICompatibleClient.defaultBaseURL
+    @AppStorage(OpenAICompatibleClient.modelDefaultsKey)
+    private var compatibleModel = ""
+
+    @State private var compatibleKeyInput = ""
+    @State private var isValidatingCompatible = false
+
+    private var provider: AITagVerificationService.Provider {
+        AITagVerificationService.Provider(rawValue: providerRawValue) ?? .anthropic
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Cloud AI Provider (Tag Verification)")
+                .font(.subheadline.weight(.semibold))
+
+            Text(
+                "Only needed for the \"Cloud AI\" verification tier. The free cross-check and the "
+                + "Apple on-device tier need nothing here."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+
+            Picker("Provider", selection: $providerRawValue) {
+                ForEach(AITagVerificationService.Provider.allCases, id: \.rawValue) { option in
+                    Text(option.displayName).tag(option.rawValue)
+                }
+            }
+            .pickerStyle(.radioGroup)
+            .labelsHidden()
+
+            switch provider {
+            case .anthropic:
+                anthropicFields
+            case .openAICompatible:
+                compatibleFields
+            }
+        }
+        .onAppear {
+            compatibleKeyInput = UserDefaults.standard
+                .string(forKey: OpenAICompatibleClient.apiKeyDefaultsKey) ?? ""
+        }
+    }
+
+    @ViewBuilder
+    private var anthropicFields: some View {
+        SecureField("Paste Anthropic API key", text: $anthropicKeyInput)
+            .textFieldStyle(.roundedBorder)
+
+        HStack {
+            Button(validatingAnthropicKey ? "Validating..." : "Validate Key") {
+                validateAnthropicKey()
+            }
+            .disabled(validatingAnthropicKey)
+            .help("Check that the Anthropic API key works.")
+
+            if validatingAnthropicKey {
+                ProgressView().controlSize(.small)
+            }
+        }
+
+        Picker("Model", selection: $anthropicModel) {
+            ForEach(ClaudeModel.allCases, id: \.rawValue) { model in
+                Text(model.displayName).tag(model.rawValue)
+            }
+        }
+        .pickerStyle(.menu)
+        .frame(maxWidth: 320, alignment: .leading)
+
+        Text("Anthropic is the only provider that can search the web itself, which is what makes it strongest on bootlegs and edits.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    @ViewBuilder
+    private var compatibleFields: some View {
+        Menu("Use a preset…") {
+            ForEach(OpenAICompatibleClient.presets) { preset in
+                Button(preset.name) {
+                    baseURL = preset.baseURL
+                    if compatibleModel.isEmpty {
+                        compatibleModel = preset.exampleModel
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: 200, alignment: .leading)
+
+        TextField("API base URL", text: $baseURL)
+            .textFieldStyle(.roundedBorder)
+        TextField("Model name (for example gpt-5)", text: $compatibleModel)
+            .textFieldStyle(.roundedBorder)
+        SecureField("API key (leave blank for a local model)", text: $compatibleKeyInput)
+            .textFieldStyle(.roundedBorder)
+
+        HStack {
+            Button(isValidatingCompatible ? "Validating..." : "Save & Validate") {
+                saveAndValidateCompatible()
+            }
+            .disabled(isValidatingCompatible)
+            .help("Save these settings and make one small request to check they work.")
+
+            if isValidatingCompatible {
+                ProgressView().controlSize(.small)
+            }
+        }
+
+        Text(
+            "Any service speaking OpenAI's chat-completions API works. A model running locally under "
+            + "Ollama or LM Studio needs no key and costs nothing. These providers cannot search the "
+            + "web, so they judge from the database evidence EZLibrary gathers."
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func validateAnthropicKey() {
+        let key = anthropicKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else {
+            statusMessage = "Enter an Anthropic API key first."
+            return
+        }
+
+        validatingAnthropicKey = true
+        statusMessage = "Validating Anthropic key..."
+
+        Task {
+            do {
+                _ = try await ClaudeAPIClient.validateAPIKey(key)
+                await MainActor.run {
+                    validatingAnthropicKey = false
+                    statusMessage = "Anthropic key is valid."
+                }
+            } catch {
+                await MainActor.run {
+                    validatingAnthropicKey = false
+                    statusMessage = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func saveAndValidateCompatible() {
+        let trimmedKey = compatibleKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedKey.isEmpty {
+            UserDefaults.standard.removeObject(forKey: OpenAICompatibleClient.apiKeyDefaultsKey)
+        } else {
+            UserDefaults.standard.set(trimmedKey, forKey: OpenAICompatibleClient.apiKeyDefaultsKey)
+        }
+
+        guard let configuration = OpenAICompatibleClient.configuration() else {
+            statusMessage = "Enter a model name, and an API key unless the model runs on this Mac."
+            return
+        }
+
+        isValidatingCompatible = true
+        statusMessage = "Checking \(configuration.model)..."
+
+        Task {
+            do {
+                _ = try await OpenAICompatibleClient.validate(configuration: configuration)
+                await MainActor.run {
+                    isValidatingCompatible = false
+                    statusMessage = "\(configuration.model) answered — the provider is set up."
+                }
+            } catch {
+                await MainActor.run {
+                    isValidatingCompatible = false
+                    statusMessage = error.localizedDescription
                 }
             }
         }

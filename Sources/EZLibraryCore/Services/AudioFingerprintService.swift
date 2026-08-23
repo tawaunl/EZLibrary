@@ -257,31 +257,27 @@ public enum AudioFingerprintService {
             throw FingerprintError.fpcalcNotInstalled
         }
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: fpcalcPath)
-        process.arguments = ["-length", "120", fileURL.path]
-
-        let stdout = Pipe()
-        let stderr = Pipe()
-        process.standardOutput = stdout
-        process.standardError = stderr
-
+        // Both streams are drained concurrently before waiting. fpcalc's stderr
+        // carries FFmpeg's decoder diagnostics, which on an unusual or slightly
+        // damaged file runs long enough to fill the pipe buffer — and a full
+        // buffer stops fpcalc mid-write, so it never exits and the lookup hangs
+        // forever instead of failing.
+        let result: ProcessRunner.Result
         do {
-            try process.run()
+            result = try ProcessRunner.run(
+                executableURL: URL(fileURLWithPath: fpcalcPath),
+                arguments: ["-length", "120", fileURL.path]
+            )
         } catch {
             throw FingerprintError.fpcalcNotInstalled
         }
 
-        process.waitUntilExit()
-        let outData = stdout.fileHandleForReading.readDataToEndOfFile()
-        let errData = stderr.fileHandleForReading.readDataToEndOfFile()
-
-        guard process.terminationStatus == 0 else {
-            let errorText = String(data: errData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
-            throw FingerprintError.fingerprintExtractionFailed(errorText?.isEmpty == false ? errorText! : "fpcalc failed")
+        guard result.didSucceed else {
+            let errorText = result.errorText
+            throw FingerprintError.fingerprintExtractionFailed(errorText.isEmpty ? "fpcalc failed" : errorText)
         }
 
-        let output = String(data: outData, encoding: .utf8) ?? ""
+        let output = result.outputText
         var duration: Int?
         var fingerprint: String?
         for line in output.split(separator: "\n") {
@@ -359,29 +355,50 @@ public enum AudioFingerprintService {
         )
     }
 
-    private static func parseSuggestionsFromResults(_ value: Any?) -> [AudioFingerprintSuggestion] {
+    /// Turns AcoustID's response into ranked, de-duplicated suggestions.
+    ///
+    /// The raw response is not directly presentable. One fingerprint commonly
+    /// maps to a dozen MusicBrainz recordings of the same song — one per
+    /// release it ever appeared on — so flattening the response verbatim
+    /// produced a list of near-identical rows, and truncating that list to
+    /// `maxResults` meant every row came from the *first* match while a genuine
+    /// second candidate never appeared at all. This collapses those into one
+    /// suggestion per distinct recording, keeps the highest-scoring instance of
+    /// each, and orders by score so the best match is first.
+    ///
+    /// `minimumScore` drops fingerprint matches weak enough to be noise. If
+    /// that would discard everything, the single best match is kept anyway —
+    /// showing one low-confidence row beats reporting "no match found".
+    static func parseSuggestionsFromResults(
+        _ value: Any?,
+        minimumScore: Double = 0.5
+    ) -> [AudioFingerprintSuggestion] {
         guard let results = value as? [[String: Any]] else { return [] }
 
-        var all: [AudioFingerprintSuggestion] = []
-        for result in results {
+        // AcoustID usually returns results best-first, but it is not promised,
+        // and ranking is the whole point of the score.
+        let ranked = results.sorted { lhs, rhs in
+            ((lhs["score"] as? Double) ?? 0) > ((rhs["score"] as? Double) ?? 0)
+        }
+
+        var byRecording: [String: AudioFingerprintSuggestion] = [:]
+        var order: [String] = []
+
+        for result in ranked {
             let score = result["score"] as? Double
             guard let recordings = result["recordings"] as? [[String: Any]] else { continue }
 
-            let suggestions: [AudioFingerprintSuggestion] = recordings.compactMap { (recording: [String: Any]) -> AudioFingerprintSuggestion? in
-                let title = ((recording["title"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-
+            for recording in recordings {
+                let title = trimmedString(recording["title"])
                 let artists = recording["artists"] as? [[String: Any]]
-                let artist = ((artists?.first?["name"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-
-                let releases = recording["releases"] as? [[String: Any]]
-                let album = ((releases?.first?["title"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                let artist = trimmedString(artists?.first?["name"])
+                let album = preferredAlbumTitle(from: recording)
                 let year = extractYear(from: recording)
 
-                guard !title.isEmpty || !artist.isEmpty || !album.isEmpty else {
-                    return nil
-                }
+                guard !title.isEmpty || !artist.isEmpty || !album.isEmpty else { continue }
 
-                return AudioFingerprintSuggestion(
+                let key = "\(title.lowercased())|\(artist.lowercased())"
+                let suggestion = AudioFingerprintSuggestion(
                     provider: "AcoustID",
                     title: title,
                     artist: artist,
@@ -391,12 +408,70 @@ public enum AudioFingerprintService {
                     confidence: score,
                     comment: "External fingerprint match via AcoustID"
                 )
-            }
 
-            all.append(contentsOf: suggestions)
+                if let existing = byRecording[key] {
+                    // Same recording seen again under a weaker match; keep the
+                    // stronger one, but let it inherit detail the winner lacks.
+                    guard (score ?? 0) > (existing.confidence ?? 0) else {
+                        if existing.album.isEmpty, !album.isEmpty {
+                            byRecording[key] = AudioFingerprintSuggestion(
+                                provider: existing.provider,
+                                title: existing.title,
+                                artist: existing.artist,
+                                album: album,
+                                genre: existing.genre,
+                                year: existing.year ?? year,
+                                confidence: existing.confidence,
+                                comment: existing.comment
+                            )
+                        }
+                        continue
+                    }
+                    byRecording[key] = suggestion
+                } else {
+                    byRecording[key] = suggestion
+                    order.append(key)
+                }
+            }
         }
 
-        return all
+        let deduplicated = order.compactMap { byRecording[$0] }
+            .sorted { ($0.confidence ?? 0) > ($1.confidence ?? 0) }
+
+        let strong = deduplicated.filter { ($0.confidence ?? 0) >= minimumScore }
+        if strong.isEmpty, let best = deduplicated.first {
+            return [best]
+        }
+        return strong
+    }
+
+    private static func trimmedString(_ value: Any?) -> String {
+        ((value as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Picks the release most likely to be the one a DJ means.
+    ///
+    /// A recording carries every release it appeared on, in no useful order, so
+    /// taking the first gave an arbitrary album — often a regional compilation
+    /// or a much later greatest-hits set rather than the original. Preferring
+    /// the earliest dated release gets the original in the common case.
+    private static func preferredAlbumTitle(from recording: [String: Any]) -> String {
+        guard let releases = recording["releases"] as? [[String: Any]], !releases.isEmpty else {
+            return ""
+        }
+
+        let titled = releases.filter { !trimmedString($0["title"]).isEmpty }
+        guard !titled.isEmpty else { return "" }
+
+        let dated = titled.compactMap { release -> (year: Int, title: String)? in
+            guard let year = parseYearAny(release["year"]) ?? parseYearAny(release["date"]) else { return nil }
+            return (year, trimmedString(release["title"]))
+        }
+
+        if let earliest = dated.min(by: { $0.year < $1.year }) {
+            return earliest.title
+        }
+        return trimmedString(titled[0]["title"])
     }
 
     private static func responseSnippet(_ data: Data) -> String {
@@ -522,29 +597,27 @@ public enum AudioFingerprintService {
             throw FingerprintError.homebrewInstallFailed("brew executable was not found after installation attempt")
         }
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: brewPath)
-        process.arguments = ["install", "chromaprint"]
-        process.environment = [
-            "HOMEBREW_NO_AUTO_UPDATE": "1",
-            "HOMEBREW_NO_ENV_HINTS": "1"
-        ]
-
-        let stderr = Pipe()
-        process.standardError = stderr
-        process.standardOutput = Pipe()
-
+        // `brew install` writes far more than the pipe buffer holds, so its
+        // stdout goes to /dev/null rather than into a pipe nothing reads —
+        // that combination hung the installer indefinitely.
+        let result: ProcessRunner.Result
         do {
-            try process.run()
+            result = try ProcessRunner.run(
+                executableURL: URL(fileURLWithPath: brewPath),
+                arguments: ["install", "chromaprint"],
+                environment: [
+                    "HOMEBREW_NO_AUTO_UPDATE": "1",
+                    "HOMEBREW_NO_ENV_HINTS": "1"
+                ],
+                standardOutput: .discard
+            )
         } catch {
             throw FingerprintError.fpcalcInstallFailed(error.localizedDescription)
         }
 
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            let err = String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            throw FingerprintError.fpcalcInstallFailed(err?.isEmpty == false ? err! : "brew install chromaprint failed")
+        guard result.didSucceed else {
+            let err = result.errorText
+            throw FingerprintError.fpcalcInstallFailed(err.isEmpty ? "brew install chromaprint failed" : err)
         }
     }
 
@@ -553,38 +626,36 @@ public enum AudioFingerprintService {
             throw FingerprintError.homebrewInstallFailed("curl is not available")
         }
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/bash")
-        // Use a non-login shell with an explicit PATH so we never source the
-        // user's shell profile. Some machines' profiles invoke `java`/`jenv`
-        // (or run `java -version`), which triggers macOS's "No Java runtime
-        // present" dialog mid-install even though nothing here needs Java.
-        process.arguments = [
-            "-c",
-            "/bin/bash -c \"$(/usr/bin/curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
-        ]
-        process.environment = [
-            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
-            "NONINTERACTIVE": "1",
-            "HOMEBREW_NO_ANALYTICS": "1",
-            "HOME": FileManager.default.homeDirectoryForCurrentUser.path
-        ]
-
-        let stderr = Pipe()
-        process.standardError = stderr
-        process.standardOutput = Pipe()
-
+        // Same reasoning as the brew install above, more so: the Homebrew
+        // install script is extremely chatty on stdout.
+        let result: ProcessRunner.Result
         do {
-            try process.run()
+            result = try ProcessRunner.run(
+                executableURL: URL(fileURLWithPath: "/bin/bash"),
+                // Use a non-login shell with an explicit PATH so we never source
+                // the user's shell profile. Some machines' profiles invoke
+                // `java`/`jenv` (or run `java -version`), which triggers macOS's
+                // "No Java runtime present" dialog mid-install even though
+                // nothing here needs Java.
+                arguments: [
+                    "-c",
+                    "/bin/bash -c \"$(/usr/bin/curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
+                ],
+                environment: [
+                    "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+                    "NONINTERACTIVE": "1",
+                    "HOMEBREW_NO_ANALYTICS": "1",
+                    "HOME": FileManager.default.homeDirectoryForCurrentUser.path
+                ],
+                standardOutput: .discard
+            )
         } catch {
             throw FingerprintError.homebrewInstallFailed(error.localizedDescription)
         }
 
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            let err = String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            throw FingerprintError.homebrewInstallFailed(err?.isEmpty == false ? err! : "Homebrew installer failed")
+        guard result.didSucceed else {
+            let err = result.errorText
+            throw FingerprintError.homebrewInstallFailed(err.isEmpty ? "Homebrew installer failed" : err)
         }
     }
 }

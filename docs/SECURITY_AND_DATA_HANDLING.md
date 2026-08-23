@@ -158,15 +158,23 @@ your `SeratoBackups` folder instead.
   SoundCloud links you provide. This is a distinct workflow from library management
   and doesn't touch your existing crates directly, but you should only use it with
   content you have the rights to.
-- **Third-party API keys**: if you configure a Discogs or AcoustID token, that key
-  is stored locally and used only for the lookups you trigger. Treat it like any
-  other credential.
+- **Third-party API keys**: if you configure a Discogs, AcoustID, or Anthropic
+  key, that key is stored locally and used only for the lookups you trigger.
+  Treat it like any other credential.
+- **Tag verification**: what leaves your Mac depends on the tier you pick. The
+  offline checks send nothing. The default cross-source check sends only search
+  terms to the music databases (plus an audio fingerprint if AcoustID is on).
+  Apple's on-device tier runs the model locally and sends only those same
+  database searches. Only the optional cloud tier sends a track's tags,
+  filename, and duration to a third-party model, and only once you start a run.
+  No tier sends audio — AcoustID sends a compressed fingerprint, never the file.
+  See [AI_TAG_VERIFICATION.md](AI_TAG_VERIFICATION.md).
 
 ## What EZLibrary does *not* do
 
 - It does not phone home or send your library anywhere. Online lookups (metadata,
-  purchase links) are opt-in, per-action, and send only the search terms needed for
-  that lookup.
+  purchase links, AI tag verification) are opt-in, per-action, and send only the
+  terms or tag values needed for that lookup.
 - It does not silently auto-repair missing tracks. Missing-track fixes require an
   explicit action from you.
 - It does not require network access for core library operations.

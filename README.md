@@ -150,6 +150,20 @@ hasn't been touched in months.
 - Use Only Fill Empty to protect existing metadata
 - Track completion quality with scope vs global baseline metrics
 
+### Tag Verification
+
+- Run free offline checks that flag empty, placeholder, promo-spam, and
+  filename-contradicting tags
+- Cross-check the flagged tracks against several music databases and change a
+  tag only where independent sources agree — free, no account, no API key
+- Reject candidates whose length can't match the file, so an extended mix never
+  gets the radio edit's metadata
+- Optionally use Apple's on-device model (macOS 26, free and private) or a cloud
+  model with your own key from any provider, including a local one
+- Review per-field proposals with a confidence score and a source before
+  anything is written
+- See [docs/AI_TAG_VERIFICATION.md](docs/AI_TAG_VERIFICATION.md)
+
 ### Missing Tracks
 
 - Identify unresolved file references
@@ -313,6 +327,7 @@ Installer note:
 - [docs/PACKAGING_STANDALONE.md](docs/PACKAGING_STANDALONE.md)
 - [docs/FINDER_QUICK_ACTION_ADD_MUSIC.md](docs/FINDER_QUICK_ACTION_ADD_MUSIC.md)
 - [docs/ENGINEERING_RULES.md](docs/ENGINEERING_RULES.md)
+- [docs/AI_TAG_VERIFICATION.md](docs/AI_TAG_VERIFICATION.md)
 - [SECURITY.md](SECURITY.md)
 
 ## Need Help?

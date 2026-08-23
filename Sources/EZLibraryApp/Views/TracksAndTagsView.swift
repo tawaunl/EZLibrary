@@ -99,6 +99,7 @@ struct TracksAndTagsView: View {
     @State private var pendingWhitespaceFindings: [TagWhitespaceCleanupService.Finding] = []
     @State private var showWhitespaceCleanupConfirmation = false
     @State private var showOnlyFillEmptyPrompt = false
+    @State private var showAITagVerification = false
 
     /// Snapshot of everything derived from `tracks` + the active scope/filters,
     /// recomputed off the main actor only when an input changes (never per
@@ -287,6 +288,17 @@ struct TracksAndTagsView: View {
         .sheet(item: $metadataLookupTrack) { track in
             TrackMetadataEditorSheet(track: track) { metadata in
                 try onApplyMetadata(track, metadata)
+            }
+        }
+        .sheet(isPresented: $showAITagVerification) {
+            AITagVerificationSheet(tracks: selectedTracks) { updates in
+                if let onApplyMetadataBatch {
+                    try onApplyMetadataBatch(updates)
+                } else {
+                    for (track, metadata) in updates {
+                        try onApplyMetadata(track, metadata)
+                    }
+                }
             }
         }
         .sheet(item: $audioEditTrack) { track in
@@ -511,6 +523,14 @@ struct TracksAndTagsView: View {
                 }
                 .disabled(selectedTracks.isEmpty || isBulkLookupRunning)
                 .help("Apply the best online match's Artist, Album, Genre, and Year to the selected tracks.")
+                Button("Verify Tags with AI…") {
+                    showAITagVerification = true
+                }
+                .disabled(selectedTracks.isEmpty || isBulkLookupRunning)
+                .help(
+                    "Check the selected tracks' tags against their audio fingerprint, the music databases, "
+                    + "and a web search. Proposes only the fields a source contradicts, and shows the source "
+                    + "for each one before anything is written.")
                 if isBulkLookupRunning {
                     ProgressView()
                         .controlSize(.small)
