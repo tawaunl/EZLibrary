@@ -175,6 +175,38 @@ assistant turn is echoed back verbatim to resume, and adding a "continue"
 message would derail it) and **throttling** (429 honours `retry-after`;
 429/529/5xx retry with backoff).
 
+## The bulk button uses the same engines
+
+"Apply Top Hit (A/Al/G/Y)" is now **"Apply Verified Tags (A/Al/G/Y)"** and runs
+the tier selected in the verification sheet instead of writing iTunes' first
+search result.
+
+The old behaviour was the problem this whole feature exists to fix: for a
+seven-minute extended mix, iTunes' first hit is the three-minute original
+single, so the album and year it wrote belonged to a different recording.
+
+Two properties of the old button are kept on purpose:
+
+- **It writes only Artist, Album, Genre, and Year — never the title.** A title
+  carries version descriptors, and rewriting titles in bulk without a field-by-
+  field look is not something this path should do. Use the review sheet for
+  titles.
+- **"Only Fill Empty" still applies**, and whitespace-only values count as
+  empty.
+
+On top of those it now gates on confidence: a proposal is written only if it
+clears the engine's threshold (0.75 for consensus and cloud, 0.85 for the
+on-device model) *and* the engine was confident it identified the right
+recording at all. Anything below that is simply not applied — the run reports
+"nothing was confident enough to change" rather than writing a guess.
+
+Because verifying is no longer nearly free, the button confirms before it
+starts whenever the tier is paid or more than 25 tracks are selected, showing
+the engine, the cost, and a time estimate. A running job shows a live
+`done / total` count and can be stopped partway, keeping what it already found.
+
+"Fill Missing Genre/Year" still uses the older single-source lookup.
+
 ## Nothing is written until you apply it
 
 A verdict is a proposal with a source attached, not an instruction. The review

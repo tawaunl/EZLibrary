@@ -79,6 +79,39 @@ public struct TagVerificationUsage: Sendable, Equatable {
     }
 }
 
+/// Cover art a source offers for a track.
+///
+/// Artwork is kept out of `TagFieldVerification` because it cannot be judged
+/// the way a text field is: two sources "agreeing" on cover art would mean
+/// comparing images, and what actually matters is far simpler — whether the
+/// file has any art at all, and whether a source has some for the release the
+/// other fields already agreed on.
+public struct ArtworkProposal: Sendable, Hashable, Identifiable {
+    public let id: UUID
+    public let sourceName: String
+    public let url: URL
+    /// True when the file carries no embedded cover art. This is the case worth
+    /// acting on; when false, applying would replace art the user may have
+    /// chosen deliberately.
+    public let fileIsMissingArtwork: Bool
+    /// The release this art belongs to, so the user can see it matches.
+    public let albumTitle: String
+
+    public init(
+        id: UUID = UUID(),
+        sourceName: String,
+        url: URL,
+        fileIsMissingArtwork: Bool,
+        albumTitle: String
+    ) {
+        self.id = id
+        self.sourceName = sourceName
+        self.url = url
+        self.fileIsMissingArtwork = fileIsMissingArtwork
+        self.albumTitle = albumTitle
+    }
+}
+
 public struct TrackTagVerification: Sendable, Identifiable {
     public let track: Track
     /// Which engine produced this, for display.
@@ -95,6 +128,9 @@ public struct TrackTagVerification: Sendable, Identifiable {
     public let webSearchCount: Int
     /// Token spend, for engines that bill by tokens. Nil for free engines.
     public let usage: TagVerificationUsage?
+    /// Cover art on offer, when a source has some. Nil when no source returned
+    /// any.
+    public let artwork: ArtworkProposal?
 
     public var id: UUID { track.id }
 
@@ -110,7 +146,8 @@ public struct TrackTagVerification: Sendable, Identifiable {
         fields: [TagFieldVerification],
         sourceURLs: [URL] = [],
         webSearchCount: Int = 0,
-        usage: TagVerificationUsage? = nil
+        usage: TagVerificationUsage? = nil,
+        artwork: ArtworkProposal? = nil
     ) {
         self.track = track
         self.engineName = engineName
@@ -120,6 +157,7 @@ public struct TrackTagVerification: Sendable, Identifiable {
         self.sourceURLs = sourceURLs
         self.webSearchCount = webSearchCount
         self.usage = usage
+        self.artwork = artwork
     }
 
     /// Builds the update that applies exactly the named fields. Every other

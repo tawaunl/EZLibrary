@@ -76,6 +76,59 @@ public enum TagVerificationCoordinator {
         }
     }
 
+    /// How confident a verdict must be before it is trusted without a human
+    /// looking at it — used to pre-check proposals in the review sheet and to
+    /// gate what the bulk apply will write.
+    ///
+    /// The tiers do not produce comparable numbers, so one shared constant
+    /// would be wrong for at least two of them. Consensus confidence is derived
+    /// from how many independent sources agreed, so it means something precise.
+    /// The on-device model reports a coarse high/medium/low where "high" lands
+    /// at 0.9, so a higher bar there admits only its most certain calls — which
+    /// is the intent for a small model.
+    public static func confidenceThreshold(for kind: TagVerificationEngineKind) -> Double {
+        switch kind {
+        case .consensus:
+            return 0.75
+        case .onDevice:
+            return 0.85
+        case .cloudModel:
+            return 0.75
+        }
+    }
+
+    /// Below this, the engine was unsure it identified the right recording at
+    /// all — and a confident verdict about the wrong recording is still wrong,
+    /// so none of its field verdicts are auto-trusted.
+    public static let identityConfidenceFloor = 0.7
+
+    /// The changes from one verification that are safe to apply without a
+    /// human checking them individually.
+    ///
+    /// `fields` narrows what may be written at all: the bulk apply deliberately
+    /// never touches the title, because a title carries the DJ's version
+    /// descriptors and rewriting it in bulk is not something to do unreviewed.
+    public static func autoApplicableFields(
+        in verification: TrackTagVerification,
+        engine: TagVerificationEngineKind,
+        limitedTo fields: Set<TagIntegrityAudit.Field>,
+        onlyFillEmpty: Bool
+    ) -> Set<TagIntegrityAudit.Field> {
+        guard verification.identityConfidence >= identityConfidenceFloor else { return [] }
+        let threshold = confidenceThreshold(for: engine)
+
+        var applicable: Set<TagIntegrityAudit.Field> = []
+        for change in verification.proposedChanges
+        where fields.contains(change.field) && change.confidence >= threshold {
+            if onlyFillEmpty,
+               !change.currentValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                continue
+            }
+            applicable.insert(change.field)
+        }
+        return applicable
+    }
+
     public static func availability(of kind: TagVerificationEngineKind) -> Availability {
         switch kind {
         case .consensus:
@@ -165,6 +218,39 @@ public enum TagVerificationCoordinator {
             continuation.yield(.aborted(message: message))
             continuation.finish()
         }
+    }
+
+    /// Roughly how long a run will take, in words.
+    ///
+    /// Worth showing because the honest answer is sometimes "come back later":
+    /// MusicBrainz allows one request a second, so a few thousand tracks is a
+    /// genuinely long job, and the on-device model is seconds per track by
+    /// nature. A progress count and a Stop button are not much comfort if the
+    /// user did not know what they were starting.
+    public static func estimatedDurationText(
+        for kind: TagVerificationEngineKind,
+        trackCount: Int
+    ) -> String? {
+        guard trackCount > 0 else { return nil }
+
+        let secondsPerTrack: Double
+        switch kind {
+        case .consensus:
+            secondsPerTrack = 0.8
+        case .onDevice:
+            secondsPerTrack = 12
+        case .cloudModel:
+            secondsPerTrack = 8
+        }
+
+        let total = Double(trackCount) * secondsPerTrack
+        guard total >= 60 else { return nil }
+
+        if total < 3600 {
+            return "roughly \(Int((total / 60).rounded())) minutes"
+        }
+        let hours = total / 3600
+        return hours < 2 ? "over an hour" : "roughly \(Int(hours.rounded())) hours"
     }
 
     /// What a run will cost, in words. Free tiers say so plainly rather than

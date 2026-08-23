@@ -100,6 +100,9 @@ struct TracksAndTagsView: View {
     @State private var showWhitespaceCleanupConfirmation = false
     @State private var showOnlyFillEmptyPrompt = false
     @State private var showAITagVerification = false
+    @State private var showVerifiedApplyPrompt = false
+    @State private var verifiedProgress: (done: Int, total: Int)?
+    @State private var verifiedApplyTask: Task<Void, Never>?
 
     /// Snapshot of everything derived from `tracks` + the active scope/filters,
     /// recomputed off the main actor only when an input changes (never per
@@ -276,6 +279,8 @@ struct TracksAndTagsView: View {
         .onDisappear {
             derivedRecomputeTask?.cancel()
             derivedRecomputeTask = nil
+            verifiedApplyTask?.cancel()
+            verifiedApplyTask = nil
         }
         .alert(
             "Couldn't Update Tags",
@@ -327,7 +332,19 @@ struct TracksAndTagsView: View {
             Text(tagRefreshConfirmationMessage)
         }
         .confirmationDialog(
-            "Apply Top-Hit Metadata",
+            "Check These Tracks?",
+            isPresented: $showVerifiedApplyPrompt,
+            titleVisibility: .visible
+        ) {
+            Button("Check \(selectedTracks.count) Track\(selectedTracks.count == 1 ? "" : "s")") {
+                runVerifiedBulkApply()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(verifiedApplyPromptMessage)
+        }
+        .confirmationDialog(
+            "Apply Verified Tags",
             isPresented: $showTopHitConfirmation,
             titleVisibility: .visible
         ) {
@@ -338,7 +355,10 @@ struct TracksAndTagsView: View {
                 pendingTopHitUpdates = []
             }
         } message: {
-            Text("Top search-hit metadata will be applied for Artist, Album, Genre, and Year on \(pendingTopHitUpdates.count) selected track\(pendingTopHitUpdates.count == 1 ? "" : "s").")
+            Text(
+                "Artist, Album, Genre, and Year will be updated on "
+                + "\(pendingTopHitUpdates.count) track\(pendingTopHitUpdates.count == 1 ? "" : "s") "
+                + "where the sources agreed. Titles are never changed here.")
         }
         .confirmationDialog(
             "Clean Tag Whitespace",
@@ -518,11 +538,14 @@ struct TracksAndTagsView: View {
                 }
                 .disabled(selectedTracks.isEmpty || isBulkLookupRunning)
                 .help("Look up genre and year online and fill them in for the selected tracks.")
-                Button("Apply Top Hit (A/Al/G/Y)") {
-                    applyTopHitMetadataToSelected()
+                Button("Apply Verified Tags (A/Al/G/Y)") {
+                    startVerifiedBulkApply()
                 }
                 .disabled(selectedTracks.isEmpty || isBulkLookupRunning)
-                .help("Apply the best online match's Artist, Album, Genre, and Year to the selected tracks.")
+                .help(
+                    "Check the selected tracks with the engine chosen in \u{201C}Verify Tags with AI\u{201D}, "
+                    + "then apply the Artist, Album, Genre, and Year it is confident about. "
+                    + "Shows what will change before writing.")
                 Button("Verify Tags with AI…") {
                     showAITagVerification = true
                 }
@@ -534,6 +557,20 @@ struct TracksAndTagsView: View {
                 if isBulkLookupRunning {
                     ProgressView()
                         .controlSize(.small)
+                    if let verifiedProgress {
+                        // Verification is per-track and can run for minutes, so
+                        // a bare spinner would look like a hang.
+                        Text("\(verifiedProgress.done) of \(verifiedProgress.total)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Button("Stop") {
+                            verifiedApplyTask?.cancel()
+                            verifiedApplyTask = nil
+                            isBulkLookupRunning = false
+                            self.verifiedProgress = nil
+                        }
+                        .controlSize(.small)
+                    }
                 }
                 Toggle("Only Fill Empty", isOn: $onlyFillEmpty)
                     .toggleStyle(.switch)
@@ -920,97 +957,123 @@ struct TracksAndTagsView: View {
         }
     }
 
-    private func applyTopHitMetadataToSelected() {
+    /// Verifies the selected tracks with the chosen engine and applies the
+    /// changes it is confident about.
+    ///
+    /// This used to take iTunes' first search result and write it. That is the
+    /// wrong shape of answer for a DJ library: for a seven-minute extended mix
+    /// the first hit is the three-minute original single, so the album and year
+    /// it wrote belonged to a different recording. It now runs the same
+    /// verification tier as the review sheet, which requires corroboration and
+    /// discards candidates whose length cannot match the file.
+    ///
+    /// Two properties of the old button are kept deliberately: it writes only
+    /// Artist, Album, Genre, and Year — never the title, which carries version
+    /// descriptors and should not be rewritten in bulk unreviewed — and it
+    /// still honours "Only Fill Empty".
+    private func startVerifiedBulkApply() {
         guard !selectedTracks.isEmpty else { return }
 
+        // Verifying is no longer nearly free: the cloud tier bills per track and
+        // the on-device tier takes seconds per track. Confirm before spending
+        // either, rather than after.
+        if verificationEngine.isPaid || selectedTracks.count > Self.bulkConfirmThreshold {
+            showVerifiedApplyPrompt = true
+        } else {
+            runVerifiedBulkApply()
+        }
+    }
+
+    /// Selections at or below this run without a pre-flight prompt.
+    private static let bulkConfirmThreshold = 25
+
+    private var verificationEngine: TagVerificationEngineKind {
+        TagVerificationCoordinator.defaultEngine()
+    }
+
+    private var verifiedApplyPromptMessage: String {
+        let engine = verificationEngine
+        let count = selectedTracks.count
+        let cost = TagVerificationCoordinator.costText(for: engine, trackCount: count)
+        var message = "\(count) track\(count == 1 ? "" : "s") will be checked with \(engine.displayName). \(cost)"
+        if let duration = TagVerificationCoordinator.estimatedDurationText(for: engine, trackCount: count) {
+            message += " This will take \(duration) — you can stop it partway and keep what it found."
+        }
+        return message + " Nothing is written until you confirm the changes it finds."
+    }
+
+    private func runVerifiedBulkApply() {
         bulkLookupMessage = nil
         operationErrorMessage = nil
         isBulkLookupRunning = true
+        verifiedProgress = nil
 
         let tracksSnapshot = selectedTracks
         let onlyFillEmptySnapshot = onlyFillEmpty
-        let lookupItems: [(key: String, track: Track, query: OnlineTrackMetadataLookupService.Query)] = tracksSnapshot.map { track in
-            (
-                key: bulkLookupKey(for: track),
-                track: track,
-                query: OnlineTrackMetadataLookupService.Query(
-                    title: track.title,
-                    artist: track.artist,
-                    album: track.album
-                )
-            )
-        }
+        let engine = verificationEngine
+        // Exactly the fields this button has always written.
+        let writableFields: Set<TagIntegrityAudit.Field> = [.artist, .album, .genre, .year]
 
-        Task.detached(priority: .userInitiated) {
-            do {
-                let lookupOutcome = try await Self.fetchBulkLookupCandidates(
-                    for: lookupItems.map { ($0.key, $0.query) }
-                )
+        verifiedApplyTask = Task {
+            var updates: [(Track, SeratoTrackMetadataUpdate)] = []
+            var failed = 0
+            var abortedMessage: String?
+            var completed = 0
+            var total = tracksSnapshot.count
 
-                var updates: [(Track, SeratoTrackMetadataUpdate)] = []
-                for item in lookupItems {
-                    guard let candidate = lookupOutcome.candidates[item.key] else {
-                        continue
-                    }
-
-                    var metadata = SeratoTrackMetadataUpdate(
-                        title: item.track.title,
-                        artist: item.track.artist,
-                        album: item.track.album,
-                        genre: item.track.genre,
-                        comment: item.track.comment,
-                        key: item.track.key ?? "",
-                        bpm: item.track.bpm,
-                        year: item.track.year
+            for await event in TagVerificationCoordinator.verify(tracks: tracksSnapshot, using: engine) {
+                if Task.isCancelled { break }
+                switch event {
+                case let .started(count):
+                    total = count
+                    verifiedProgress = (0, count)
+                case let .verified(verification):
+                    completed += 1
+                    verifiedProgress = (completed, total)
+                    let fields = TagVerificationCoordinator.autoApplicableFields(
+                        in: verification,
+                        engine: engine,
+                        limitedTo: writableFields,
+                        onlyFillEmpty: onlyFillEmptySnapshot
                     )
-
-                    if !candidate.artist.isEmpty,
-                              (!onlyFillEmptySnapshot || item.track.artist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) {
-                        metadata.artist = candidate.artist
-                    }
-                    if !candidate.album.isEmpty,
-                              (!onlyFillEmptySnapshot || item.track.album.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) {
-                        metadata.album = candidate.album
-                    }
-                    if !candidate.genre.isEmpty,
-                              (!onlyFillEmptySnapshot || item.track.genre.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) {
-                        metadata.genre = candidate.genre
-                    }
-                    if let year = candidate.year,
-                              (!onlyFillEmptySnapshot || item.track.year == nil) {
-                        metadata.year = year
-                    }
-
-                    guard metadata.artist != item.track.artist
-                        || metadata.album != item.track.album
-                        || metadata.genre != item.track.genre
-                        || metadata.year != item.track.year
-                    else {
-                        continue
-                    }
-
-                    updates.append((item.track, metadata))
+                    guard !fields.isEmpty else { continue }
+                    updates.append((verification.track, verification.metadataUpdate(applying: fields)))
+                case .failed:
+                    completed += 1
+                    failed += 1
+                    verifiedProgress = (completed, total)
+                case let .aborted(message):
+                    abortedMessage = message
+                case .finished:
+                    break
                 }
+            }
 
-                await MainActor.run {
-                    isBulkLookupRunning = false
-                    if updates.isEmpty {
-                        bulkLookupMessage = "No top-hit metadata updates were applied."
-                            + (lookupOutcome.failureNote ?? "")
-                        pendingTopHitUpdates = []
-                    } else {
-                        pendingTopHitUpdates = updates
-                        showTopHitConfirmation = true
-                    }
-                }
-            } catch {
-                await MainActor.run {
-                    isBulkLookupRunning = false
-                    operationErrorMessage = error.localizedDescription
-                }
+            isBulkLookupRunning = false
+            verifiedProgress = nil
+            verifiedApplyTask = nil
+
+            if let abortedMessage {
+                operationErrorMessage = abortedMessage
+                pendingTopHitUpdates = []
+                return
+            }
+
+            let failureNote = failed > 0
+                ? " \(failed) track\(failed == 1 ? "" : "s") could not be checked."
+                : ""
+
+            if updates.isEmpty {
+                bulkLookupMessage = "Nothing was confident enough to change — the sources either "
+                    + "agreed with your tags or disagreed with each other." + failureNote
+                pendingTopHitUpdates = []
+            } else {
+                pendingTopHitUpdates = updates
+                showTopHitConfirmation = true
             }
         }
     }
+
 
     // MARK: - Tag whitespace cleanup
 
@@ -1092,7 +1155,8 @@ struct TracksAndTagsView: View {
         }
 
         if operationErrorMessage == nil {
-            bulkLookupMessage = "Applied top-hit artist/album/genre/year to \(updatedCount) track\(updatedCount == 1 ? "" : "s")."
+            bulkLookupMessage = "Applied verified artist/album/genre/year to "
+                + "\(updatedCount) track\(updatedCount == 1 ? "" : "s")."
         }
     }
 

@@ -405,3 +405,117 @@ private func field(
     #expect(OnDeviceTagVerificationService.sanitized("1997", for: .year, track: subject) == "1997")
 }
 #endif
+
+// MARK: - Year
+//
+// Year had its own bug: the sources are not answering the same question, so
+// exact-match consensus left it unverified on nearly everything.
+
+@Test func iTunesAndMusicBrainzYearsOneApartStillFillTheYear() {
+    // Measured from the real APIs for Daft Punk — Around The World: iTunes
+    // reports the matched release (1997), MusicBrainz the first release (1996).
+    // Before the fix these cancelled out and no year was ever proposed.
+    let result = TagConsensusService.consensus(
+        for: track(year: nil),
+        fingerprintMatches: [],
+        candidates: [
+            candidate(.itunes, year: 1997),
+            candidate(.musicBrainz, year: 1996)
+        ]
+    )
+
+    let year = field(result, .year)
+    #expect(year?.verdict == .incorrect)
+    // The earliest is the original release year, which is what a library tags.
+    #expect(year?.proposedValue == "1996")
+    #expect((year?.confidence ?? 0) >= 0.75)
+}
+
+@Test func aRemasterYearDoesNotMergeWithTheOriginal() {
+    // 1977 against a 2015 remaster is a real difference, not a release-date
+    // technicality, so they must not be treated as corroborating.
+    let claims = [
+        TagConsensusService.Claim(sourceName: "MusicBrainz", value: "1977", isFingerprint: false),
+        TagConsensusService.Claim(sourceName: "iTunes", value: "2015", isFingerprint: false)
+    ]
+    let resolved = TagConsensusService.yearConsensus(from: claims)
+    #expect(resolved?.sources.count == 1)
+    #expect(resolved?.value == "1977")
+}
+
+@Test func theYearClusterWithTheMostSourcesWins() {
+    let claims = [
+        TagConsensusService.Claim(sourceName: "iTunes", value: "2015", isFingerprint: false),
+        TagConsensusService.Claim(sourceName: "MusicBrainz", value: "1999", isFingerprint: false),
+        TagConsensusService.Claim(sourceName: "Deezer", value: "2000", isFingerprint: false),
+        TagConsensusService.Claim(sourceName: "AcoustID", value: "1999", isFingerprint: true)
+    ]
+    let resolved = TagConsensusService.yearConsensus(from: claims)
+    #expect(resolved?.value == "1999")
+    #expect(resolved?.sources.count == 3)
+}
+
+@Test func nonsenseYearsAreIgnored() {
+    let claims = [
+        TagConsensusService.Claim(sourceName: "iTunes", value: "not a year", isFingerprint: false),
+        TagConsensusService.Claim(sourceName: "Deezer", value: "1200", isFingerprint: false)
+    ]
+    #expect(TagConsensusService.yearConsensus(from: claims) == nil)
+}
+
+@Test func yearsAreParsedOutOfFullDates() {
+    let claims = [
+        TagConsensusService.Claim(sourceName: "iTunes", value: "1997-01-20", isFingerprint: false),
+        TagConsensusService.Claim(sourceName: "MusicBrainz", value: "1997", isFingerprint: false)
+    ]
+    #expect(TagConsensusService.yearConsensus(from: claims)?.value == "1997")
+}
+
+// MARK: - Empty fields accept a single source as a suggestion
+
+@Test func oneSourceCanSuggestIntoAnEmptyFieldButNotOverwrite() {
+    let empty = TagConsensusService.consensus(
+        for: track(genre: ""),
+        fingerprintMatches: [],
+        candidates: [candidate(.itunes, genre: "House")]
+    )
+    let populated = TagConsensusService.consensus(
+        for: track(genre: "Techno"),
+        fingerprintMatches: [],
+        candidates: [candidate(.itunes, genre: "House")]
+    )
+
+    #expect(field(empty, .genre)?.verdict == .incorrect)
+    #expect(field(empty, .genre)?.proposedValue == "House")
+    // A value someone already chose still needs corroboration to be replaced.
+    #expect(field(populated, .genre)?.verdict == .unverified)
+}
+
+@Test func aSingleSourceSuggestionStaysBelowTheAutoApplyBar() {
+    // It should appear in the review sheet, not be written by a bulk run.
+    let result = TagConsensusService.consensus(
+        for: track(genre: ""),
+        fingerprintMatches: [],
+        candidates: [candidate(.itunes, genre: "House")]
+    )
+    let confidence = field(result, .genre)?.confidence ?? 1
+    #expect(confidence < TagVerificationCoordinator.confidenceThreshold(for: .consensus))
+
+    #expect(TagVerificationCoordinator.autoApplicableFields(
+        in: result,
+        engine: .consensus,
+        limitedTo: [.artist, .album, .genre, .year],
+        onlyFillEmpty: true
+    ).isEmpty)
+}
+
+@Test func aSingleSourceSuggestionReadsAsOneSourceNotAgreement() {
+    let result = TagConsensusService.consensus(
+        for: track(genre: ""),
+        fingerprintMatches: [],
+        candidates: [candidate(.itunes, genre: "House")]
+    )
+    let evidence = field(result, .genre)?.evidence ?? ""
+    #expect(evidence.contains("says"))
+    #expect(!evidence.contains("agree it"))
+}

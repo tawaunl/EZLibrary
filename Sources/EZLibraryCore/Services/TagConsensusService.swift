@@ -190,10 +190,16 @@ public enum TagConsensusService {
             )) ?? []
         }()
 
+        // Reading the file's own tag is what makes artwork an *offer* rather
+        // than a silent replacement: art that is already there is left alone
+        // unless the user explicitly picks the new one.
+        let hasArtwork = ArtworkFetchService.fileHasEmbeddedArtwork(at: track.fileURL)
+
         return consensus(
             for: track,
             fingerprintMatches: await fingerprints,
             candidates: await candidates,
+            fileHasArtwork: hasArtwork,
             options: options
         )
     }
@@ -207,6 +213,7 @@ public enum TagConsensusService {
         for track: Track,
         fingerprintMatches: [AudioFingerprintSuggestion],
         candidates: [OnlineTrackMetadataCandidate],
+        fileHasArtwork: Bool = false,
         options: Options = Options()
     ) -> TrackTagVerification {
         let plausible = candidatesMatchingDuration(
@@ -245,8 +252,38 @@ public enum TagConsensusService {
                 sources: contributingSources,
                 rejectedForLength: rejectedForLength
             ),
-            fields: verifications
+            fields: verifications,
+            artwork: artworkProposal(from: plausible, fileHasArtwork: fileHasArtwork)
         )
+    }
+
+    /// Picks the cover art to offer, preferring the source that serves the
+    /// largest image.
+    ///
+    /// Ordering here is by image size rather than by the source-authority order
+    /// used for text, because every candidate has already survived the same
+    /// filters — what differs is resolution. Deezer serves 1000px, iTunes 600px
+    /// after upscaling the URL, MusicBrainz whatever the Cover Art Archive has.
+    /// Embedded art is looked at on phones and controllers, so bigger wins.
+    static func artworkProposal(
+        from candidates: [OnlineTrackMetadataCandidate],
+        fileHasArtwork: Bool
+    ) -> ArtworkProposal? {
+        let preference: [OnlineMetadataSource] = [.deezer, .itunes, .musicBrainz, .discogs]
+
+        for source in preference {
+            guard let match = candidates.first(where: { $0.source == source && $0.artworkURL != nil }),
+                  let url = match.artworkURL else {
+                continue
+            }
+            return ArtworkProposal(
+                sourceName: source.displayName,
+                url: url,
+                fileIsMissingArtwork: !fileHasArtwork,
+                albumTitle: match.album
+            )
+        }
+        return nil
     }
 
     /// Drops candidates whose length rules them out as this recording.
@@ -276,7 +313,8 @@ public enum TagConsensusService {
         let currentValue = AITagVerificationService.currentValue(of: field, in: track)
         let claims = claims(for: field, fingerprintMatches: fingerprintMatches, candidates: candidates)
 
-        guard let winner = winningValue(from: claims) else {
+        let resolved = field == .year ? yearConsensus(from: claims) : winningValue(from: claims)
+        guard let winner = resolved else {
             return TagFieldVerification(
                 field: field,
                 verdict: .unverified,
@@ -311,7 +349,14 @@ public enum TagConsensusService {
             )
         }
 
-        guard agreeingSources.count >= options.minimumAgreeingSources else {
+        // Filling a blank is a different risk from overwriting a value someone
+        // chose, so one source is allowed to *suggest* into an empty field. The
+        // confidence that carries (0.5) sits below the auto-apply bar, so it
+        // surfaces in the review sheet without a bulk run writing it unseen.
+        let isEmptyField = currentValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let requiredSources = isEmptyField ? 1 : options.minimumAgreeingSources
+
+        guard agreeingSources.count >= requiredSources else {
             return TagFieldVerification(
                 field: field,
                 verdict: .unverified,
@@ -324,17 +369,33 @@ public enum TagConsensusService {
             )
         }
 
-        let isEmpty = currentValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         return TagFieldVerification(
             field: field,
             verdict: .incorrect,
             currentValue: currentValue,
             proposedValue: proposal,
             confidence: confidence(agreeing: agreeingSources.count, fingerprintAgrees: fingerprintAgrees),
-            evidence: isEmpty
-                ? "Field is empty; \(sourceList) agree it should be \"\(proposal)\"."
-                : "\(sourceList) agree on \"\(proposal)\"."
+            evidence: evidenceText(
+                isEmptyField: isEmptyField,
+                sourceList: sourceList,
+                proposal: proposal,
+                agreeingCount: agreeingSources.count
+            )
         )
+    }
+
+    static func evidenceText(
+        isEmptyField: Bool,
+        sourceList: String,
+        proposal: String,
+        agreeingCount: Int
+    ) -> String {
+        if isEmptyField {
+            return agreeingCount == 1
+                ? "Field is empty; \(sourceList) says it should be \"\(proposal)\"."
+                : "Field is empty; \(sourceList) agree it should be \"\(proposal)\"."
+        }
+        return "\(sourceList) agree on \"\(proposal)\"."
     }
 
     static func claims(
@@ -361,6 +422,54 @@ public enum TagConsensusService {
         }
 
         return claims
+    }
+
+    /// Year needs its own rule, because the sources are not answering the same
+    /// question.
+    ///
+    /// Measured against the real APIs for one track (Daft Punk — Around The
+    /// World): iTunes returns the date of *the release it matched* (1997),
+    /// MusicBrainz returns the recording's *first* release date (1996), and
+    /// Deezer's search results carry no date at all. Demanding exact agreement
+    /// therefore left year unverified on almost everything — two sources, two
+    /// different questions, one apparent disagreement, nothing proposed.
+    ///
+    /// Years within `tolerance` of each other are treated as corroborating the
+    /// same record, and the earliest is taken: that is the original release
+    /// year, which is the convention a music library tags to and the one
+    /// MusicBrainz is reporting. A genuine gap — a 1977 original against a 2015
+    /// remaster — is far wider than the tolerance, so those still do not merge,
+    /// and the earliest is the right answer there anyway.
+    static func yearConsensus(
+        from claims: [Claim],
+        tolerance: Int = 1
+    ) -> (value: String, sources: Set<String>)? {
+        let parsed = claims.compactMap { claim -> (year: Int, source: String)? in
+            guard let year = Int(claim.value.prefix(4)), (1900...2100).contains(year) else { return nil }
+            return (year, claim.sourceName)
+        }
+        guard !parsed.isEmpty else { return nil }
+
+        // Cluster around each observed year, then keep whichever cluster the
+        // most distinct sources land in.
+        var best: (year: Int, sources: Set<String>)?
+        for anchor in Set(parsed.map(\.year)).sorted() {
+            let members = parsed.filter { abs($0.year - anchor) <= tolerance }
+            let sources = Set(members.map(\.source))
+            guard let earliest = members.map(\.year).min() else { continue }
+
+            if let current = best {
+                if sources.count > current.sources.count
+                    || (sources.count == current.sources.count && earliest < current.year) {
+                    best = (earliest, sources)
+                }
+            } else {
+                best = (earliest, sources)
+            }
+        }
+
+        guard let best else { return nil }
+        return (String(best.year), best.sources)
     }
 
     /// Groups claims by their normalised value and picks the one the most

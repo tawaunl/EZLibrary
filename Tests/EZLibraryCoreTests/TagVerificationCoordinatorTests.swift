@@ -111,3 +111,155 @@ import Testing
     #expect(AITagVerificationService.Provider.anthropic.supportsWebSearch)
     #expect(!AITagVerificationService.Provider.openAICompatible.supportsWebSearch)
 }
+
+// MARK: - What the bulk apply is allowed to write
+//
+// This gate decides what gets written to a library without anyone looking at it
+// field by field, so it is the highest-consequence logic in the feature.
+
+private func verification(
+    identityConfidence: Double = 0.95,
+    fields: [TagFieldVerification]
+) -> TrackTagVerification {
+    TrackTagVerification(
+        track: Track(seratoStoredPath: "a.mp3", fileURL: URL(fileURLWithPath: "/a.mp3")),
+        engineName: "test",
+        identityConfidence: identityConfidence,
+        identitySummary: "",
+        fields: fields
+    )
+}
+
+private func change(
+    _ field: TagIntegrityAudit.Field,
+    current: String = "Old",
+    proposed: String = "New",
+    confidence: Double
+) -> TagFieldVerification {
+    TagFieldVerification(
+        field: field,
+        verdict: .incorrect,
+        currentValue: current,
+        proposedValue: proposed,
+        confidence: confidence,
+        evidence: ""
+    )
+}
+
+private let allWritable: Set<TagIntegrityAudit.Field> = [.artist, .album, .genre, .year]
+
+@Test func onlyProposalsAboveTheEngineThresholdAreAutoApplied() {
+    let result = verification(fields: [
+        change(.album, confidence: 0.9),
+        change(.genre, confidence: 0.5)
+    ])
+
+    let applied = TagVerificationCoordinator.autoApplicableFields(
+        in: result,
+        engine: .consensus,
+        limitedTo: allWritable,
+        onlyFillEmpty: false
+    )
+    #expect(applied == [.album])
+}
+
+@Test func theOnDeviceTierHasAHigherBarThanConsensus() {
+    // 0.8 clears the consensus bar but not the on-device one, because a small
+    // model's "medium" is not the same evidence as three databases agreeing.
+    let result = verification(fields: [change(.album, confidence: 0.8)])
+
+    #expect(TagVerificationCoordinator.autoApplicableFields(
+        in: result, engine: .consensus, limitedTo: allWritable, onlyFillEmpty: false
+    ) == [.album])
+
+    #expect(TagVerificationCoordinator.autoApplicableFields(
+        in: result, engine: .onDevice, limitedTo: allWritable, onlyFillEmpty: false
+    ).isEmpty)
+}
+
+@Test func nothingIsAutoAppliedWhenTheRecordingWasNotConfidentlyIdentified() {
+    // Every field verdict is confident, but they are confident *about the wrong
+    // recording*, which is the failure mode that silently corrupts a library.
+    let result = verification(identityConfidence: 0.4, fields: [
+        change(.album, confidence: 0.99),
+        change(.year, confidence: 0.99)
+    ])
+
+    #expect(TagVerificationCoordinator.autoApplicableFields(
+        in: result, engine: .consensus, limitedTo: allWritable, onlyFillEmpty: false
+    ).isEmpty)
+}
+
+@Test func theBulkApplyNeverWritesTheTitle() {
+    // The title carries version descriptors; rewriting it in bulk without
+    // review is not something this path should ever do.
+    let result = verification(fields: [
+        change(.title, confidence: 0.99),
+        change(.album, confidence: 0.99)
+    ])
+
+    let applied = TagVerificationCoordinator.autoApplicableFields(
+        in: result,
+        engine: .consensus,
+        limitedTo: allWritable,
+        onlyFillEmpty: false
+    )
+    #expect(!applied.contains(.title))
+    #expect(applied.contains(.album))
+}
+
+@Test func onlyFillEmptyLeavesPopulatedFieldsAlone() {
+    let result = verification(fields: [
+        change(.album, current: "Existing Album", confidence: 0.95),
+        change(.genre, current: "", confidence: 0.95),
+        change(.year, current: "   ", confidence: 0.95)
+    ])
+
+    let applied = TagVerificationCoordinator.autoApplicableFields(
+        in: result,
+        engine: .consensus,
+        limitedTo: allWritable,
+        onlyFillEmpty: true
+    )
+    // Whitespace counts as empty; a real value is protected.
+    #expect(applied == [.genre, .year])
+}
+
+@Test func onlyFillEmptyOffAllowsOverwritingPopulatedFields() {
+    let result = verification(fields: [change(.album, current: "Existing", confidence: 0.95)])
+
+    #expect(TagVerificationCoordinator.autoApplicableFields(
+        in: result, engine: .consensus, limitedTo: allWritable, onlyFillEmpty: false
+    ) == [.album])
+}
+
+@Test func confirmedAndUnverifiedVerdictsAreNeverApplied() {
+    let result = verification(fields: [
+        TagFieldVerification(
+            field: .album, verdict: .correct, currentValue: "Album",
+            proposedValue: "", confidence: 0.99, evidence: ""
+        ),
+        TagFieldVerification(
+            field: .genre, verdict: .unverified, currentValue: "",
+            proposedValue: "", confidence: 0.99, evidence: ""
+        )
+    ])
+
+    #expect(TagVerificationCoordinator.autoApplicableFields(
+        in: result, engine: .consensus, limitedTo: allWritable, onlyFillEmpty: false
+    ).isEmpty)
+}
+
+@Test func shortRunsGiveNoTimeEstimateAndLongOnesDo() {
+    // A handful of tracks finishes before a warning would be read.
+    #expect(TagVerificationCoordinator.estimatedDurationText(for: .consensus, trackCount: 5) == nil)
+    #expect(TagVerificationCoordinator.estimatedDurationText(for: .consensus, trackCount: 0) == nil)
+
+    // A few thousand tracks against a one-request-per-second source is a job
+    // the user should be told about before starting it.
+    let long = TagVerificationCoordinator.estimatedDurationText(for: .consensus, trackCount: 5000)
+    #expect(long?.contains("hour") == true)
+
+    // The on-device model is seconds per track, so it crosses the line sooner.
+    #expect(TagVerificationCoordinator.estimatedDurationText(for: .onDevice, trackCount: 10)?.contains("minute") == true)
+}

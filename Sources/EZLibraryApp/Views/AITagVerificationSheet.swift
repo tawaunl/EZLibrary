@@ -47,6 +47,7 @@ struct AITagVerificationSheet: View {
     @State private var results: [AITagVerificationService.TrackVerification] = []
     @State private var failures: [(track: Track, message: String)] = []
     @State private var selectedFieldIDs: Set<UUID> = []
+    @State private var selectedArtworkIDs: Set<UUID> = []
     @State private var completedCount = 0
     @State private var totalCount = 0
     /// Computed once when the sheet opens rather than per body evaluation:
@@ -365,12 +366,12 @@ struct AITagVerificationSheet: View {
     private var resultsSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             ForEach(results) { result in
-                if !result.proposedChanges.isEmpty {
+                if !result.proposedChanges.isEmpty || offersArtwork(result) {
                     resultCard(for: result)
                 }
             }
 
-            let confirmedOnly = results.filter { $0.proposedChanges.isEmpty }
+            let confirmedOnly = results.filter { $0.proposedChanges.isEmpty && !offersArtwork(result: $0) }
             if !confirmedOnly.isEmpty {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 4) {
@@ -421,6 +422,10 @@ struct AITagVerificationSheet: View {
 
                 ForEach(result.proposedChanges) { change in
                     changeRow(change)
+                }
+
+                if let artwork = result.artwork, artwork.fileIsMissingArtwork {
+                    artworkRow(artwork)
                 }
 
                 HStack(spacing: 6) {
@@ -496,6 +501,65 @@ struct AITagVerificationSheet: View {
                         Text(url.host ?? url.absoluteString)
                             .font(.caption2)
                     }
+                }
+            }
+        }
+    }
+
+    /// Only art for a file that has none is offered. Replacing existing cover
+    /// art is a taste decision, not a correction, so it does not belong in a
+    /// list of things a source says are wrong.
+    private func offersArtwork(result: AITagVerificationService.TrackVerification) -> Bool {
+        result.artwork?.fileIsMissingArtwork == true
+    }
+
+    private func offersArtwork(_ result: AITagVerificationService.TrackVerification) -> Bool {
+        offersArtwork(result: result)
+    }
+
+    private func artworkRow(_ artwork: ArtworkProposal) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Toggle("", isOn: Binding(
+                get: { selectedArtworkIDs.contains(artwork.id) },
+                set: { isOn in
+                    if isOn {
+                        selectedArtworkIDs.insert(artwork.id)
+                    } else {
+                        selectedArtworkIDs.remove(artwork.id)
+                    }
+                }
+            ))
+            .labelsHidden()
+            .toggleStyle(.checkbox)
+
+            AsyncImage(url: artwork.url) { image in
+                image.resizable().aspectRatio(contentMode: .fit)
+            } placeholder: {
+                Rectangle().fill(Color.secondary.opacity(0.12))
+            }
+            .frame(width: 40, height: 40)
+            .clipShape(RoundedRectangle(cornerRadius: 3))
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text("Artwork")
+                        .font(.caption.weight(.semibold))
+                        .frame(width: 52, alignment: .leading)
+                    Text("(none embedded)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Image(systemName: "arrow.right")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    Text(artwork.sourceName)
+                        .font(.caption.weight(.medium))
+                    Spacer(minLength: 0)
+                }
+
+                if !artwork.albumTitle.isEmpty {
+                    Text("Cover for \(artwork.albumTitle)")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 }
             }
         }
@@ -623,7 +687,7 @@ struct AITagVerificationSheet: View {
                 case let .verified(result):
                     completedCount += 1
                     results.append(result)
-                    preselect(result, minimumConfidence: preselectionThreshold(for: selectedEngine))
+                    preselect(result, minimumConfidence: TagVerificationCoordinator.confidenceThreshold(for: selectedEngine))
                 case let .failed(track, message):
                     completedCount += 1
                     failures.append((track, message))
@@ -638,25 +702,6 @@ struct AITagVerificationSheet: View {
         }
     }
 
-    /// How confident a proposal must be before it is checked by default.
-    ///
-    /// The tiers do not produce comparable numbers. Consensus confidence is
-    /// derived from how many independent sources agreed, so it means something
-    /// precise and a high bar is right. The on-device model reports a coarse
-    /// high/medium/low, where "high" lands at 0.9 — so the same bar would
-    /// pre-check only its most certain calls, which is the intent for a small
-    /// model whose proposals deserve a look.
-    private func preselectionThreshold(for engine: TagVerificationEngineKind) -> Double {
-        switch engine {
-        case .consensus:
-            return 0.75
-        case .onDevice:
-            return 0.85
-        case .cloudModel:
-            return 0.75
-        }
-    }
-
     /// Pre-checks the proposals that are safe to trust, and leaves the rest for
     /// the user to opt into. A confident verdict about the wrong recording is
     /// still wrong, so the identity confidence gates this too.
@@ -664,7 +709,7 @@ struct AITagVerificationSheet: View {
         _ result: AITagVerificationService.TrackVerification,
         minimumConfidence: Double
     ) {
-        guard result.identityConfidence >= 0.7 else { return }
+        guard result.identityConfidence >= TagVerificationCoordinator.identityConfidenceFloor else { return }
         for change in result.proposedChanges where change.confidence >= minimumConfidence {
             selectedFieldIDs.insert(change.id)
         }
