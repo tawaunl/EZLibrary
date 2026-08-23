@@ -28,9 +28,7 @@ import Testing
 }
 
 @Test func theDefaultEngineFallsBackWhenTheStoredChoiceCannotRun() {
-    let suite = "CoordinatorTests-\(UUID().uuidString)"
-    let defaults = UserDefaults(suiteName: suite)!
-    defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+    let defaults = TestDefaults.inMemory()
 
     #expect(TagVerificationCoordinator.defaultEngine(userDefaults: defaults) == .consensus)
 
@@ -92,9 +90,7 @@ import Testing
 }
 
 @Test func providerSelectionDefaultsToAnthropicAndSurvivesBadValues() {
-    let suite = "ProviderTests-\(UUID().uuidString)"
-    let defaults = UserDefaults(suiteName: suite)!
-    defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+    let defaults = TestDefaults.inMemory()
 
     #expect(AITagVerificationService.selectedProvider(userDefaults: defaults) == .anthropic)
 

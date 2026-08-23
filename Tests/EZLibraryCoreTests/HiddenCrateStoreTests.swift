@@ -14,9 +14,7 @@ import Foundation
 
 @MainActor
 private func makeStore() -> HiddenCrateStore {
-    let suiteName = "com.seratotools.tests.\(UUID().uuidString)"
-    let defaults = UserDefaults(suiteName: suiteName)!
-    return HiddenCrateStore(userDefaults: defaults)
+    HiddenCrateStore(userDefaults: TestDefaults.inMemory())
 }
 
 @Test @MainActor func hidingACrateMarksItHidden() {
@@ -53,8 +51,7 @@ private func makeStore() -> HiddenCrateStore {
 }
 
 @Test @MainActor func persistsAcrossInstancesWithTheSameUserDefaults() {
-    let suiteName = "com.seratotools.tests.\(UUID().uuidString)"
-    let defaults = UserDefaults(suiteName: suiteName)!
+    let defaults = TestDefaults.inMemory()
     let node = CrateNode(pathComponents: ["Recorded"])
 
     let first = HiddenCrateStore(userDefaults: defaults)

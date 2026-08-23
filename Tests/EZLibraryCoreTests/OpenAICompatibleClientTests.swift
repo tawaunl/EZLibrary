@@ -13,8 +13,7 @@ import Testing
 @testable import EZLibraryCore
 
 private func makeDefaults() -> (UserDefaults, String) {
-    let suite = "OpenAICompatTests-\(UUID().uuidString)"
-    return (UserDefaults(suiteName: suite)!, suite)
+    (TestDefaults.inMemory(), "")
 }
 
 @Test func baseURLsAreNormalisedIntoACompletionsEndpoint() throws {
@@ -46,8 +45,7 @@ private func makeDefaults() -> (UserDefaults, String) {
 @Test func aLocalEndpointNeedsNoAPIKey() {
     // Ollama and LM Studio take no credential; demanding one would make the
     // free local path impossible to configure.
-    let (defaults, suite) = makeDefaults()
-    defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+    let (defaults, _) = makeDefaults()
 
     defaults.set("http://localhost:11434/v1", forKey: OpenAICompatibleClient.baseURLDefaultsKey)
     defaults.set("llama3.1", forKey: OpenAICompatibleClient.modelDefaultsKey)
@@ -58,8 +56,7 @@ private func makeDefaults() -> (UserDefaults, String) {
 }
 
 @Test func aRemoteEndpointWithoutAKeyIsNotConfigured() {
-    let (defaults, suite) = makeDefaults()
-    defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+    let (defaults, _) = makeDefaults()
 
     defaults.set("https://api.openai.com/v1", forKey: OpenAICompatibleClient.baseURLDefaultsKey)
     defaults.set("gpt-5", forKey: OpenAICompatibleClient.modelDefaultsKey)
@@ -68,8 +65,7 @@ private func makeDefaults() -> (UserDefaults, String) {
 }
 
 @Test func aMissingModelNameMeansNotConfigured() {
-    let (defaults, suite) = makeDefaults()
-    defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+    let (defaults, _) = makeDefaults()
 
     defaults.set("https://api.openai.com/v1", forKey: OpenAICompatibleClient.baseURLDefaultsKey)
     defaults.set("sk-test", forKey: OpenAICompatibleClient.apiKeyDefaultsKey)
@@ -78,8 +74,7 @@ private func makeDefaults() -> (UserDefaults, String) {
 }
 
 @Test func theEnvironmentSuppliesTheKeyWhenNoneIsSaved() {
-    let (defaults, suite) = makeDefaults()
-    defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+    let (defaults, _) = makeDefaults()
 
     defaults.set("https://api.openai.com/v1", forKey: OpenAICompatibleClient.baseURLDefaultsKey)
     defaults.set("gpt-5", forKey: OpenAICompatibleClient.modelDefaultsKey)

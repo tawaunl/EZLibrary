@@ -234,9 +234,7 @@ private let fullVerdictJSON = """
 }
 
 @Test func aMissingAPIKeyAbortsTheRunWithOneClearMessage() async {
-    let suite = "AIVerifyNoKey-\(UUID().uuidString)"
-    let defaults = UserDefaults(suiteName: suite)!
-    defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+    let defaults = TestDefaults.inMemory()
 
     // Only exercised when the environment has no key either; skip rather than
     // fail on a machine that exports one.

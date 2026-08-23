@@ -43,22 +43,33 @@ public enum LegacyDefaultsMigration {
     @discardableResult
     public static func migrateIfNeeded(
         from domains: [String] = legacyDomainNames,
-        into defaults: UserDefaults = .standard
+        into defaults: UserDefaults = .standard,
+        contentsOfDomain: ((String) -> [String: Any]?)? = nil
     ) -> [String] {
         guard !defaults.bool(forKey: completionMarker) else { return [] }
         defer { defaults.set(true, forKey: completionMarker) }
-        return migrate(from: domains, into: defaults)
+        return migrate(from: domains, into: defaults, contentsOfDomain: contentsOfDomain)
     }
 
     /// The copy itself, without the run-once guard.
+    ///
+    /// - Parameter contentsOfDomain: How a legacy domain is read. Injectable so
+    ///   tests can supply fixtures instead of creating real preference domains:
+    ///   a named domain is a file in `~/Library/Preferences` that survives
+    ///   `removePersistentDomain`, and the daemon can rewrite it after
+    ///   deletion, so tests that touch one cannot reliably clean up after
+    ///   themselves.
     @discardableResult
     public static func migrate(
         from domains: [String] = legacyDomainNames,
-        into defaults: UserDefaults = .standard
+        into defaults: UserDefaults = .standard,
+        contentsOfDomain: ((String) -> [String: Any]?)? = nil
     ) -> [String] {
+        let readDomain = contentsOfDomain ?? { defaults.persistentDomain(forName: $0) }
+
         var adopted: [String] = []
         for domain in domains {
-            guard let contents = defaults.persistentDomain(forName: domain) else { continue }
+            guard let contents = readDomain(domain) else { continue }
 
             for (key, value) in contents where key.hasPrefix(keyPrefix) {
                 // An earlier legacy domain wins over a later one, and anything

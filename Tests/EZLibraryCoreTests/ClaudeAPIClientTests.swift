@@ -136,12 +136,7 @@ private func body(
 }
 
 @Test func apiKeyPrefersSavedValueThenEnvironment() {
-    // Named suites are written to ~/Library/Preferences, so the domain is
-    // removed rather than just the key — otherwise every run leaves a plist
-    // behind forever.
-    let suite = "ClaudeAPIClientTests-\(UUID().uuidString)"
-    let defaults = UserDefaults(suiteName: suite)!
-    defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+    let defaults = TestDefaults.inMemory()
 
     #expect(ClaudeAPIClient.apiKey(environment: [:], userDefaults: defaults) == nil)
 
@@ -153,9 +148,7 @@ private func body(
 }
 
 @Test func selectedModelFallsBackToOpusForUnknownValues() {
-    let suite = "ClaudeModelTests-\(UUID().uuidString)"
-    let defaults = UserDefaults(suiteName: suite)!
-    defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+    let defaults = TestDefaults.inMemory()
 
     #expect(ClaudeAPIClient.selectedModel(userDefaults: defaults) == .opus5)
     defaults.set("claude-haiku-4-5", forKey: ClaudeAPIClient.modelDefaultsKey)

@@ -387,8 +387,13 @@ Relatedly, the engine fallback is no longer silent: when the chosen tier cannot
 run, the run says which tier it wanted, why it could not, and what it used
 instead, rather than quietly producing free-tier results that look like paid ones.
 
-> **Note for anyone running the tests:** `UserDefaults(suiteName:)` searches the
-> process's application domain as well as the suite, and under `swift test` that
-> resolves to a real domain. Tests touching defaults should use fixture key names
-> and read `persistentDomain(forName:)` explicitly, or they will pick up — and
-> can overwrite — the machine's actual saved settings.
+> **Note for anyone writing tests that touch defaults:** use
+> `TestDefaults.inMemory()`, never `UserDefaults(suiteName:)`. A named suite is a
+> real file in `~/Library/Preferences` that survives `removePersistentDomain`
+> (which empties the domain but leaves the file), and the preferences daemon can
+> rewrite it after deletion — so such a test cannot reliably clean up after
+> itself. It also searches the process's application domain, which under
+> `swift test` resolves to a real domain, so it can read and overwrite the
+> machine's actual saved settings. Code that genuinely exercises
+> `persistentDomain(forName:)` should take an injectable reader, as
+> `LegacyDefaultsMigration.migrate(contentsOfDomain:)` does.

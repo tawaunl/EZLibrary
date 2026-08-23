@@ -14,8 +14,7 @@ import Foundation
 
 @MainActor
 private func makeIgnoreStore() -> (store: DuplicateIgnoreStore, defaults: UserDefaults) {
-    let suiteName = "com.seratotools.tests.\(UUID().uuidString)"
-    let defaults = UserDefaults(suiteName: suiteName)!
+    let defaults = TestDefaults.inMemory()
     return (DuplicateIgnoreStore(userDefaults: defaults), defaults)
 }
 
