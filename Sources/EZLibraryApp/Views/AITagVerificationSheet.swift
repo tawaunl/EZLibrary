@@ -516,6 +516,8 @@ struct AITagVerificationSheet: View {
                     )
                 }
 
+                currentTagsRow(for: result.track)
+
                 ForEach(result.proposedChanges) { change in
                     changeRow(change)
                 }
@@ -542,6 +544,39 @@ struct AITagVerificationSheet: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
         }
+    }
+
+    /// The track's five current tag values, so the reviewer can see the whole
+    /// state being judged — not only the fields a model proposed changing.
+    private func currentTagsRow(for track: Track) -> some View {
+        let pairs: [(String, String)] = [
+            ("Title", track.title),
+            ("Artist", track.artist),
+            ("Album", track.album),
+            ("Genre", track.genre),
+            ("Year", track.year.map(String.init) ?? "")
+        ]
+        return VStack(alignment: .leading, spacing: 2) {
+            Text("Current tags")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+            ForEach(pairs, id: \.0) { label, value in
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(label)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .frame(width: 44, alignment: .leading)
+                    Text(value.isEmpty ? "(empty)" : value)
+                        .font(.caption2)
+                        .foregroundStyle(value.isEmpty ? .tertiary : .secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(6)
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
     }
 
     private func changeRow(_ change: AITagVerificationService.FieldVerification) -> some View {

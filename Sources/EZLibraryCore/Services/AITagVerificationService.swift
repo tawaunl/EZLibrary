@@ -639,7 +639,12 @@ public enum AITagVerificationService {
                 continue
             }
 
-            let proposed = (raw["proposed_value"] as? String) ?? ""
+            let rawProposed = (raw["proposed_value"] as? String) ?? ""
+            // The artist belongs in the artist tag, so keep it out of the title
+            // whatever the model returned.
+            let proposed = field == .title
+                ? OnlineTrackMetadataLookupService.titleWithoutArtist(rawProposed, artist: track.artist)
+                : rawProposed
             let sourceText = (raw["source_url"] as? String) ?? ""
             verifications.append(FieldVerification(
                 field: field,

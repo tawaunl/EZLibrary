@@ -55,6 +55,17 @@ private let fullVerdictJSON = """
 }
 """
 
+@Test func aParsedTitleNeverCarriesTheArtist() throws {
+    // Whatever the model returns, the artist must not end up in the title.
+    let json = """
+    {"identity_confidence":0.9,"identity_summary":"x","fields":[
+      {"field":"title","verdict":"incorrect","proposed_value":"Justice - Neverender","confidence":0.9,"evidence":"","source_url":""}
+    ]}
+    """
+    let result = try verification(from: json)
+    #expect(result.fields.first { $0.field == .title }?.proposedValue == "Neverender")
+}
+
 @Test func verdictsAreParsedWithSourcesAndConfidence() throws {
     let result = try verification(from: fullVerdictJSON)
 

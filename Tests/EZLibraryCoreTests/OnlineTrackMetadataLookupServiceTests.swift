@@ -60,6 +60,24 @@ import Testing
     )
 }
 
+@Test func titleWithoutArtistStripsALeadingOrTrailingArtist() {
+    #expect(OnlineTrackMetadataLookupService.titleWithoutArtist("Justice - D.A.N.C.E.", artist: "Justice") == "D.A.N.C.E.")
+    #expect(OnlineTrackMetadataLookupService.titleWithoutArtist("Justice: D.A.N.C.E.", artist: "Justice") == "D.A.N.C.E.")
+    // Case-insensitive.
+    #expect(OnlineTrackMetadataLookupService.titleWithoutArtist("justice - Song", artist: "Justice") == "Song")
+    // Trailing "Song - Artist".
+    #expect(OnlineTrackMetadataLookupService.titleWithoutArtist("Sail - AWOLNATION", artist: "AWOLNATION") == "Sail")
+}
+
+@Test func titleWithoutArtistLeavesGenuineTitlesAlone() {
+    // No separator after the artist word: this is the song's real name.
+    #expect(OnlineTrackMetadataLookupService.titleWithoutArtist("Justice For All", artist: "Justice") == "Justice For All")
+    // The trailing part is a descriptor, not the artist.
+    #expect(OnlineTrackMetadataLookupService.titleWithoutArtist("Sail - Extended Mix", artist: "AWOLNATION") == "Sail - Extended Mix")
+    // Empty artist changes nothing.
+    #expect(OnlineTrackMetadataLookupService.titleWithoutArtist("Justice - Song", artist: "") == "Justice - Song")
+}
+
 // MARK: - Wikipedia and YouTube
 
 @Test func wikipediaSummaryYieldsOriginalAlbumAndYear() {

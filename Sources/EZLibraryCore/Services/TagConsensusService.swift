@@ -492,9 +492,12 @@ public enum TagConsensusService {
         // The proposal is built from the winning value, then re-dressed with
         // any DJ descriptor the current title carries — the databases return
         // the plain song title and dropping "(Extended Mix)" would be a
-        // regression disguised as a correction.
+        // regression disguised as a correction. The artist is stripped back out
+        // for the same reason: it belongs in the artist tag, not the title.
         let proposal = field == .title
-            ? OnlineTrackMetadataLookupService.titlePreservingDescriptors(from: winner.value, original: track.title)
+            ? OnlineTrackMetadataLookupService.titlePreservingDescriptors(
+                from: OnlineTrackMetadataLookupService.titleWithoutArtist(winner.value, artist: track.artist),
+                original: track.title)
             : winner.value
 
         if TagIntegrityAudit.normalize(proposal) == TagIntegrityAudit.normalize(currentValue),

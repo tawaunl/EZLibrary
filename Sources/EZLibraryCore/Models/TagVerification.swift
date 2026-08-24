@@ -188,8 +188,11 @@ public struct TrackTagVerification: Sendable, Identifiable {
                 // the version. Re-attaching here means no engine — present or
                 // future — can lose one, whatever its prompt or its scoring
                 // says.
+                //
+                // The same choke point strips the artist back out: the artist
+                // has its own tag and does not belong in the title.
                 update.title = OnlineTrackMetadataLookupService.titlePreservingDescriptors(
-                    from: value,
+                    from: OnlineTrackMetadataLookupService.titleWithoutArtist(value, artist: track.artist),
                     original: track.title
                 )
             case .artist:

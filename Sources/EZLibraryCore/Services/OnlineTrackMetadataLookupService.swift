@@ -724,6 +724,38 @@ public enum OnlineTrackMetadataLookupService {
         return result
     }
 
+    /// Returns `title` with the artist stripped when it is written the messy
+    /// "Artist - Song" (or "Song - Artist") way. Only an exact leading or
+    /// trailing artist match against a real separator is removed, so a song
+    /// genuinely called "Justice For All", or "Sail" by AWOLNATION tagged
+    /// "Sail - Extended Mix", is left alone. The artist belongs in the artist
+    /// tag, never the title.
+    public static func titleWithoutArtist(_ title: String, artist: String) -> String {
+        let artistName = artist.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !artistName.isEmpty, !trimmed.isEmpty else { return title }
+
+        let separators = [" - ", " \u{2013} ", " \u{2014} ", " -- ", ": "]
+        let lowerTitle = trimmed.lowercased()
+
+        for separator in separators {
+            let prefix = (artistName + separator).lowercased()
+            if lowerTitle.hasPrefix(prefix) {
+                let stripped = String(trimmed.dropFirst(prefix.count))
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                return stripped.isEmpty ? title : stripped
+            }
+            let suffix = (separator + artistName).lowercased()
+            if lowerTitle.hasSuffix(suffix) {
+                let stripped = String(trimmed.dropLast(suffix.count))
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                return stripped.isEmpty ? title : stripped
+            }
+        }
+
+        return title
+    }
+
     /// Returns the `(…)` and `[…]` groups from a title, in order, with brackets.
     private static func bracketedGroups(in title: String) -> [String] {
         let pattern = #"[\(\[][^\(\)\[\]]*[\)\]]"#

@@ -129,25 +129,28 @@ public enum OnDeviceTagVerificationService {
             guard !candidates.isEmpty else {
                 return "No database returned a match for that search."
             }
-
-            // Compact lines rather than JSON: this text goes straight into a
-            // small model's context, where every token spent on punctuation is
-            // a token not spent on the actual evidence.
-            return candidates.prefix(12).map { candidate in
-                var parts = ["[\(candidate.source.displayName)]"]
-                let artist = candidate.artist.isEmpty ? "?" : candidate.artist
-                let title = candidate.title.isEmpty ? "?" : candidate.title
-                parts.append("\(artist) - \(title)")
-                if !candidate.album.isEmpty { parts.append("album: \(candidate.album)") }
-                if !candidate.genre.isEmpty { parts.append("genre: \(candidate.genre)") }
-                if let year = candidate.year { parts.append("year: \(year)") }
-                if let duration = candidate.durationSeconds, duration > 0 {
-                    parts.append("length: \(Int(duration) / 60)m\(Int(duration) % 60)s")
-                }
-                return parts.joined(separator: " | ")
-            }
-            .joined(separator: "\n")
+            return OnDeviceTagVerificationService.formattedCandidates(candidates)
         }
+    }
+
+    /// Compact one-line-per-candidate text. It goes straight into a small
+    /// model's context, where every token spent on punctuation is a token not
+    /// spent on the evidence.
+    static func formattedCandidates(_ candidates: [OnlineTrackMetadataCandidate], limit: Int = 12) -> String {
+        candidates.prefix(limit).map { candidate in
+            var parts = ["[\(candidate.source.displayName)]"]
+            let artist = candidate.artist.isEmpty ? "?" : candidate.artist
+            let title = candidate.title.isEmpty ? "?" : candidate.title
+            parts.append("\(artist) - \(title)")
+            if !candidate.album.isEmpty { parts.append("album: \(candidate.album)") }
+            if !candidate.genre.isEmpty { parts.append("genre: \(candidate.genre)") }
+            if let year = candidate.year { parts.append("year: \(year)") }
+            if let duration = candidate.durationSeconds, duration > 0 {
+                parts.append("length: \(Int(duration) / 60)m\(Int(duration) % 60)s")
+            }
+            return parts.joined(separator: " | ")
+        }
+        .joined(separator: "\n")
     }
 
     // MARK: - Guided output
@@ -283,15 +286,28 @@ public enum OnDeviceTagVerificationService {
             throw unavailable
         }
 
-        // Read once: the file's own ID3 tags are both what the model searches
-        // with and what it judges, the same rule the consensus and cloud
-        // engines follow. The library row can be stale.
+        // Read once: the file's own ID3 tags are both what the search uses and
+        // what the model judges, the same rule the consensus and cloud engines
+        // follow. The library row can be stale.
         let fileTags = await AudioFileTagReader.readTags(from: track.fileURL)
+
+        // Pre-fetch the database candidates the app would search for anyway and
+        // hand them to the model, rather than trusting a small model to search
+        // well. The tool stays registered for a follow-up search when none of
+        // the pre-fetched candidates fit.
+        let candidates = (try? await OnlineTrackMetadataLookupService.lookup(
+            query: TagConsensusService.searchQuery(for: track, fileTags: fileTags),
+            sourceSelection: sourceSelection,
+            maxResultsPerSource: 5,
+            session: session,
+            deduplicate: false
+        )) ?? []
+
         let tool = MusicDatabaseSearchTool(session: session, sourceSelection: sourceSelection)
         let modelSession = LanguageModelSession(tools: [tool], instructions: instructions)
 
         let response = try await modelSession.respond(
-            to: prompt(for: track, fileTags: fileTags),
+            to: prompt(for: track, fileTags: fileTags, candidates: candidates),
             generating: TrackVerdict.self
         )
 
@@ -299,11 +315,18 @@ public enum OnDeviceTagVerificationService {
     }
 
     static let instructions = """
-    You check whether a DJ's music file has the right tags.
+    You check whether a DJ's music file has the right tags. Work in this order:
 
-    You do not know anything about releases from memory, and you must never guess one. \
-    Every fact you use comes from the search_music_databases tool. Call it before judging \
-    any field.
+    1. Read the database results provided below the tags. They were already searched for you. \
+    Only if none of them is this recording — or none were found — call search_music_databases, \
+    with just the title, then the artist and the most distinctive word of the title.
+    2. Pick the matching version. Among the results, choose the one whose length is closest to \
+    the file's. A result minutes longer or shorter is a different version, and its album and \
+    year do not apply to this file.
+    3. Judge each of the five fields against that matched result.
+
+    You know nothing about releases from memory and must never guess one. Every value you \
+    propose has to come from a search result you actually saw.
 
     Rules:
     - Keep version wording. "Extended Mix", "Radio Edit", "Dirty", "Clean", "Acapella" and \
@@ -321,8 +344,6 @@ public enum OnDeviceTagVerificationService {
     the year of the remix. In electronic music a remix is its own release, so use its own year.
     - The year is often missing from the ID3 tag but present in the file name or the library. If \
     no database returns a year, propose the possible year shown rather than leaving it blank.
-    - Length matters. If the file is minutes longer than a database result, it is a \
-    different version and that result's album and year do not apply to it.
     - Mark a field "incorrect" only when a database clearly contradicts it. Say which \
     database in the evidence.
     - Mark a field "unverified" when the databases disagree, return nothing, or do not \
@@ -335,7 +356,11 @@ public enum OnDeviceTagVerificationService {
     - Leave proposedValue as an empty string unless the verdict is "incorrect".
     """
 
-    static func prompt(for track: Track, fileTags: AudioFileTagReader.Tags) -> String {
+    static func prompt(
+        for track: Track,
+        fileTags: AudioFileTagReader.Tags,
+        candidates: [OnlineTrackMetadataCandidate] = []
+    ) -> String {
         // Prefer the file's own ID3 tag over the library's stored copy for
         // every field, so the model searches and judges from the file, not the
         // file name — which is shown only as a last-resort hint.
@@ -366,7 +391,14 @@ public enum OnDeviceTagVerificationService {
         }
 
         lines.append("")
-        lines.append("Search the databases for this song using the tags above, then give a verdict for each of the five fields.")
+        if candidates.isEmpty {
+            lines.append("No database results were found for these tags. Call search_music_databases with a simpler query, or mark fields unverified.")
+        } else {
+            lines.append("Database results already found for this file (judge against these; only call search_music_databases if none of them is this recording):")
+            lines.append(formattedCandidates(candidates))
+        }
+        lines.append("")
+        lines.append("Give a verdict for each of the five fields.")
         return lines.joined(separator: "\n")
     }
 
@@ -490,20 +522,10 @@ public enum OnDeviceTagVerificationService {
         return value.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// Removes a leading "Artist - " from a proposed title.
+    /// Removes the artist from a proposed title. Shared with the other engines
+    /// and the write path so the rule holds everywhere.
     static func strippingArtistPrefix(from title: String, artist: String) -> String {
-        let artistName = artist.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !artistName.isEmpty else { return title }
-
-        for separator in [" - ", " – ", " — ", ": "] {
-            let prefix = artistName + separator
-            if title.lowercased().hasPrefix(prefix.lowercased()) {
-                let stripped = String(title.dropFirst(prefix.count))
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                return stripped.isEmpty ? title : stripped
-            }
-        }
-        return title
+        OnlineTrackMetadataLookupService.titleWithoutArtist(title, artist: artist)
     }
 
     static func mapped(_ kind: VerdictKind) -> TagVerdict {

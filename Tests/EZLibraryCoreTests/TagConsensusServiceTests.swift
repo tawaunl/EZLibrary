@@ -233,6 +233,22 @@ private func field(
     #expect(title?.proposedValue == "Neverender (Extended Mix)")
 }
 
+@Test func aProposedTitleNeverCarriesTheArtist() {
+    // Even when the sources return "Artist - Title", the consensus proposal
+    // puts only the song name in the title field.
+    let result = TagConsensusService.consensus(
+        for: track(title: "Wrong Title", artist: "Justice"),
+        fingerprintMatches: [],
+        candidates: [
+            candidate(.itunes, title: "Justice - D.A.N.C.E.", artist: "Justice"),
+            candidate(.deezer, title: "Justice - D.A.N.C.E.", artist: "Justice")
+        ]
+    )
+    let title = field(result, .title)
+    #expect(title?.verdict == .incorrect)
+    #expect(title?.proposedValue == "D.A.N.C.E.")
+}
+
 // MARK: - Fingerprint weighting
 
 @Test func aFingerprintCountsAsASourceAndRaisesConfidence() {
@@ -496,6 +512,22 @@ private func field(
     ]
     OnDeviceTagVerificationService.fillEmptyYearFromFallback(&fields, track: subject)
     #expect(fields.first { $0.field == .year }?.proposedValue == "2018")
+}
+
+@available(macOS 26.0, *)
+@Test func onDeviceFormatsPrefetchedCandidatesCompactly() {
+    let line = OnDeviceTagVerificationService.formattedCandidates([
+        OnlineTrackMetadataCandidate(
+            source: .itunes, title: "D.A.N.C.E.", artist: "Justice",
+            album: "Cross", genre: "Dance", year: 2007, bpm: nil, durationSeconds: 242
+        )
+    ])
+    #expect(line.contains("[iTunes]"))
+    #expect(line.contains("Justice - D.A.N.C.E."))
+    #expect(line.contains("album: Cross"))
+    #expect(line.contains("genre: Dance"))
+    #expect(line.contains("year: 2007"))
+    #expect(line.contains("length: 4m2s"))
 }
 #endif
 
