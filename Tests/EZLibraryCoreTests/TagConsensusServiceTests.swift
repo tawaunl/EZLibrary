@@ -436,6 +436,57 @@ private func field(
             > TagConsensusService.priority(ofSource: "Wikipedia"))
 }
 
+// MARK: - Completing empty fields an AI engine left blank
+
+@Test func completingEmptyFieldsFillsABlankFromTheCandidates() {
+    // A cautious engine returned an identity but left the empty genre
+    // "unverified", even though the candidates it saw carry one.
+    let subject = track(genre: "")
+    let base = TrackTagVerification(
+        track: subject, engineName: "Test", identityConfidence: 0.9,
+        identitySummary: "x", fields: []
+    )
+    let completed = TagVerificationCoordinator.completingEmptyFields(
+        in: base,
+        candidates: [candidate(.itunes, genre: "House"), candidate(.deezer, genre: "House")]
+    )
+    let genre = completed.fields.first { $0.field == .genre }
+    #expect(genre?.verdict == .incorrect)
+    #expect(genre?.proposedValue == "House")
+    #expect((genre?.confidence ?? 0) >= 0.5)
+    #expect(genre?.evidence.contains("cross-source") == true)
+}
+
+@Test func completingEmptyFieldsLeavesPopulatedFieldsAlone() {
+    let subject = track(genre: "Techno")
+    let base = TrackTagVerification(
+        track: subject, engineName: "Test", identityConfidence: 0.9,
+        identitySummary: "x", fields: []
+    )
+    let completed = TagVerificationCoordinator.completingEmptyFields(
+        in: base,
+        candidates: [candidate(.itunes, genre: "House"), candidate(.deezer, genre: "House")]
+    )
+    #expect(completed.proposedChanges.contains { $0.field == .genre } == false)
+}
+
+@Test func completingEmptyFieldsDoesNotOverrideAnEngineProposal() {
+    let subject = track(genre: "")
+    let engineGenre = TagFieldVerification(
+        field: .genre, verdict: .incorrect, currentValue: "",
+        proposedValue: "Techno", confidence: 0.9, evidence: "Model"
+    )
+    let base = TrackTagVerification(
+        track: subject, engineName: "Test", identityConfidence: 0.9,
+        identitySummary: "x", fields: [engineGenre]
+    )
+    let completed = TagVerificationCoordinator.completingEmptyFields(
+        in: base,
+        candidates: [candidate(.itunes, genre: "House"), candidate(.deezer, genre: "House")]
+    )
+    #expect(completed.fields.first { $0.field == .genre }?.proposedValue == "Techno")
+}
+
 // MARK: - On-device proposal sanitising
 //
 // These guard the repairs applied to a small model's output. They live here

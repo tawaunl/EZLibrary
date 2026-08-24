@@ -286,7 +286,7 @@ public enum AITagVerificationService {
         apiKey: String? = nil,
         session: URLSession = ClaudeAPIClient.defaultSession
     ) async throws -> TrackVerification {
-        let evidence = await gatherEvidence(for: track, options: options)
+        let (evidence, candidates) = await gatherEvidence(for: track, options: options)
 
         switch options.provider {
         case .anthropic:
@@ -302,20 +302,23 @@ public enum AITagVerificationService {
             )
 
             let response = try await ClaudeAPIClient.send(request, apiKey: apiKey, session: session)
-            return try parse(
-                text: response.text,
-                for: track,
-                provenance: Provenance(
-                    engineLabel: response.droppedResponseSchema
-                        ? "\(engineName) (\(options.model.displayName), no schema)"
-                        : "\(engineName) (\(options.model.displayName))",
-                    sourceURLs: response.sourceURLs.compactMap(URL.init(string:)),
-                    webSearchCount: response.webSearchCount,
-                    usage: TagVerificationUsage(
-                        inputTokens: response.usage.inputTokens,
-                        outputTokens: response.usage.outputTokens
+            return try TagVerificationCoordinator.completingEmptyFields(
+                in: parse(
+                    text: response.text,
+                    for: track,
+                    provenance: Provenance(
+                        engineLabel: response.droppedResponseSchema
+                            ? "\(engineName) (\(options.model.displayName), no schema)"
+                            : "\(engineName) (\(options.model.displayName))",
+                        sourceURLs: response.sourceURLs.compactMap(URL.init(string:)),
+                        webSearchCount: response.webSearchCount,
+                        usage: TagVerificationUsage(
+                            inputTokens: response.usage.inputTokens,
+                            outputTokens: response.usage.outputTokens
+                        )
                     )
-                )
+                ),
+                candidates: candidates
             )
 
         case .openAICompatible:
@@ -328,10 +331,13 @@ public enum AITagVerificationService {
                 configuration: configuration,
                 session: session
             )
-            return try parse(
-                text: response.text,
-                for: track,
-                provenance: Provenance(engineLabel: configuration.model, usage: response.usage)
+            return try TagVerificationCoordinator.completingEmptyFields(
+                in: parse(
+                    text: response.text,
+                    for: track,
+                    provenance: Provenance(engineLabel: configuration.model, usage: response.usage)
+                ),
+                candidates: candidates
             )
         }
     }
@@ -343,8 +349,9 @@ public enum AITagVerificationService {
     /// Every outside source here is best-effort: a throttled iTunes or a
     /// missing `fpcalc` weakens the evidence but must not fail the run, because
     /// web search can still answer the question on its own.
-    static func gatherEvidence(for track: Track, options: Options) async -> String {
+    static func gatherEvidence(for track: Track, options: Options) async -> (text: String, candidates: [OnlineTrackMetadataCandidate]) {
         var lines: [String] = []
+        var fetchedCandidates: [OnlineTrackMetadataCandidate] = []
 
         // Listed last-ish and labelled as a hint: the model reproduces the shape
         // of whatever looks most like an answer, and a filename shaped
@@ -445,6 +452,7 @@ public enum AITagVerificationService {
                 maxResultsPerSource: 6,
                 deduplicate: false
             )) ?? []
+            fetchedCandidates = candidates
             if !candidates.isEmpty {
                 lines.append("")
                 lines.append("DATABASE CANDIDATES:")
@@ -464,7 +472,7 @@ public enum AITagVerificationService {
         lines.append("")
         lines.append("VERIFY THESE FIELDS: \(verifiableFields.map(\.rawValue).joined(separator: ", "))")
 
-        return lines.joined(separator: "\n")
+        return (lines.joined(separator: "\n"), fetchedCandidates)
     }
 
     private static func displayValue(_ value: String) -> String {
@@ -529,6 +537,9 @@ public enum AITagVerificationService {
     release credits them there.
     - Never invent a value. If the evidence does not settle a field, return verdict "unverified" and \
     leave proposed_value empty. An empty tag you cannot fill is "unverified", not "incorrect".
+    - Completing empty fields is a priority. For a field that is currently empty, search harder — \
+    including the web — and propose a value whenever a credible source actually has one, even at \
+    lower confidence. Only leave an empty field unverified when no source provides a value.
     - Return verdict "incorrect" only when a specific source contradicts the current value. Cite that \
     source in source_url.
     - A pure capitalization or punctuation difference is worth correcting only when the current value \

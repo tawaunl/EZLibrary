@@ -697,17 +697,25 @@ struct ContentView: View {
         crateListFilterMode = .all
     }
 
-    private func performOrConfirmQuickTrackDelete(_ action: QuickTrackDeleteAction) {
-        // Don't delete tracks a background tag job is currently writing; drop
-        // the busy ones from the selection rather than racing the job.
-        if backgroundTagJobs.anyLocked(pendingTrackDeleteSelection) {
+    /// Drops tracks a background tag job is currently writing from the pending
+    /// delete so a delete never races the job. False when nothing is left (it
+    /// sets the message only when the emptiness is because of the lock).
+    private func dropLockedTracksFromPendingDelete() -> Bool {
+        let hadLocked = backgroundTagJobs.anyLocked(pendingTrackDeleteSelection)
+        if hadLocked {
             pendingTrackDeleteSelection = backgroundTagJobs.unlockedTracks(pendingTrackDeleteSelection)
-            if pendingTrackDeleteSelection.isEmpty {
-                trackDeleteErrorMessage = "Those tracks are being updated by a background tag job. Try again once it finishes."
-                return
-            }
         }
-        guard !pendingTrackDeleteSelection.isEmpty else { return }
+        guard !pendingTrackDeleteSelection.isEmpty else {
+            if hadLocked {
+                trackDeleteErrorMessage = "Those tracks are being updated by a background tag job. Try again once it finishes."
+            }
+            return false
+        }
+        return true
+    }
+
+    private func performOrConfirmQuickTrackDelete(_ action: QuickTrackDeleteAction) {
+        guard dropLockedTracksFromPendingDelete() else { return }
         if confirmDeleteActions {
             quickTrackDeleteAction = action
             showQuickTrackDeleteConfirmation = true
@@ -727,6 +735,7 @@ struct ContentView: View {
     }
 
     private func deleteSelectedTracksFromLibrary() {
+        guard dropLockedTracksFromPendingDelete() else { return }
         do {
             let removedPaths = Set(pendingTrackDeleteSelection.map(\.seratoStoredPath))
             try removeTracksFromLibraryMetadata(paths: removedPaths)
@@ -738,6 +747,7 @@ struct ContentView: View {
     }
 
     private func deleteSelectedTracksFromComputer() {
+        guard dropLockedTracksFromPendingDelete() else { return }
         do {
             for track in pendingTrackDeleteSelection {
                 guard FileManager.default.fileExists(atPath: track.fileURL.path) else { continue }
@@ -777,6 +787,7 @@ struct ContentView: View {
     }
 
     private func saveTrackMetadataEdit(track: Track, metadata: SeratoTrackMetadataUpdate) throws {
+        guard !backgroundTagJobs.isLocked(track.id) else { throw TrackBusyError() }
         let renameEnabled = SeratoFeatureFlags.isAutoRenameFromMetadataEnabled()
         try SeratoTrackMetadataEditor.update(
             track: track,
@@ -797,6 +808,14 @@ struct ContentView: View {
             Task { await libraryService.reloadTracksOnlyAsync() }
         }
         showMetadataSaveSuccess()
+    }
+
+    /// Thrown when a write is attempted on a track a background tag job is
+    /// currently writing, so the two never race on the same file.
+    private struct TrackBusyError: LocalizedError {
+        var errorDescription: String? {
+            "This track is being updated by a background tag job. Try again once it finishes."
+        }
     }
 
     private struct BulkMetadataUpdateError: LocalizedError {

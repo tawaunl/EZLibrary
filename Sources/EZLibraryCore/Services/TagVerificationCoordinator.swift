@@ -139,6 +139,70 @@ public enum TagVerificationCoordinator {
         return applicable
     }
 
+    /// Fills fields an AI engine left blank, using a deterministic cross-source
+    /// pass over the same candidates it already searched.
+    ///
+    /// Completing missing fields is a priority, and a small or cautious model
+    /// often returns "unverified" for an empty tag even when the databases it
+    /// was shown actually carry a value. This takes that value: for every field
+    /// that is currently empty and that the engine did not itself propose for,
+    /// it adopts the cross-source consensus answer (at the empty-field floor, so
+    /// it clears the bar for filling a blank but not for overwriting anything).
+    /// It never touches a populated field and never overrides the engine's own
+    /// verdict — it only fills gaps the engine left.
+    public static func completingEmptyFields(
+        in verification: TrackTagVerification,
+        candidates: [OnlineTrackMetadataCandidate]
+    ) -> TrackTagVerification {
+        guard !candidates.isEmpty else { return verification }
+
+        let track = verification.track
+        let alreadyProposed = Set(verification.proposedChanges.map(\.field))
+        let consensus = TagConsensusService.consensus(
+            for: track,
+            fingerprintMatches: [],
+            candidates: candidates
+        )
+
+        var fields = verification.fields
+        var didFill = false
+        for field in AITagVerificationService.verifiableFields {
+            let current = AITagVerificationService.currentValue(of: field, in: track)
+            guard current.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+            guard !alreadyProposed.contains(field) else { continue }
+            guard let fill = consensus.fields.first(where: { $0.field == field }),
+                  fill.isChange, !fill.proposedValue.isEmpty else { continue }
+
+            let filled = TagFieldVerification(
+                field: field,
+                verdict: .incorrect,
+                currentValue: current,
+                proposedValue: fill.proposedValue,
+                confidence: max(fill.confidence, emptyFieldConfidenceFloor),
+                evidence: "Filled from cross-source lookup — " + fill.evidence
+            )
+            if let index = fields.firstIndex(where: { $0.field == field }) {
+                fields[index] = filled
+            } else {
+                fields.append(filled)
+            }
+            didFill = true
+        }
+
+        guard didFill else { return verification }
+        return TrackTagVerification(
+            track: track,
+            engineName: verification.engineName,
+            identityConfidence: verification.identityConfidence,
+            identitySummary: verification.identitySummary,
+            fields: fields,
+            sourceURLs: verification.sourceURLs,
+            webSearchCount: verification.webSearchCount,
+            usage: verification.usage,
+            artwork: verification.artwork
+        )
+    }
+
     public static func availability(of kind: TagVerificationEngineKind) -> Availability {
         switch kind {
         case .consensus:

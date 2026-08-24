@@ -311,7 +311,10 @@ public enum OnDeviceTagVerificationService {
             generating: TrackVerdict.self
         )
 
-        return verification(from: response.content, for: track)
+        let result = verification(from: response.content, for: track)
+        // Completing empty fields is a priority: fill any the model left blank
+        // from the same candidates it was shown.
+        return TagVerificationCoordinator.completingEmptyFields(in: result, candidates: candidates)
     }
 
     static let instructions = """
@@ -351,6 +354,8 @@ public enum OnDeviceTagVerificationService {
     - Mark a field "correct" when a database agrees with what is already there.
     - A tag that is currently empty can never be "correct". Either a database gives you \
     the value, and it is "incorrect" with that value proposed, or it is "unverified".
+    - Completing an empty field is a priority. When a field is empty and any result above has a \
+    value for it, propose that value with verdict "incorrect" rather than leaving it "unverified".
     - Only cite a database that actually returned the value you relied on. If a search \
     result carried no genre, it is not evidence about the genre.
     - Leave proposedValue as an empty string unless the verdict is "incorrect".

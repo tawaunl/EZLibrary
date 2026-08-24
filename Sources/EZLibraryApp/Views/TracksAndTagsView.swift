@@ -762,9 +762,15 @@ struct TracksAndTagsView: View {
             return
         }
 
+        let editable = backgroundTagJobs.unlockedTracks(selectedTracks)
+        guard !editable.isEmpty else {
+            operationErrorMessage = "Those tracks are being updated by a background tag job. Try again once it finishes."
+            return
+        }
+
         var updates: [(Track, SeratoTrackMetadataUpdate)] = []
 
-        for track in selectedTracks {
+        for track in editable {
             var metadata = SeratoTrackMetadataUpdate(
                 title: track.title,
                 artist: track.artist,
@@ -858,11 +864,15 @@ struct TracksAndTagsView: View {
     private func prepareTagRefresh() {
         guard !selectedTracks.isEmpty else { return }
 
+        let tracksSnapshot = backgroundTagJobs.unlockedTracks(selectedTracks)
+        guard !tracksSnapshot.isEmpty else {
+            operationErrorMessage = "Those tracks are being updated by a background tag job. Try again once it finishes."
+            return
+        }
+
         bulkLookupMessage = nil
         operationErrorMessage = nil
         isBulkLookupRunning = true
-
-        let tracksSnapshot = selectedTracks
 
         Task {
             let plan = await LibraryTagRefreshService.plan(for: tracksSnapshot)

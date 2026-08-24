@@ -219,7 +219,7 @@ private let fullVerdictJSON = """
     options.useFingerprint = false
     options.useOnlineCandidates = false
 
-    let evidence = await AITagVerificationService.gatherEvidence(for: sampleTrack(), options: options)
+    let evidence = await AITagVerificationService.gatherEvidence(for: sampleTrack(), options: options).text
 
     // The file name is present but explicitly demoted: a small model copies
     // whatever looks most like an answer, and "Artist - Title.mp3" looks

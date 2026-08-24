@@ -22,6 +22,22 @@ version (`CFBundleShortVersionString.CFBundleVersion`) and are used verbatim by
   [Releases page](https://github.com/tawaunl/EZLibrary/releases/latest). Automatic updates
   work from 1.0.4 onward.
 
+### Tag searches keep running when you leave Tracks &amp; Tags
+- A bulk tag verification or "fill missing tags" job used to stop the moment you clicked
+  away to another section. These jobs now run in the background and keep going while you
+  browse crates, download tracks or play music, with a banner showing progress and a Stop
+  button from anywhere in the app.
+- The tracks a job is working on are locked while it runs. Editing, deleting, renaming,
+  re-reading or bulk-filling those tracks is refused with a clear message until the job
+  finishes — so a background write and a manual edit can never fight over the same file.
+  Everything else in your library stays fully editable.
+
+### Verification fills in more missing fields
+- When a field is blank, both the on-device and cloud engines now propose a value whenever
+  any source has one, instead of leaving it unverified. Completing empty tags is treated as
+  the top priority, while fields you already have are still only changed when the evidence is
+  strong.
+
 ## 1.0.3
 
 ### Wikipedia added as a metadata source
