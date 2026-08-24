@@ -100,9 +100,13 @@ struct TracksAndTagsView: View {
     @State private var showWhitespaceCleanupConfirmation = false
     @State private var showOnlyFillEmptyPrompt = false
     @State private var showAITagVerification = false
-    /// Owned here rather than by the sheet so a verification keeps running
-    /// when the sheet is closed, and the results are still there on reopening.
-    @StateObject private var verificationRun = TagVerificationRunModel()
+    /// Owned at the app level (environment) so a verification keeps running when
+    /// this view is torn down by switching sections, not just when the sheet is
+    /// closed, and the results are still there on return.
+    @EnvironmentObject private var verificationRun: TagVerificationRunModel
+    /// App-level owner of long batch tag jobs + the lock registry, so a bulk
+    /// search survives leaving this view and its tracks stay locked.
+    @EnvironmentObject private var backgroundTagJobs: BackgroundTagJobsModel
     @State private var showVerifiedApplyPrompt = false
     @State private var verifiedProgress: (done: Int, total: Int)?
     @State private var verifiedApplyTask: Task<Void, Never>?
@@ -363,8 +367,8 @@ struct TracksAndTagsView: View {
         .onDisappear {
             derivedRecomputeTask?.cancel()
             derivedRecomputeTask = nil
-            verifiedApplyTask?.cancel()
-            verifiedApplyTask = nil
+            // The batch tag jobs are owned by backgroundTagJobs / verificationRun
+            // now, so they deliberately keep running when this view goes away.
         }
         .alert(
             "Couldn't Update Tags",
@@ -545,6 +549,12 @@ struct TracksAndTagsView: View {
                 Text("(Selected: \(selectedTracks.count))")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if backgroundTagJobs.anyLocked(selectedTracks) {
+                    Label("\(backgroundTagJobs.lockedCount(in: selectedTracks)) busy", systemImage: "lock.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .help("These tracks are being updated by a background tag job and are locked until it finishes.")
+                }
                 Spacer()
                 Button("Lookup ID3 Online") {
                     metadataLookupTrack = selectedTracks.first
@@ -890,13 +900,16 @@ struct TracksAndTagsView: View {
     }
 
     private func lookupMissingGenreAndYear() {
-        guard !selectedTracks.isEmpty else { return }
+        guard !selectedTracks.isEmpty, backgroundTagJobs.canStart else { return }
+
+        let tracksSnapshot = backgroundTagJobs.unlockedTracks(selectedTracks)
+        guard !tracksSnapshot.isEmpty else { return }
 
         bulkLookupMessage = nil
         operationErrorMessage = nil
         isBulkLookupRunning = true
+        backgroundTagJobs.begin(label: "Filling genre and year", lock: tracksSnapshot)
 
-        let tracksSnapshot = selectedTracks
         let lookupItems: [(key: String, track: Track, query: OnlineTrackMetadataLookupService.Query)] = tracksSnapshot.compactMap { track in
             let needsGenre = track.genre.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             let needsYear = track.year == nil
@@ -913,7 +926,7 @@ struct TracksAndTagsView: View {
             )
         }
 
-        Task.detached(priority: .userInitiated) {
+        let task = Task.detached(priority: .userInitiated) {
             do {
                 let lookupOutcome = try await Self.fetchBulkLookupCandidates(
                     for: lookupItems.map { ($0.key, $0.query) }
@@ -971,15 +984,19 @@ struct TracksAndTagsView: View {
                     let summary = updatedCount > 0
                         ? "Updated genre/year for \(updatedCount) track\(updatedCount == 1 ? "" : "s")."
                         : "No missing genre/year values were filled."
-                    bulkLookupMessage = summary + (lookupOutcome.failureNote ?? "")
+                    let full = summary + (lookupOutcome.failureNote ?? "")
+                    bulkLookupMessage = full
+                    backgroundTagJobs.finish(message: full)
                 }
             } catch {
                 await MainActor.run {
                     isBulkLookupRunning = false
                     operationErrorMessage = error.localizedDescription
+                    backgroundTagJobs.finish(message: nil, error: error.localizedDescription)
                 }
             }
         }
+        backgroundTagJobs.store(task)
     }
 
     /// Verifies the selected tracks with the chosen engine and applies the
@@ -1109,12 +1126,16 @@ struct TracksAndTagsView: View {
     }
 
     private func runVerifiedBulkApply() {
+        guard backgroundTagJobs.canStart else { return }
+        let tracksSnapshot = backgroundTagJobs.unlockedTracks(selectedTracks)
+        guard !tracksSnapshot.isEmpty else { return }
+
         bulkLookupMessage = nil
         operationErrorMessage = nil
         isBulkLookupRunning = true
         verifiedProgress = nil
+        backgroundTagJobs.begin(label: "Applying verified tags", lock: tracksSnapshot)
 
-        let tracksSnapshot = selectedTracks
         let onlyFillEmptySnapshot = onlyFillEmpty
         let engine = verificationEngine
         // All five. Title is included now that every engine's title correction
@@ -1129,7 +1150,6 @@ struct TracksAndTagsView: View {
             var abortedMessage: String?
             var completed = 0
             var total = tracksSnapshot.count
-
             let events = TagVerificationCoordinator.verify(
                 tracks: tracksSnapshot,
                 using: engine,
@@ -1141,9 +1161,11 @@ struct TracksAndTagsView: View {
                 case let .started(count):
                     total = count
                     verifiedProgress = (0, count)
+                    backgroundTagJobs.report(done: 0, total: count)
                 case let .verified(verification):
                     completed += 1
                     verifiedProgress = (completed, total)
+                    backgroundTagJobs.report(done: completed, total: total)
                     let fields = TagVerificationCoordinator.autoApplicableFields(
                         in: verification,
                         engine: engine,
@@ -1156,6 +1178,7 @@ struct TracksAndTagsView: View {
                     completed += 1
                     failed += 1
                     verifiedProgress = (completed, total)
+                    backgroundTagJobs.report(done: completed, total: total)
                 case let .aborted(message):
                     abortedMessage = message
                 case .finished:
@@ -1169,6 +1192,7 @@ struct TracksAndTagsView: View {
 
             if let abortedMessage {
                 operationErrorMessage = abortedMessage
+                backgroundTagJobs.finish(message: nil, error: abortedMessage)
                 pendingTopHitUpdates = []
                 return
             }
@@ -1178,13 +1202,21 @@ struct TracksAndTagsView: View {
                 : ""
 
             if updates.isEmpty {
-                bulkLookupMessage = "Nothing was confident enough to change — the sources either "
+                let msg = "Nothing was confident enough to change — the sources either "
                     + "agreed with your tags or disagreed with each other." + failureNote
+                bulkLookupMessage = msg
+                backgroundTagJobs.finish(message: msg)
                 pendingTopHitUpdates = []
             } else {
                 pendingTopHitUpdates = updates
+                backgroundTagJobs.finish(message: nil)
                 showTopHitConfirmation = true
             }
+        }
+        // Stored on the model too so the global banner's Stop can cancel it and
+        // it survives this view being torn down.
+        if let task = verifiedApplyTask {
+            backgroundTagJobs.store(task)
         }
     }
 

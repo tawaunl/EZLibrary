@@ -54,6 +54,8 @@ struct ContentView: View {
     @EnvironmentObject private var libraryService: LibraryService
     @EnvironmentObject private var dependencyReadiness: DependencyReadinessModel
     @EnvironmentObject private var seratoRunning: SeratoRunningModel
+    @EnvironmentObject private var backgroundTagJobs: BackgroundTagJobsModel
+    @EnvironmentObject private var tagVerificationRun: TagVerificationRunModel
     @ObservedObject var crateHierarchy: CrateHierarchyViewModel
     @ObservedObject var smartCrateHierarchy: CrateHierarchyViewModel
 
@@ -137,10 +139,51 @@ struct ContentView: View {
         Set((crateHierarchy.hiddenNodes + smartCrateHierarchy.hiddenNodes).map(\.id)).count
     }
 
+    /// A tag job keeps running when the user leaves Tracks & Tags, so it needs
+    /// an indicator that follows them — with a way back to it and a way to stop.
+    @ViewBuilder
+    private var backgroundTagJobsBanner: some View {
+        if backgroundTagJobs.isRunning {
+            backgroundJobBar(text: backgroundJobText) { backgroundTagJobs.cancel() }
+        } else if tagVerificationRun.isRunning, selectedSection != .tracks {
+            // In Tracks & Tags the view shows its own verification banner, so
+            // only surface the global one from other sections.
+            backgroundJobBar(
+                text: "Verifying tags: \(tagVerificationRun.completedCount) of \(tagVerificationRun.totalCount) in the background"
+            ) { tagVerificationRun.cancel() }
+        }
+    }
+
+    private func backgroundJobBar(text: String, onStop: @escaping () -> Void) -> some View {
+        HStack(spacing: 8) {
+            ProgressView().controlSize(.small)
+            Text(text).font(.caption)
+            Spacer(minLength: 0)
+            if selectedSection != .tracks {
+                Button("Show") { selectedSection = .tracks }
+                    .controlSize(.small)
+            }
+            Button("Stop", action: onStop)
+                .controlSize(.small)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(Color.accentColor.opacity(0.12))
+    }
+
+    private var backgroundJobText: String {
+        let label = backgroundTagJobs.label.isEmpty ? "Working on tags" : backgroundTagJobs.label
+        if backgroundTagJobs.total > 0 {
+            return "\(label): \(backgroundTagJobs.done) of \(backgroundTagJobs.total)"
+        }
+        return "\(label)…"
+    }
+
     private var mainStack: some View {
         VStack(spacing: 0) {
             SeratoRunningBanner(model: seratoRunning)
             DependencyReadinessBanner(model: dependencyReadiness)
+            backgroundTagJobsBanner
             HSplitView {
                 sidebar
                 middleContent
@@ -176,6 +219,15 @@ struct ContentView: View {
             }
             .onChange(of: selectedSection) {
                 resetTransientFilters()
+            }
+            .onChange(of: tagVerificationRun.isRunning) {
+                // Lock the verification's tracks while it runs so a delete,
+                // rename, or edit elsewhere can't race it.
+                if tagVerificationRun.isRunning {
+                    backgroundTagJobs.lock(tagVerificationRun.selectionIDs)
+                } else {
+                    backgroundTagJobs.release(tagVerificationRun.selectionIDs)
+                }
             }
             .onChange(of: crateScope.crateNode?.id) {
                 if selectedSection == .crates {
@@ -646,6 +698,15 @@ struct ContentView: View {
     }
 
     private func performOrConfirmQuickTrackDelete(_ action: QuickTrackDeleteAction) {
+        // Don't delete tracks a background tag job is currently writing; drop
+        // the busy ones from the selection rather than racing the job.
+        if backgroundTagJobs.anyLocked(pendingTrackDeleteSelection) {
+            pendingTrackDeleteSelection = backgroundTagJobs.unlockedTracks(pendingTrackDeleteSelection)
+            if pendingTrackDeleteSelection.isEmpty {
+                trackDeleteErrorMessage = "Those tracks are being updated by a background tag job. Try again once it finishes."
+                return
+            }
+        }
         guard !pendingTrackDeleteSelection.isEmpty else { return }
         if confirmDeleteActions {
             quickTrackDeleteAction = action
@@ -761,6 +822,12 @@ struct ContentView: View {
     /// the user accepts, and the message spells out what will be skipped.
     private func prepareBulkRename(for tracks: [Track]) {
         guard !tracks.isEmpty else { return }
+        // Don't rename files a background tag job is writing.
+        let tracks = backgroundTagJobs.unlockedTracks(tracks)
+        guard !tracks.isEmpty else {
+            bulkRenameMessage = "Those tracks are being updated by a background tag job. Try again once it finishes."
+            return
+        }
         do {
             let preview = try TrackBulkRenameService.preview(
                 tracks: tracks,

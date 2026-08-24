@@ -67,6 +67,10 @@ struct EZLibraryApp: App {
     @StateObject private var updateChecker = UpdateCheckViewModel()
     @StateObject private var dependencyReadiness = DependencyReadinessModel()
     @StateObject private var seratoRunning = SeratoRunningModel()
+    // Owned at the app level so a bulk tag job (and the locks it holds) keeps
+    // running when the user leaves the Tracks & Tags view.
+    @StateObject private var backgroundTagJobs = BackgroundTagJobsModel()
+    @StateObject private var tagVerificationRun = TagVerificationRunModel()
     @ObservedObject private var themeController = ThemeController.shared
 
     init() {
@@ -102,6 +106,8 @@ struct EZLibraryApp: App {
                 .environmentObject(missingTracksService)
                 .environmentObject(dependencyReadiness)
                 .environmentObject(seratoRunning)
+                .environmentObject(backgroundTagJobs)
+                .environmentObject(tagVerificationRun)
                 .sheet(isPresented: $updateChecker.isPresented) {
                     UpdateCheckView(viewModel: updateChecker)
                         .textSelection(.enabled)
