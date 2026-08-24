@@ -130,10 +130,19 @@ final class UpdateCheckViewModel: ObservableObject {
             return
         }
         installPhase = .installing
-        // Give the detached updater script a moment to start waiting on our PID,
-        // then quit so the installer can replace the running app bundle.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+        // The detached updater is already waiting on this PID, so quitting is
+        // what lets it replace the running bundle. A graceful terminate can be
+        // silently cancelled while the update sheet is still up — AppKit tries
+        // to end the sheet first — which is why the update appeared to do
+        // nothing. Dismiss the sheet, ask to terminate, then force the process
+        // to exit on a background queue as a guarantee: that timer fires even if
+        // the main run loop is blocked, and a normal shutdown buys nothing here.
+        isPresented = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
             NSApp.terminate(nil)
+        }
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 1.5) {
+            exit(0)
         }
     }
 

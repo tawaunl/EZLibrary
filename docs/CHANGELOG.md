@@ -9,6 +9,19 @@ version (`CFBundleShortVersionString.CFBundleVersion`) and are used verbatim by
 > the highest priority — see [SECURITY.md](../SECURITY.md). This changelog is kept
 > up to date so you can see exactly what changed and when.
 
+## 1.0.4
+
+### Fixed: the automatic update could not quit the app to install
+- "Install &amp; Relaunch" downloaded the update, but the app did not reliably close,
+  so the bundled installer could not replace the running copy and the update appeared
+  to do nothing. The update sheet was blocking the app's own request to quit.
+- The app now dismisses the sheet and force-quits when a normal quit is blocked, so the
+  installer can complete and the app reopens on the new version.
+- Because this fixes the updater itself, a copy already on 1.0.3 or earlier has to be
+  updated by hand once — download the latest installer from the
+  [Releases page](https://github.com/tawaunl/EZLibrary/releases/latest). Automatic updates
+  work from 1.0.4 onward.
+
 ## 1.0.3
 
 ### Wikipedia added as a metadata source
