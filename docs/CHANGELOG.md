@@ -9,6 +9,49 @@ version (`CFBundleShortVersionString.CFBundleVersion`) and are used verbatim by
 > the highest priority — see [SECURITY.md](../SECURITY.md). This changelog is kept
 > up to date so you can see exactly what changed and when.
 
+## 1.0.3
+
+### Wikipedia added as a metadata source
+- Tag verification and online lookup now cross-check **Wikipedia** alongside iTunes,
+  MusicBrainz, Deezer and Discogs.
+- Wikipedia is the most reliable source for the *original* album a song first appeared
+  on — the catalog APIs routinely return the single or a later hits compilation instead.
+  The cross-source consensus now gives Wikipedia the final say on the album, so a track's
+  album is set to the record it actually came from rather than the single it was sold on.
+- Filling an empty album from Wikipedia is trusted enough to apply unattended; *overwriting*
+  an album you already have stays below the auto-apply line, so a questionable rewrite is
+  shown for review instead of written silently.
+
+### The on-device AI is more accurate
+- Apple's on-device model is now handed the database results directly instead of being
+  trusted to search for them, the same way the cloud model works. The app does the
+  searching; the model does the judging, which is what a small on-device model is actually
+  good at.
+- It now also consults MusicBrainz and Discogs, searches from the file's own ID3 tags
+  rather than the file name, and follows the same field rules as the cloud model.
+
+### The year is filled from the file name
+- When a track's year is missing from its ID3 tag but present in the file name (for example
+  `Artist - Title (2019)`) or in Serato's library, verification now fills it in instead of
+  leaving it blank.
+- A database release year still wins whenever one is found; the file-name year is only a
+  fallback, offered for review rather than written silently.
+
+### The artist is kept out of the title
+- Whatever engine proposes a title, a leading or trailing artist name ("Justice - D.A.N.C.E.",
+  "Sail - AWOLNATION") is stripped so only the song name lands in the title field. DJ version
+  markers like (Extended Mix) and (Clean) are still preserved.
+
+### See the current tags while you review
+- The verification review now shows all five current tag values — title, artist, album,
+  genre and year — for each track above the proposed changes, so you can see the whole
+  state being judged, not only the fields a source wants to change.
+
+### YouTube as an optional genre fallback
+- You can add your own YouTube Data API key in Settings to let verification infer a genre
+  from a video's title and description when the free sources come up empty. It is off unless
+  you add a key, spends only your own quota, and never runs on the default free path.
+
 ## 1.0.2
 
 ### Writes are blocked while Serato is open

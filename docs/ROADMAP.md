@@ -1,14 +1,15 @@
 # EZLibrary Feature Roadmap
 
-## Status at a glance (updated 2026-07-18)
+## Status at a glance (updated 2026-08-23)
 
 Legend: ✅ Done (shipped) · 🚧 In progress / partial · 📋 Planned · ⏸️ Tabled
 
 The app has grown well past the original MVP, and most of the originally-planned features are shipped, plus a number of features that weren't in the original 11.
 
-### In progress
+### Recently shipped (2026-08)
 
-- 🚧 **ID3 title descriptor preservation** — keep DJ markers like "(Intro)"/"(Clean)" when applying an online title match (branch `feature/id3-title-descriptors`, PR #16).
+- ✅ **Tag Verification** — cross-checks iTunes, MusicBrainz, Deezer, Discogs and **Wikipedia** and only changes a tag where the sources agree, with an optional **Apple on-device AI** tier (free, private, macOS 26) and a **cloud AI** tier (your own key). Wikipedia drives the original-album match, a missing year is backfilled from the file name, and the artist is kept out of the title while DJ version markers are preserved.
+- ✅ **ID3 title descriptor preservation** — DJ markers like "(Intro)"/"(Clean)"/"(Extended Mix)" are kept when an online title is applied.
 
 ### Planned / not started
 

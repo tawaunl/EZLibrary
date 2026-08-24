@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Audio Editor — EZLibrary</title>
-<meta name="description" content="Trim dead air, long intros and unwanted tails off a track — without re-encoding it.">
+<title>Tag Verification — EZLibrary</title>
+<meta name="description" content="Cross-check your tags against several music databases — free, or with on-device or cloud AI — and only change what the evidence backs.">
 <link rel="icon" href="../assets/img/icon.png">
-<link rel="canonical" href="https://tawaunl.github.io/EZLibrary/features/audio-editor.html">
+<link rel="canonical" href="https://tawaunl.github.io/EZLibrary/features/tag-verification.html">
 <link rel="stylesheet" href="../assets/css/site.css">
 <meta property="og:type" content="website">
-<meta property="og:title" content="Audio Editor — EZLibrary">
-<meta property="og:description" content="Trim dead air, long intros and unwanted tails off a track — without re-encoding it.">
+<meta property="og:title" content="Tag Verification — EZLibrary">
+<meta property="og:description" content="Cross-check your tags against several music databases — free, or with on-device or cloud AI — and only change what the evidence backs.">
 <meta property="og:image" content="https://tawaunl.github.io/EZLibrary/assets/img/icon.png">
 </head>
 <body>
@@ -32,9 +32,9 @@
 
 <section class="page-hero">
   <div class="wrap">
-    <p class="crumbs"><a href="../">Home</a><span>/</span><a href="../features/">Features</a><span>/</span>Audio Editor</p>
-    <h1>Audio Editor <span class="badge">Shipped</span></h1>
-    <p>Trim dead air, long intros and unwanted tails off a track — without re-encoding it.</p>
+    <p class="crumbs"><a href="../">Home</a><span>/</span><a href="../features/">Features</a><span>/</span>Tag Verification</p>
+    <h1>Tag Verification <span class="badge">Shipped</span></h1>
+    <p>Cross-check your tags against several music databases — free, or with on-device or cloud AI — and only change what the evidence backs.</p>
   </div>
 </section>
 
@@ -42,42 +42,42 @@
   <div class="wrap">
     <div class="two-col">
       <div class="prose">
-        <p>Some files are not wrong, just badly cut: eight seconds of silence at the front, a DJ drop you never wanted, a minute of crowd noise on the end. Until now that meant leaving your library for an audio editor and hoping it gave the file back intact.</p>
-        <p><strong>Edit Audio…</strong> in the Tracks &amp; Tags bar opens the selected track as a waveform. Set an in and an out point, listen to exactly what you would keep, and save — over the original, or as a second copy filed beside it.</p>
+        <p>"Apply Top Hit" trusts one source's first result, which is how a seven-minute remix ends up tagged with the three-minute single's album and year. Tag Verification asks several sources independently and only proposes a change where they agree — agreement is a far stronger signal than ranking.</p>
+        <p>It runs at three levels, all producing the same review screen: a free cross-source consensus that needs no account, Apple's on-device AI, and a cloud model you bring your own key for. You pick the trade-off; nothing is written until you review it.</p>
 
         <h2>What it does</h2>
         <ul class="ticks">
-          <li><strong>No re-encode.</strong> The cut is a stream copy, so a 320kbps MP3 stays a 320kbps MP3. Your tags and embedded cover art come through untouched.</li>
-          <li><strong>Detect Silence.</strong> Snaps the selection just inside the leading and trailing silence, so topping and tailing a rip is one click.</li>
-          <li><strong>Zoom for precision.</strong> The <code>+</code>/<code>−</code> keys, a pinch over the waveform, <strong>Fit</strong> and <strong>Zoom to Selection</strong>, with a scrubber for moving through the track while zoomed in. The waveform is sampled finely enough that zooming reveals real detail rather than stretching the same columns.</li>
-          <li><strong>Full transport.</strong> Play/pause, skip back and forward 5 seconds, jump to the start or end, and a fast-forward cycling 1× → 1.5× → 2× → 4× that scans at real speed rather than skipping.</li>
-          <li><strong>A droppable marker.</strong> Drop a marker with <code>M</code> and return to it with <code>⇧M</code> while you hunt for the right cut — separate from the playhead, and drawn separately on the waveform.</li>
-          <li><strong>Audition either side.</strong> Playing from inside the selection stops at the out point, so you hear what you'd keep. Playing from past it runs to the end of the file, so you can hear the tail before committing to losing it.</li>
-          <li><strong>Keyboard control.</strong> <code>←</code>/<code>→</code> step by 0.1s (<code>⇧</code> for 1s, <code>⌥</code> for 0.01s), <code>⌘←</code>/<code>⌘→</code> jump to the in/out points, <code>Home</code>/<code>End</code> to the track boundaries, <code>I</code>/<code>O</code> set the trim points, <code>Space</code> plays.</li>
-          <li><strong>Two ways to save.</strong> <strong>Save In Place</strong> overwrites the file and keeps a timestamped backup of the original. <strong>Save As New File</strong> writes a second copy, registers it with Serato, and files it next to the original in every plain crate that holds it.</li>
+          <li><strong>Cross-source consensus (free).</strong> Asks iTunes, MusicBrainz, Deezer, Discogs and Wikipedia independently and proposes a change only where they agree. No account, no key, works on every Mac.</li>
+          <li><strong>Wikipedia for the original album.</strong> Wikipedia is the most reliable source for the record a song <em>first</em> appeared on, where the catalog APIs return the single or a later hits compilation. It gets the final say on the album.</li>
+          <li><strong>Apple on-device AI (free, private).</strong> On macOS 26 with Apple Intelligence, the on-device model reads the same database results and judges which one matches the file. Nothing about your library leaves the Mac.</li>
+          <li><strong>Cloud AI (your own key).</strong> A cloud model that can also search the web, for the bootlegs, edits and white labels the databases do not carry. Billed to your own account.</li>
+          <li><strong>Fills a missing year from the file name.</strong> When the ID3 tag has no year but the file is named “… (2019)”, the year is offered instead of left blank — a database year still wins when one is found.</li>
+          <li><strong>Keeps the artist out of the title.</strong> “Justice - D.A.N.C.E.” becomes “D.A.N.C.E.”, while DJ version markers like (Extended Mix) and (Clean) are kept.</li>
+          <li><strong>Knows an edit from a mix.</strong> Candidates whose length cannot match the file are discarded before anything is counted, so a mix's album and year are never written onto a radio edit.</li>
+          <li><strong>You review before anything is written.</strong> Every proposal shows the current tags, the change, a confidence score and the source it came from. Applying writes to the files and Serato together, with a backup taken first.</li>
         </ul>
 
         <h2>How to use it</h2>
         <ol class="steps">
           <li>
-            <h3>Select a track</h3>
-            <p>In Tracks &amp; Tags, select one track and click <strong>Edit Audio…</strong>.</p>
+            <h3>Select tracks and an engine</h3>
+            <p>In Tracks &amp; Tags, select what you want checked and choose consensus, on-device, or cloud.</p>
           </li>
           <li>
-            <h3>Set the in and out points</h3>
-            <p>Drag the handles, or use <strong>Detect Silence</strong> and nudge from there. Zoom in for a precise cut.</p>
+            <h3>Run it</h3>
+            <p>A free offline check flags the tracks that actually look wrong first, so a paid or on-device run can be narrowed to just those.</p>
           </li>
           <li>
-            <h3>Listen to it</h3>
-            <p>Play from inside the selection to hear the keeper, and from past the out point to hear the tail you're cutting.</p>
+            <h3>Review the proposals</h3>
+            <p>Each card shows the current tags, the proposed change, a confidence and the source. Pre-checked proposals are the confident ones.</p>
           </li>
           <li>
-            <h3>Save</h3>
-            <p>Overwrite the original, or save a second copy. Serato has to be closed either way.</p>
+            <h3>Apply</h3>
+            <p>Selected changes are written to the audio files and Serato together, read-back verified, with a snapshot taken first. Serato has to be closed.</p>
           </li>
         </ol>
 
-        <div class="note"><p>Trimming shifts the whole timeline, which invalidates Serato's cue points, saved loops, beatgrid and waveform overview. EZLibrary clears them so Serato re-analyzes the track cleanly rather than showing cues in the wrong places — and it reads the file first and tells you exactly how many cues and loops you'd lose, before you save.</p></div>
+        <div class="note"><p>The cross-source consensus is free and works everywhere. The on-device tier needs macOS 26 with Apple Intelligence; the cloud tier needs your own API key and is billed to your account.</p></div>
 
         <h2>Related</h2>
         <div class="grid grid-2">
@@ -89,9 +89,9 @@
             <h3>Find Duplicates</h3>
             <p>Catch the same song saved five times, even when every copy is named differently.</p>
           </a>
-          <a class="card" href="backup.html">
-            <h3>Backup</h3>
-            <p>Timestamped snapshots of your library, sized before you commit to them.</p>
+          <a class="card" href="rename.html">
+            <h3>Rename From Tags</h3>
+            <p>Consistent filenames across your whole library — and Serato still finds every one of them.</p>
           </a>
         </div>
       </div>
@@ -99,8 +99,8 @@
         <h4>All features</h4>
         <ul>
           <li><a href="tracks-and-tags.html">Tracks &amp; Tags</a></li>
-          <li><a href="tag-verification.html">Tag Verification</a></li>
-          <li><a href="audio-editor.html" aria-current="page">Audio Editor</a></li>
+          <li><a href="tag-verification.html" aria-current="page">Tag Verification</a></li>
+          <li><a href="audio-editor.html">Audio Editor</a></li>
           <li><a href="duplicates.html">Find Duplicates</a></li>
           <li><a href="missing-tracks.html">Missing Tracks</a></li>
           <li><a href="crates.html">Crates</a></li>

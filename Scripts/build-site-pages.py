@@ -73,6 +73,7 @@ ICON = {
     "pencil": '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4 12.5-12.5z"/>',
     "terminal": '<path d="M4 17l6-5-6-5"/><path d="M12 19h8"/>',
     "waveform": '<path d="M3 12h2M8 6v12M12 3v18M16 8v8M20 11h1"/>',
+    "verify": '<path d="M12 3l7 3v6c0 4.5-3 7.6-7 9-4-1.4-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/>',
 }
 
 
@@ -98,7 +99,8 @@ FEATURES: list[Feature] = [
             ("Search, sort and scope", "Filter by text, sort by any column, and switch between your whole library and a single crate without leaving the view."),
             ("Click a stat to filter", "<em>Genre Filled 78%</em> is also a button — click it and you are looking at the other 22%. Click again to clear."),
             ("Bulk fill", "Set artist, album, genre or year across every selected track at once. <strong>Only Fill Empty</strong> protects values that are already there."),
-            ("Online lookup", "Pull correct metadata and cover art from iTunes, MusicBrainz and Discogs, with fingerprint-assisted suggestions when the tags are too sparse to search on."),
+            ("Online lookup", "Pull correct metadata and cover art from iTunes, MusicBrainz, Deezer, Discogs and Wikipedia, with fingerprint-assisted suggestions when the tags are too sparse to search on."),
+            ("Verify before you trust", "<a href=\"tag-verification.html\">Tag Verification</a> cross-checks several sources — or an on-device / cloud AI — and only proposes a change where the evidence agrees, so a bulk fill is corrections rather than guesses."),
             ("DJ-safe titles", "Version markers like (Intro), (Clean) and (Extended Mix) are preserved when an online title is applied, instead of being flattened to the radio edit."),
             ("Listen before you commit", "The built-in player has full transport controls and follows the order of the list you are looking at, filters and sort included."),
             ("Copy anything", "Every value in the app is selectable text, so you can lift an ISRC or a path straight out of the window."),
@@ -114,7 +116,46 @@ FEATURES: list[Feature] = [
         note="Serato rewrites its library from memory when it quits, so it would overwrite anything "
              "changed underneath it. EZLibrary refuses to write while Serato is running rather than "
              "let that happen.",
-        related=("audio-editor", "rename", "duplicates"),
+        related=("tag-verification", "audio-editor", "rename"),
+    ),
+    Feature(
+        slug="tag-verification",
+        name="Tag Verification",
+        nav="Tag Verification",
+        icon="verify",
+        tagline="Cross-check your tags against several music databases — free, or with on-device or cloud AI — and only change what the evidence backs.",
+        blurb="Cross-check your tags against several music databases and AI, and only change what the evidence agrees on.",
+        shot_alt="The Tag Verification review: each track shows its current tags, the proposed change, a confidence score and the source.",
+        intro=(
+            "\"Apply Top Hit\" trusts one source's first result, which is how a seven-minute "
+            "remix ends up tagged with the three-minute single's album and year. Tag "
+            "Verification asks several sources independently and only proposes a change where "
+            "they agree — agreement is a far stronger signal than ranking.",
+            "It runs at three levels, all producing the same review screen: a free "
+            "cross-source consensus that needs no account, Apple's on-device AI, and a cloud "
+            "model you bring your own key for. You pick the trade-off; nothing is written "
+            "until you review it.",
+        ),
+        does=(
+            ("Cross-source consensus (free)", "Asks iTunes, MusicBrainz, Deezer, Discogs and Wikipedia independently and proposes a change only where they agree. No account, no key, works on every Mac."),
+            ("Wikipedia for the original album", "Wikipedia is the most reliable source for the record a song <em>first</em> appeared on, where the catalog APIs return the single or a later hits compilation. It gets the final say on the album."),
+            ("Apple on-device AI (free, private)", "On macOS 26 with Apple Intelligence, the on-device model reads the same database results and judges which one matches the file. Nothing about your library leaves the Mac."),
+            ("Cloud AI (your own key)", "A cloud model that can also search the web, for the bootlegs, edits and white labels the databases do not carry. Billed to your own account."),
+            ("Fills a missing year from the file name", "When the ID3 tag has no year but the file is named “… (2019)”, the year is offered instead of left blank — a database year still wins when one is found."),
+            ("Keeps the artist out of the title", "“Justice - D.A.N.C.E.” becomes “D.A.N.C.E.”, while DJ version markers like (Extended Mix) and (Clean) are kept."),
+            ("Knows an edit from a mix", "Candidates whose length cannot match the file are discarded before anything is counted, so a mix's album and year are never written onto a radio edit."),
+            ("You review before anything is written", "Every proposal shows the current tags, the change, a confidence score and the source it came from. Applying writes to the files and Serato together, with a backup taken first."),
+        ),
+        steps=(
+            ("Select tracks and an engine", "In Tracks &amp; Tags, select what you want checked and choose consensus, on-device, or cloud."),
+            ("Run it", "A free offline check flags the tracks that actually look wrong first, so a paid or on-device run can be narrowed to just those."),
+            ("Review the proposals", "Each card shows the current tags, the proposed change, a confidence and the source. Pre-checked proposals are the confident ones."),
+            ("Apply", "Selected changes are written to the audio files and Serato together, read-back verified, with a snapshot taken first. Serato has to be closed."),
+        ),
+        note="The cross-source consensus is free and works everywhere. The on-device tier needs "
+             "macOS 26 with Apple Intelligence; the cloud tier needs your own API key and is billed "
+             "to your account.",
+        related=("tracks-and-tags", "duplicates", "rename"),
     ),
     Feature(
         slug="audio-editor",
@@ -669,7 +710,7 @@ def cta_band() -> str:
         Download for macOS
       </a>
     </div>
-        <p class="meta-line">v<span data-latest-version>1.0.2</span> · <span data-latest-size>9.1 MB</span> · macOS 13+ · Apple Silicon &amp; Intel</p>
+        <p class="meta-line">v<span data-latest-version>1.0.3</span> · <span data-latest-size>9.1 MB</span> · macOS 13+ · Apple Silicon &amp; Intel</p>
   </div>
 </section>"""
 
@@ -704,7 +745,7 @@ def features_index() -> str:
   <div class="wrap">
     <p class="crumbs"><a href="{prefix}">Home</a><span>/</span>Features</p>
     <h1>Everything EZLibrary does</h1>
-    <p>Eleven workspaces over one Serato library. Each one reads and writes the same files,
+    <p>Twelve workspaces over one Serato library. Each one reads and writes the same files,
       takes a snapshot before it changes anything, and never guesses on your behalf.</p>
   </div>
 </section>
