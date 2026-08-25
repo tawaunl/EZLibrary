@@ -36,7 +36,8 @@ private func record(_ locationID: Int64, _ portableID: String) -> SeratoMasterDa
 /// disconnected locations the test needs. Each entry is
 /// `(locationID, showWhenDisconnected, [(portableID, createFileOnDisk)])`.
 private func makeEnvironment(
-    disconnected: [(id: Int64, showWhenDisconnected: Bool, assets: [(portableID: String, present: Bool)])]
+    disconnected: [(id: Int64, showWhenDisconnected: Bool, assets: [(portableID: String, present: Bool)])],
+    connectedExtras: [String] = []
 ) throws -> Env {
     let root = FileManager.default.temporaryDirectory
         .appendingPathComponent("serato-sweeper-test-\(UUID().uuidString)", isDirectory: true)
@@ -100,6 +101,16 @@ private func makeEnvironment(
             }
         }
     }
+    // Extra files the connected location (1) also carries, for redundancy tests.
+    for portableID in connectedExtras {
+        let escaped = portableID.replacingOccurrences(of: "'", with: "''")
+        let base = (portableID as NSString).lastPathComponent.replacingOccurrences(of: "'", with: "''")
+        try database.exec("""
+            INSERT INTO asset (id, location_id, portable_id, file_name)
+                VALUES (\(nextID), 1, '\(escaped)', '\(base)');
+            """)
+        nextID += 1
+    }
     database.close()
 
     return Env(root: root, applicationSupport: applicationSupport, masterURL: masterURL)
@@ -113,7 +124,7 @@ private func makeEnvironment(
         record(5, "streaming:tidal:track:xyz")
     ]
     #expect(SeratoDeadLocationSweeper.classify(
-        assets, homeDirectory: URL(fileURLWithPath: "/nope"), fileManager: .default) == .streamingOnly)
+        assets, connectedPaths: [], homeDirectory: URL(fileURLWithPath: "/nope"), fileManager: .default) == .streamingOnly)
 }
 
 @Test func classifiesAllMissingFileLocationAsDead() {
@@ -121,7 +132,7 @@ private func makeEnvironment(
         .appendingPathComponent("sweeper-missing-\(UUID().uuidString)", isDirectory: true)
     let assets = [record(5, "Music/Gone One.mp3"), record(5, "Music/Gone Two.mp3")]
     #expect(SeratoDeadLocationSweeper.classify(
-        assets, homeDirectory: home, fileManager: .default) == .allFilesMissing)
+        assets, connectedPaths: [], homeDirectory: home, fileManager: .default) == .allFilesMissing)
 }
 
 @Test func keepsLocationWhenAnyFileStillResolves() throws {
@@ -135,19 +146,52 @@ private func makeEnvironment(
 
     let assets = [record(5, "Music/Here.mp3"), record(5, "Music/Gone.mp3")]
     #expect(SeratoDeadLocationSweeper.classify(
-        assets, homeDirectory: home, fileManager: .default) == nil)
+        assets, connectedPaths: [], homeDirectory: home, fileManager: .default) == nil)
 }
 
 @Test func keepsLocationThatNamesAnExternalVolume() {
     // Could be a drive that is merely unplugged — never auto-remove.
     let assets = [record(5, "Volumes/USB DRIVE/Music/Track.mp3")]
     #expect(SeratoDeadLocationSweeper.classify(
-        assets, homeDirectory: URL(fileURLWithPath: "/nope"), fileManager: .default) == nil)
+        assets, connectedPaths: [], homeDirectory: URL(fileURLWithPath: "/nope"), fileManager: .default) == nil)
 }
 
 @Test func classifiesEmptyLocationAsDead() {
     #expect(SeratoDeadLocationSweeper.classify(
-        [], homeDirectory: URL(fileURLWithPath: "/nope"), fileManager: .default) == .empty)
+        [], connectedPaths: [], homeDirectory: URL(fileURLWithPath: "/nope"), fileManager: .default) == .empty)
+}
+
+@Test func classifiesRedundantDuplicateLocationAsDead() throws {
+    let home = FileManager.default.temporaryDirectory
+        .appendingPathComponent("sweeper-redundant-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: home) }
+    let shared = home.appendingPathComponent("Music/Shared.mp3")
+    try FileManager.default.createDirectory(
+        at: shared.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try Data("audio".utf8).write(to: shared)
+
+    // The connected library already carries this exact file, so the only live
+    // file in the location is a duplicate -> safe to remove.
+    let connected: Set<String> = [shared.path]
+    let assets = [record(5, "Music/Shared.mp3"), record(5, "Music/Gone.mp3")]
+    #expect(SeratoDeadLocationSweeper.classify(
+        assets, connectedPaths: connected, homeDirectory: home, fileManager: .default) == .redundantDuplicate)
+}
+
+@Test func keepsLocationWithAUniqueLiveFileTheConnectedLibraryLacks() throws {
+    let home = FileManager.default.temporaryDirectory
+        .appendingPathComponent("sweeper-unique-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: home) }
+    let unique = home.appendingPathComponent("Music/OnlyHere.mp3")
+    try FileManager.default.createDirectory(
+        at: unique.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try Data("audio".utf8).write(to: unique)
+
+    // Connected library has something else, not this file.
+    let connected: Set<String> = ["/somewhere/Else.mp3"]
+    let assets = [record(5, "Music/OnlyHere.mp3")]
+    #expect(SeratoDeadLocationSweeper.classify(
+        assets, connectedPaths: connected, homeDirectory: home, fileManager: .default) == nil)
 }
 
 // MARK: - Plan
@@ -177,6 +221,25 @@ private func makeEnvironment(
     #expect(plan.dead.map(\.locationID) == [4, 5])
     #expect(plan.removableAssetCount == 4)
     #expect(plan.keptDisconnectedIDs == [6, 7])
+}
+
+@Test func planFlagsARedundantDuplicateLocation() throws {
+    let env = try makeEnvironment(
+        disconnected: [
+            (id: 8, showWhenDisconnected: false, assets: [
+                (portableID: "Music/All Music/Dup.mp3", present: true)
+            ])
+        ],
+        connectedExtras: ["Music/All Music/Dup.mp3"]   // same file lives in the connected library
+    )
+    defer { try? FileManager.default.removeItem(at: env.root) }
+
+    let plan = try SeratoDeadLocationSweeper.plan(
+        applicationSupportDirectory: env.applicationSupport, homeDirectory: env.root)
+
+    #expect(plan.dead.map(\.locationID) == [8])
+    #expect(plan.dead.first?.reason == .redundantDuplicate)
+    #expect(plan.keptDisconnectedIDs.isEmpty)
 }
 
 // MARK: - Apply

@@ -22,13 +22,16 @@ import Foundation
 ///   files, so there is no drive to come back.
 /// - **File** locations whose every asset is missing on disk *and* names no
 ///   external volume — a superseded boot-volume leftover.
+/// - **Redundant duplicate** locations whose only files still on disk are all
+///   already in the connected library — the same tracks live on, so removing
+///   the stale copy loses nothing.
 ///
-/// A location is deliberately **kept** when any of its files still resolve
-/// (it's live), when it references a `/Volumes/…` path (it could be an
-/// unplugged external drive), or when the user set Serato's "keep in library
-/// when disconnected" flag. Removal is a cascade delete (see
-/// `SeratoMasterDatabase.deleteLocations`), which is backed up first and does
-/// not fire Serato's runtime-only triggers.
+/// A location is deliberately **kept** when it holds a live file the connected
+/// library does *not* have (it's the only copy), when it references a
+/// `/Volumes/…` path (it could be an unplugged external drive), or when the
+/// user set Serato's "keep in library when disconnected" flag. Removal is a
+/// cascade delete (see `SeratoMasterDatabase.deleteLocations`), which is
+/// backed up first and does not fire Serato's runtime-only triggers.
 public enum SeratoDeadLocationSweeper {
     public struct DeadLocation: Sendable, Equatable {
         public enum Reason: String, Sendable {
@@ -38,6 +41,8 @@ public enum SeratoDeadLocationSweeper {
             case streamingOnly
             /// Every file asset is missing on disk and names no external volume.
             case allFilesMissing
+            /// Every file still on disk is already in the connected library.
+            case redundantDuplicate
         }
 
         public let locationID: Int64
@@ -99,6 +104,11 @@ public enum SeratoDeadLocationSweeper {
         var dead: [DeadLocation] = []
         var kept: [Int64] = []
 
+        // Files already in the connected library. A disconnected location
+        // whose only live files are all in here is a redundant duplicate.
+        let connectedPaths = try connectedFilePaths(
+            in: master, homeDirectory: homeDirectory)
+
         for location in try SeratoMasterDatabase.disconnectedLocations(in: master) {
             // Honor the user's "keep in library when disconnected" choice.
             guard !location.showWhenDisconnected else {
@@ -107,7 +117,9 @@ public enum SeratoDeadLocationSweeper {
             }
 
             let assets = try SeratoMasterDatabase.assets(in: master, locationID: location.id)
-            if let reason = classify(assets, homeDirectory: homeDirectory, fileManager: fileManager) {
+            if let reason = classify(
+                assets, connectedPaths: connectedPaths,
+                homeDirectory: homeDirectory, fileManager: fileManager) {
                 dead.append(DeadLocation(locationID: location.id, assetCount: assets.count, reason: reason))
             } else {
                 kept.append(location.id)
@@ -146,15 +158,32 @@ public enum SeratoDeadLocationSweeper {
 
     // MARK: - Classification
 
+    /// Absolute paths of every file the connected location(s) reference, used
+    /// to tell a redundant duplicate location from one holding unique files.
+    static func connectedFilePaths(in masterDatabaseURL: URL, homeDirectory: URL) throws -> Set<String> {
+        var paths = Set<String>()
+        for locationID in try SeratoMasterDatabase.connectedLocationIDs(in: masterDatabaseURL) {
+            for asset in try SeratoMasterDatabase.assets(in: masterDatabaseURL, locationID: locationID) {
+                guard !isStreamingIdentifier(asset.portableID) else { continue }
+                for url in resolvedURLs(for: asset.portableID, homeDirectory: homeDirectory) {
+                    paths.insert(url.path)
+                }
+            }
+        }
+        return paths
+    }
+
     /// The reason a location is safe to remove, or `nil` to keep it.
     static func classify(
         _ assets: [SeratoMasterDatabase.AssetRecord],
+        connectedPaths: Set<String>,
         homeDirectory: URL,
         fileManager: FileManager
     ) -> DeadLocation.Reason? {
         guard !assets.isEmpty else { return .empty }
 
         var sawFileAsset = false
+        var sawRedundantLiveFile = false
         for asset in assets {
             if isStreamingIdentifier(asset.portableID) { continue }
             sawFileAsset = true
@@ -163,14 +192,21 @@ public enum SeratoDeadLocationSweeper {
             // unplugged — never remove those automatically.
             if referencesExternalVolume(asset.portableID) { return nil }
 
-            // If any file still resolves, the location is live: keep it.
-            if resolvedURLs(for: asset.portableID, homeDirectory: homeDirectory)
-                .contains(where: { fileManager.fileExists(atPath: $0.path) }) {
-                return nil
+            let candidates = resolvedURLs(for: asset.portableID, homeDirectory: homeDirectory)
+            if let live = candidates.first(where: { fileManager.fileExists(atPath: $0.path) }) {
+                // A live file blocks removal unless the connected library
+                // already carries the same file (then it's just a duplicate).
+                if connectedPaths.contains(live.path) {
+                    sawRedundantLiveFile = true
+                } else {
+                    return nil
+                }
             }
+            // A missing file neither blocks removal nor makes it redundant.
         }
 
-        return sawFileAsset ? .allFilesMissing : .streamingOnly
+        guard sawFileAsset else { return .streamingOnly }
+        return sawRedundantLiveFile ? .redundantDuplicate : .allFilesMissing
     }
 
     /// Where a disconnected location's `portable_id` might resolve. Serato has

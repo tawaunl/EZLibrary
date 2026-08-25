@@ -80,6 +80,15 @@ public enum SeratoMasterDatabase {
         return try handle.disconnectedLocations()
     }
 
+    /// Locations Serato is actively syncing (they have a `connection` row).
+    public static func connectedLocationIDs(in masterDatabaseURL: URL) throws -> [Int64] {
+        let handle = try Connection(url: masterDatabaseURL)
+        defer { handle.close() }
+        guard handle.hasMasterSchema else { throw MasterError.unsupportedSchema }
+        return try handle.int64Column(
+            "SELECT l.id FROM location l JOIN connection c ON c.location_id = l.id ORDER BY l.id")
+    }
+
     /// Deletes whole `location` rows. Their assets — and everything hanging
     /// off those assets — go with them via the schema's `ON DELETE CASCADE`
     /// foreign keys, which is why foreign-key enforcement is switched on for
