@@ -580,6 +580,7 @@ struct AddMusicView: View {
                 onLibraryChanged()
                 selectedInputURLs = []
                 refreshDiscoveredCount()
+                await DeadLocationAutoSweep.runIfEnabled()
             } catch {
                 errorMessage = error.localizedDescription
             }
@@ -650,6 +651,7 @@ struct AddMusicView: View {
                     successMessage = baseMessage
                 }
                 onLibraryChanged()
+                await DeadLocationAutoSweep.runIfEnabled()
             } catch {
                 errorMessage = error.localizedDescription
             }

@@ -894,6 +894,10 @@ struct ContentView: View {
                 message += " " + skipSummary(for: result.skips)
             }
             bulkRenameMessage = message
+
+            // Moving/renaming files can retire an old library location; clear
+            // out any that are now provably dead.
+            Task { await DeadLocationAutoSweep.runIfEnabled() }
         } catch {
             bulkRenameMessage = error.localizedDescription
         }

@@ -17,6 +17,18 @@ enum SeratoFeatureFlags {
     static let addMusicUsesCentralCrateDefaultsKey = "AddMusicUsesCentralCrate"
     static let addMusicCentralCrateIDDefaultsKey = "AddMusicCentralCrateID"
     static let filenameFormatTemplateDefaultsKey = "SeratoToolsFilenameFormatTemplate"
+    static let autoRemoveDeadLocationsDefaultsKey = "SeratoToolsAutoRemoveDeadLocations"
+
+    /// Whether a bulk file move/rename also prunes provably-dead disconnected
+    /// locations from Serato's `master.sqlite`. Defaults on because the sweep
+    /// only removes streaming caches and superseded, fully-missing boot-volume
+    /// libraries — never a drive that is merely offline, and always after a
+    /// backup. Users can turn it off if they curate those locations by hand.
+    static func isAutoRemoveDeadLocationsEnabled(userDefaults: UserDefaults = .standard) -> Bool {
+        userDefaults.object(forKey: autoRemoveDeadLocationsDefaultsKey) == nil
+            ? true
+            : userDefaults.bool(forKey: autoRemoveDeadLocationsDefaultsKey)
+    }
 
     /// The default filename format template used when none has been explicitly saved.
     /// Tokens: {artist}, {title}, {album}, {year}, {bpm}, {key}, {genre}.

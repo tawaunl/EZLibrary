@@ -647,6 +647,10 @@ struct LibraryConsolidationView: View {
             successMessage = message
             onLibraryChanged()
             refreshPreview()
+
+            // Consolidating can retire the source location the files left;
+            // prune it if it is now provably dead.
+            Task { await DeadLocationAutoSweep.runIfEnabled() }
         } catch {
             if let localized = error as? LocalizedError,
                let suggestion = localized.recoverySuggestion,

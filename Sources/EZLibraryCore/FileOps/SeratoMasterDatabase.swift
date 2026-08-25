@@ -41,6 +41,18 @@ public enum SeratoMasterDatabase {
         public let fileName: String
     }
 
+    /// A `location` row, with the flag Serato sets when the user asked to keep
+    /// a location's tracks in the library even while its drive is offline.
+    public struct LocationRow: Sendable, Equatable {
+        public let id: Int64
+        public let showWhenDisconnected: Bool
+
+        public init(id: Int64, showWhenDisconnected: Bool) {
+            self.id = id
+            self.showWhenDisconnected = showWhenDisconnected
+        }
+    }
+
     /// Location ids that Serato still aggregates but no longer syncs.
     public static func disconnectedLocationIDs(in masterDatabaseURL: URL) throws -> [Int64] {
         let handle = try Connection(url: masterDatabaseURL)
@@ -56,6 +68,46 @@ public enum SeratoMasterDatabase {
         defer { handle.close() }
         guard handle.hasMasterSchema else { throw MasterError.unsupportedSchema }
         return try handle.assets(locationID: locationID)
+    }
+
+    /// Every location Serato still aggregates but no longer syncs, with each
+    /// one's `show_when_disconnected` flag so callers can leave the ones the
+    /// user chose to keep visible offline untouched.
+    public static func disconnectedLocations(in masterDatabaseURL: URL) throws -> [LocationRow] {
+        let handle = try Connection(url: masterDatabaseURL)
+        defer { handle.close() }
+        guard handle.hasMasterSchema else { throw MasterError.unsupportedSchema }
+        return try handle.disconnectedLocations()
+    }
+
+    /// Deletes whole `location` rows. Their assets — and everything hanging
+    /// off those assets — go with them via the schema's `ON DELETE CASCADE`
+    /// foreign keys, which is why foreign-key enforcement is switched on for
+    /// this connection first. Returns the number of `location` rows removed.
+    ///
+    /// Safe to run from outside Serato: unlike an asset *update*, a cascade
+    /// delete does not fire the `after_asset_update`/`after_asset_insert`
+    /// triggers that call Serato's runtime-only `serato_str_norm()`.
+    @discardableResult
+    public static func deleteLocations(_ ids: [Int64], in masterDatabaseURL: URL) throws -> Int {
+        guard !ids.isEmpty else { return 0 }
+
+        try SeratoBackupBeforeWrite.snapshot(of: masterDatabaseURL)
+
+        let handle = try Connection(url: masterDatabaseURL)
+        defer { handle.close() }
+        guard handle.hasMasterSchema else { throw MasterError.unsupportedSchema }
+
+        // Must be set before the transaction begins; it is a no-op inside one.
+        try handle.enableForeignKeys()
+
+        var deleted = 0
+        try handle.transaction {
+            for id in ids {
+                deleted += try handle.deleteLocation(id: id)
+            }
+        }
+        return deleted
     }
 
     /// Re-points assets by `asset.id`, writing **only** `portable_id`.
@@ -180,6 +232,46 @@ public enum SeratoMasterDatabase {
             try bind(text: portableID, to: statement, at: 1)
             sqlite3_bind_int64(statement, 2, id)
             try step(statement)
+        }
+
+        func disconnectedLocations() throws -> [LocationRow] {
+            let statement = try prepare(
+                """
+                SELECT l.id, l.show_when_disconnected
+                FROM location l
+                LEFT JOIN connection c ON c.location_id = l.id
+                WHERE c.location_id IS NULL
+                ORDER BY l.id
+                """)
+            defer { sqlite3_finalize(statement) }
+            var rows: [LocationRow] = []
+            while true {
+                switch sqlite3_step(statement) {
+                case SQLITE_ROW:
+                    rows.append(
+                        LocationRow(
+                            id: sqlite3_column_int64(statement, 0),
+                            showWhenDisconnected: sqlite3_column_int64(statement, 1) != 0))
+                case SQLITE_DONE:
+                    return rows
+                default:
+                    throw lastError()
+                }
+            }
+        }
+
+        func enableForeignKeys() throws {
+            try execute("PRAGMA foreign_keys = ON")
+        }
+
+        /// Returns the number of `location` rows actually removed (0 when the
+        /// id was already gone), taken from `sqlite3_changes`.
+        func deleteLocation(id: Int64) throws -> Int {
+            let statement = try prepare("DELETE FROM location WHERE id = ?1")
+            defer { sqlite3_finalize(statement) }
+            sqlite3_bind_int64(statement, 1, id)
+            try step(statement)
+            return Int(sqlite3_changes(db))
         }
 
         func int64Column(_ sql: String) throws -> [Int64] {
