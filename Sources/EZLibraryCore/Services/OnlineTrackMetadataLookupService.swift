@@ -24,6 +24,11 @@ public enum OnlineMetadataSource: String, CaseIterable, Sendable {
     /// needs a YouTube Data API key supplied at runtime and returns nothing
     /// without one. Never included in the free/fast sets.
     case youTube
+    /// A DJ record pool (djpoolrecords.com). Keyless and public, but its
+    /// listings only carry the artist, the DJ-edit title, and a BPM — no
+    /// album, year, or reliable genre. It is the one source that knows the
+    /// edit-specific title and BPM the catalog APIs never have.
+    case djPoolRecords
 
     public var displayName: String {
         switch self {
@@ -39,6 +44,8 @@ public enum OnlineMetadataSource: String, CaseIterable, Sendable {
             return "Wikipedia"
         case .youTube:
             return "YouTube"
+        case .djPoolRecords:
+            return "DJ Pool Records"
         }
     }
 
@@ -46,7 +53,7 @@ public enum OnlineMetadataSource: String, CaseIterable, Sendable {
     /// verifier leans on these because they are the ones every user has.
     public var requiresCredential: Bool {
         switch self {
-        case .itunes, .musicBrainz, .deezer, .wikipedia:
+        case .itunes, .musicBrainz, .deezer, .wikipedia, .djPoolRecords:
             return false
         case .discogs, .youTube:
             return true
@@ -156,6 +163,9 @@ actor RequestPacer {
     /// YouTube's limit is a daily quota, not a per-second rate, so this only
     /// keeps a burst civil.
     static let youTube = RequestPacer(floor: 0.1)
+    /// djpoolrecords.com is a small WordPress site with no published rate
+    /// limit, so this floor is politeness rather than a documented ceiling.
+    static let djPoolRecords = RequestPacer(floor: 0.2)
 
     /// Scales every wait this pacer hands out. Tests set it to 0 so they exercise
     /// the retry and backoff logic without sleeping through the real intervals.
@@ -238,6 +248,7 @@ public enum OnlineTrackMetadataLookupService {
         case discogs
         case wikipedia
         case youTube
+        case djPoolRecords
         /// Every source that needs no credential — what a user with no keys
         /// configured can actually reach.
         case freeSources
@@ -270,6 +281,8 @@ public enum OnlineTrackMetadataLookupService {
                 return "Wikipedia"
             case .youTube:
                 return "YouTube"
+            case .djPoolRecords:
+                return "DJ Pool Records"
             case .freeSources:
                 return "Free Sources"
             case .fastSources:
@@ -295,12 +308,14 @@ public enum OnlineTrackMetadataLookupService {
                 return [.wikipedia]
             case .youTube:
                 return [.youTube]
+            case .djPoolRecords:
+                return [.djPoolRecords]
             case .freeSources:
                 return OnlineMetadataSource.allCases.filter { !$0.requiresCredential }
             case .fastSources:
                 return [.itunes, .deezer]
             case .recommended:
-                return [.itunes, .deezer, .wikipedia]
+                return [.itunes, .deezer, .wikipedia, .djPoolRecords]
             }
         }
 
@@ -359,7 +374,7 @@ public enum OnlineTrackMetadataLookupService {
         switch source {
         case .itunes:
             return [403, 429, 503]
-        case .musicBrainz, .discogs, .deezer, .wikipedia, .youTube:
+        case .musicBrainz, .discogs, .deezer, .wikipedia, .youTube, .djPoolRecords:
             // YouTube's 403 means the daily quota is spent, not that we asked
             // too fast, so it is deliberately not retried here.
             return [429, 503]
@@ -673,6 +688,8 @@ public enum OnlineTrackMetadataLookupService {
                 return []
             }
             return try await fetchYouTube(query: query, maxResults: maxResults, session: session, apiKey: apiKey)
+        case .djPoolRecords:
+            return try await fetchDJPoolRecords(query: query, maxResults: maxResults, session: session)
         }
     }
 
@@ -975,6 +992,209 @@ public enum OnlineTrackMetadataLookupService {
             return nil
         }
         return try? JSONDecoder().decode(DeezerAlbumDetail.self, from: data)
+    }
+
+    // MARK: - DJ Pool Records
+
+    private static let djPoolRecordsUserAgent =
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
+        + "(KHTML, like Gecko) Version/17.0 Safari/605.1.15"
+
+    private struct DJPoolRecordsPost: Decodable {
+        struct Rendered: Decodable { let rendered: String? }
+        let content: Rendered?
+    }
+
+    /// One parsed track line from a DJ Pool Records post.
+    struct DJPoolListingEntry: Equatable, Sendable {
+        let artist: String
+        let title: String
+        let bpm: Double?
+    }
+
+    private static func fetchDJPoolRecords(
+        query: Query,
+        maxResults: Int,
+        session: URLSession
+    ) async throws -> [OnlineTrackMetadataCandidate] {
+        let searchTerm = [query.artist, query.title]
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        guard !searchTerm.isEmpty else { return [] }
+
+        var components = URLComponents(string: "https://djpoolrecords.com/wp-json/wp/v2/posts")
+        components?.queryItems = [
+            URLQueryItem(name: "search", value: searchTerm),
+            URLQueryItem(name: "per_page", value: String(min(max(1, maxResults), 5))),
+            // The search fans out over whole daily-dump posts, so the track
+            // lines have to be pulled back out of each post's content.
+            URLQueryItem(name: "_fields", value: "content")
+        ]
+        guard let url = components?.url else { return [] }
+
+        var request = URLRequest(url: url)
+        // A default URLSession agent is refused by the site's front end; a
+        // browser agent (the same one that works from curl) is accepted.
+        request.setValue(djPoolRecordsUserAgent, forHTTPHeaderField: "User-Agent")
+
+        let data = try await performRequest(
+            request, source: .djPoolRecords, pacer: .djPoolRecords, session: session)
+        let posts: [DJPoolRecordsPost]
+        do {
+            posts = try JSONDecoder().decode([DJPoolRecordsPost].self, from: data)
+        } catch {
+            throw LookupError.sourceRequestFailed(
+                .djPoolRecords, "Received an unexpected response format from DJ Pool Records.")
+        }
+
+        let wantedTitle = djPoolNormalize(query.title)
+        let wantedArtist = djPoolNormalize(query.artist)
+        guard !wantedTitle.isEmpty else { return [] }
+
+        var candidates: [OnlineTrackMetadataCandidate] = []
+        var seen = Set<String>()
+        for post in posts {
+            for entry in parseDJPoolRecordsListing(html: post.content?.rendered ?? "") {
+                guard djPoolEntryMatches(entry, title: wantedTitle, artist: wantedArtist) else { continue }
+                let key = (entry.artist + "|" + entry.title).lowercased()
+                guard seen.insert(key).inserted else { continue }
+                candidates.append(OnlineTrackMetadataCandidate(
+                    source: .djPoolRecords,
+                    title: entry.title,
+                    artist: entry.artist,
+                    album: "",
+                    genre: "",
+                    year: nil,
+                    bpm: entry.bpm,
+                    comment: "DJ Pool Records"
+                ))
+                if candidates.count >= maxResults { return candidates }
+            }
+        }
+        return candidates
+    }
+
+    /// Extracts the track listing from a post's HTML content. Each entry reads
+    /// `Artist – Title (Version) [BPM] (Size MB)`; album and year are never
+    /// present. Pure, so it is tested against real post markup without a network
+    /// round trip.
+    static func parseDJPoolRecordsListing(html: String) -> [DJPoolListingEntry] {
+        // Every tag becomes a line break, which puts each `<p><strong>…</strong>`
+        // entry on its own line to be parsed independently.
+        var text = html.replacingOccurrences(of: "<[^>]+>", with: "\n", options: .regularExpression)
+        text = decodeHTMLEntities(text)
+
+        var entries: [DJPoolListingEntry] = []
+        for rawLine in text.split(whereSeparator: { $0 == "\n" || $0 == "\r" }) {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            if let entry = parseDJPoolRecordsLine(line) {
+                entries.append(entry)
+            }
+        }
+        return entries
+    }
+
+    static func parseDJPoolRecordsLine(_ line: String) -> DJPoolListingEntry? {
+        guard let body = djPoolStrippingSizeMarker(line) else { return nil }
+        guard let dash = djPoolArtistTitleSeparatorRange(in: body) else { return nil }
+        let artist = String(body[body.startIndex..<dash.lowerBound]).trimmingCharacters(in: .whitespaces)
+        let rest = String(body[dash.upperBound...]).trimmingCharacters(in: .whitespaces)
+        let parsed = djPoolExtractTrailingBPM(rest)
+        let title = parsed.title.trimmingCharacters(in: .whitespaces)
+        guard !artist.isEmpty, !title.isEmpty else { return nil }
+        return DJPoolListingEntry(artist: artist, title: title, bpm: parsed.bpm)
+    }
+
+    /// Returns the line with its trailing `(<size> MB)` marker removed, or nil
+    /// when the line is not a track entry (image credit, heading, blank, …).
+    private static func djPoolStrippingSizeMarker(_ line: String) -> String? {
+        guard let range = line.range(
+            of: #"\s*\((?:[0-9]+(?:\.[0-9]+)?)\s*MB\)\s*$"#, options: .regularExpression
+        ) else {
+            return nil
+        }
+        let body = String(line[line.startIndex..<range.lowerBound]).trimmingCharacters(in: .whitespaces)
+        return body.isEmpty ? nil : body
+    }
+
+    private static func djPoolArtistTitleSeparatorRange(in body: String) -> Range<String.Index>? {
+        // en dash, em dash, then a spaced double hyphen — the site uses the
+        // first almost everywhere.
+        for separator in [" \u{2013} ", " \u{2014} ", " -- "] {
+            if let range = body.range(of: separator) { return range }
+        }
+        return nil
+    }
+
+    private static let djPoolBPMPatterns = [
+        #"^(.*?)\s+(\d{2,3})\s+[Bb]pm\s+\d{2,3}$"#,
+        #"^(.*?)\s+[Bb]pm\s+(\d{2,3})$"#,
+        #"^(.*?)\s+(\d{2,3})$"#
+    ]
+
+    /// Splits a trailing BPM off a title, handling the `130`, `Bpm 130`, and
+    /// `94 Bpm 94` shapes the site uses interchangeably.
+    private static func djPoolExtractTrailingBPM(_ value: String) -> (title: String, bpm: Double?) {
+        let nsValue = value as NSString
+        let full = NSRange(location: 0, length: nsValue.length)
+        for pattern in djPoolBPMPatterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern),
+                  let match = regex.firstMatch(in: value, range: full),
+                  match.numberOfRanges >= 3,
+                  match.range(at: 1).location != NSNotFound,
+                  match.range(at: 2).location != NSNotFound else { continue }
+            let main = nsValue.substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespaces)
+            let bpm = Double(nsValue.substring(with: match.range(at: 2)))
+            if !main.isEmpty { return (main, bpm) }
+        }
+        return (value, nil)
+    }
+
+    static func djPoolEntryMatches(
+        _ entry: DJPoolListingEntry, title wantedTitle: String, artist wantedArtist: String
+    ) -> Bool {
+        let entryTitle = djPoolNormalize(entry.title)
+        guard !entryTitle.isEmpty, !wantedTitle.isEmpty else { return false }
+        // The pool title carries edit descriptors the search title has stripped,
+        // so match on containment in either direction on the core title.
+        guard entryTitle.contains(wantedTitle) || wantedTitle.contains(entryTitle) else { return false }
+        guard !wantedArtist.isEmpty else { return true }
+        // Multi-artist edits reorder credits, so any shared word is enough.
+        let wanted = Set(wantedArtist.split(separator: " ").map(String.init))
+        let have = Set(djPoolNormalize(entry.artist).split(separator: " ").map(String.init))
+        return !wanted.isDisjoint(with: have)
+    }
+
+    /// Lowercased, diacritic-folded, alphanumeric-only form for lenient
+    /// comparison of pool titles/artists against a search term.
+    static func djPoolNormalize(_ value: String) -> String {
+        let folded = value.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+        let mapped = folded.unicodeScalars.map { scalar -> Character in
+            CharacterSet.alphanumerics.contains(scalar) ? Character(scalar) : " "
+        }
+        return String(mapped).split(separator: " ").joined(separator: " ")
+    }
+
+    /// Decodes the numeric and common named HTML entities WordPress emits in
+    /// post content (`&#8211;` en dash, `&#038;`/`&amp;` ampersand, …).
+    static func decodeHTMLEntities(_ text: String) -> String {
+        var result = text
+        for (pattern, radix) in [(#"&#(\d+);"#, 10), (#"&#[xX]([0-9a-fA-F]+);"#, 16)] {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            let matches = regex.matches(in: result, range: NSRange(result.startIndex..., in: result))
+            for match in matches.reversed() {
+                guard let full = Range(match.range, in: result),
+                      let group = Range(match.range(at: 1), in: result),
+                      let value = UInt32(result[group], radix: radix),
+                      let scalar = Unicode.Scalar(value) else { continue }
+                result.replaceSubrange(full, with: String(scalar))
+            }
+        }
+        let named = ["&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": "\"", "&apos;": "'", "&nbsp;": " "]
+        for (entity, replacement) in named {
+            result = result.replacingOccurrences(of: entity, with: replacement)
+        }
+        return result
     }
 
     private static func fetchMusicBrainz(

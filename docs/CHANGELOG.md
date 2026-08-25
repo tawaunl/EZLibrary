@@ -9,6 +9,28 @@ version (`CFBundleShortVersionString.CFBundleVersion`) and are used verbatim by
 > the highest priority — see [SECURITY.md](../SECURITY.md). This changelog is kept
 > up to date so you can see exactly what changed and when.
 
+## 1.0.5
+
+### Automatic cleanup of stale library locations
+- Over time Serato's library collects "disconnected" locations — an old drive, a previous
+  library layout, or a streaming service you no longer use — that it keeps listing but can
+  never actually play. EZLibrary now clears these out automatically after a bulk move,
+  rename or consolidation, so reorganizing your files no longer leaves "cannot be located"
+  clutter behind.
+- Only locations that are provably dead are removed: an all-streaming leftover, one whose
+  files are all missing, or one whose only remaining files are duplicates already in your
+  live library. A location that still holds files of its own — including a drive that is
+  simply unplugged — is always left alone, the cleanup only runs while Serato is closed, and
+  every removal is backed up first.
+
+### DJ Pool Records added as a metadata source
+- Tag verification and online lookup can now cross-check **DJ Pool Records**, which knows
+  the DJ-edit versions the regular catalogs don't. For an edit-heavy library it helps
+  confirm the exact artist, edit title and BPM of tracks that iTunes, Deezer and the others
+  only know in their original form.
+- It contributes artist, title and BPM only — no album or year — and never outweighs the
+  main catalog sources, so it fills gaps without changing tags the catalogs already agree on.
+
 ## 1.0.4
 
 ### Fixed: the automatic update could not quit the app to install
