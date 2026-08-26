@@ -58,6 +58,10 @@ struct CrateTreeView: View {
     @State private var showingInlineCreate = false
     @State private var newCrateName = ""
     @FocusState private var isInlineCreateNameFocused: Bool
+    @State private var renamingNode: CrateNode?
+    @State private var renameText = ""
+    @State private var renameErrorMessage: String?
+    @FocusState private var isRenameNameFocused: Bool
 
     private var combinedVisibleTree: [CrateNode] {
         mergedTrees(crateHierarchy.visibleTree, smartCrateHierarchy.visibleTree)
@@ -109,6 +113,13 @@ struct CrateTreeView: View {
                     }
                 }
                 .help("Create a new empty crate.")
+                Button("Rename") {
+                    if let selectedNode {
+                        beginRename(selectedNode)
+                    }
+                }
+                .disabled(selectedNode == nil)
+                .help("Rename the selected crate.")
                 Button("Hide") {
                     hideSelectedCrate()
                 }
@@ -144,6 +155,29 @@ struct CrateTreeView: View {
                         showingInlineCreate = false
                     }
                     .help("Cancel creating a new crate.")
+                }
+                .padding(.horizontal, 8)
+            }
+
+            if let renamingNode {
+                HStack(spacing: 8) {
+                    TextField("Crate Name", text: $renameText)
+                        .textFieldStyle(.roundedBorder)
+                        .focused($isRenameNameFocused)
+                        .onSubmit {
+                            performRename(renamingNode)
+                        }
+
+                    Button("Rename") {
+                        performRename(renamingNode)
+                    }
+                    .disabled(renameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .help("Rename the crate to the entered name.")
+
+                    Button("Cancel") {
+                        cancelRename()
+                    }
+                    .help("Cancel renaming the crate.")
                 }
                 .padding(.horizontal, 8)
             }
@@ -235,6 +269,14 @@ struct CrateTreeView: View {
             Text(crateCreateError ?? "")
         }
         .alert(
+            "Couldn't Rename Crate",
+            isPresented: Binding(get: { renameErrorMessage != nil }, set: { if !$0 { renameErrorMessage = nil } })
+        ) {
+            Button("OK") { renameErrorMessage = nil }
+        } message: {
+            Text(renameErrorMessage ?? "")
+        }
+        .alert(
             "Couldn't Change Crate Visibility",
             isPresented: Binding(get: { hideSyncErrorMessage != nil }, set: { if !$0 { hideSyncErrorMessage = nil } })
         ) {
@@ -286,6 +328,7 @@ struct CrateTreeView: View {
                 handleTrackDrop(providers, onto: node)
             }
             .contextMenu {
+                Button("Rename…") { beginRename(node) }
                 Button("Hide") { hide(node) }
                 if let regularNode = regularNodesByID[node.id] {
                     Button("Delete…", role: .destructive) {
@@ -349,6 +392,45 @@ struct CrateTreeView: View {
     private func requestDeleteSelectedCrate() {
         guard let selectedRegularNode else { return }
         pendingDelete = (selectedRegularNode, crateHierarchy)
+    }
+
+    private func beginRename(_ node: CrateNode) {
+        showingInlineCreate = false
+        renamingNode = node
+        renameText = node.name
+        DispatchQueue.main.async {
+            isRenameNameFocused = true
+        }
+    }
+
+    private func cancelRename() {
+        renamingNode = nil
+        renameText = ""
+    }
+
+    private func performRename(_ node: CrateNode) {
+        let newName = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !newName.isEmpty else { return }
+        guard newName != node.name else {
+            cancelRename()
+            return
+        }
+        do {
+            try CrateRenameService.rename(
+                crateAtPath: node.pathComponents,
+                to: newName,
+                libraryDirectory: libraryService.libraryDirectory
+            )
+            // The renamed node's id (its path) changed, so any selection on it
+            // or a descendant no longer resolves — fall back to All Tracks.
+            if let selectedNode, selectedNode.pathComponents.starts(with: node.pathComponents) {
+                scope = .allTracks
+            }
+            cancelRename()
+            onCratesChanged()
+        } catch {
+            renameErrorMessage = error.localizedDescription
+        }
     }
 
     private func createCrateInline() {
