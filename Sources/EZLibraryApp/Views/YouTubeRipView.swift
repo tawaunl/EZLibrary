@@ -21,20 +21,6 @@ struct YouTubeRipView: View {
     private static let cratePrefixDefaultsKey = "YouTubeRipCratePrefix"
     private static let autoLookupDefaultsKey = "YouTubeRipAutoLookupAfterLoad"
 
-    private enum SeratoWriteOutcome {
-        case inserted
-        case updated
-        case unchanged
-    }
-
-    private struct RecentDownload: Identifiable {
-        let id = UUID()
-        let title: String
-        let fileName: String
-        let crateLabel: String
-        let downloadedAt: Date
-    }
-
     private enum CrateAssignmentMode: String, CaseIterable, Identifiable {
         case dated
         case existing
@@ -95,6 +81,7 @@ struct YouTubeRipView: View {
     }
 
     @EnvironmentObject private var libraryService: LibraryService
+    @EnvironmentObject private var downloadJobs: BackgroundAudioDownloadModel
 
     let onLibraryChanged: () -> Void
 
@@ -113,7 +100,6 @@ struct YouTubeRipView: View {
     @State private var loadedInfo: YouTubeAudioImportService.VideoInfo?
     @State private var previewInfoByURL: [String: YouTubeAudioImportService.VideoInfo] = [:]
     @State private var isLoadingInfo = false
-    @State private var isDownloading = false
     @State private var isLoadingBatchInfo = false
     @State private var dependencyStatusMessage: String?
     @State private var dependencyReady = false
@@ -121,9 +107,6 @@ struct YouTubeRipView: View {
     @State private var isInstallingDependencies = false
     @State private var errorMessage: String?
     @State private var successMessage: String?
-    @State private var batchProgressMessage: String?
-    @State private var lastSeratoWriteStatusMessage: String?
-    @State private var recentDownloads: [RecentDownload] = []
 
     @State private var id3Title = ""
     @State private var id3Artist = ""
@@ -153,7 +136,7 @@ struct YouTubeRipView: View {
     }
 
     private var downloadButtonTitle: String {
-        if isDownloading {
+        if downloadJobs.isDownloading {
             return "Downloading..."
         }
         let count = parsedVideoURLs.count
@@ -164,7 +147,7 @@ struct YouTubeRipView: View {
     }
 
     private var canDownload: Bool {
-        !isDownloading && !isLoadingInfo && !parsedVideoURLs.isEmpty && dependencyReady && isCrateSelectionValid
+        !downloadJobs.isDownloading && !isLoadingInfo && !parsedVideoURLs.isEmpty && dependencyReady && isCrateSelectionValid
     }
 
     private var selectedFormat: YouTubeAudioImportService.AudioFormat {
@@ -269,7 +252,7 @@ struct YouTubeRipView: View {
                 if selectedFormat == .mp3 && isBulkDownload {
                     bulkID3DisabledCard
                 }
-                if !recentDownloads.isEmpty {
+                if !downloadJobs.recentDownloads.isEmpty {
                     recentDownloadsCard
                 }
             }
@@ -304,6 +287,11 @@ struct YouTubeRipView: View {
             }
             preloadBatchVideoInfo()
         }
+        .onChange(of: downloadJobs.successGeneration) {
+            // A batch finished with at least one file; clear the inputs now
+            // that the view is on screen to see it happen.
+            resetAfterSuccessfulDownload()
+        }
     }
 
     private var heroCard: some View {
@@ -313,10 +301,22 @@ struct YouTubeRipView: View {
             Text("Paste one or many links from YouTube, SoundCloud, and other supported sites, or import CSV/Excel files of links, then batch download audio into your main music folder and crates.")
                 .foregroundStyle(.secondary)
 
-            if let batchProgressMessage {
+            if let batchProgressMessage = downloadJobs.progressMessage {
                 Text(batchProgressMessage)
                     .font(.callout.weight(.semibold))
                     .foregroundStyle(.secondary)
+            }
+
+            if let downloadResult = downloadJobs.resultMessage {
+                SuccessBanner(message: downloadResult) {
+                    downloadJobs.dismissResult()
+                }
+            }
+
+            if let downloadError = downloadJobs.errorMessage {
+                Text(downloadError)
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(.red)
             }
 
             if let successMessage {
@@ -333,6 +333,7 @@ struct YouTubeRipView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .animation(.spring(response: 0.4, dampingFraction: 0.85), value: successMessage)
+        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: downloadJobs.resultMessage)
         .padding(18)
         .background(
             RoundedRectangle(cornerRadius: 14)
@@ -677,7 +678,7 @@ struct YouTubeRipView: View {
                     .foregroundStyle(.secondary)
             }
 
-            if let lastSeratoWriteStatusMessage {
+            if let lastSeratoWriteStatusMessage = downloadJobs.seratoStatusMessage {
                 Text(lastSeratoWriteStatusMessage)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
@@ -804,7 +805,7 @@ struct YouTubeRipView: View {
                 Spacer(minLength: 0)
             }
 
-            ForEach(recentDownloads) { item in
+            ForEach(downloadJobs.recentDownloads) { item in
                 VStack(alignment: .leading, spacing: 3) {
                     Text(item.title)
                         .font(.callout.weight(.semibold))
@@ -986,17 +987,28 @@ struct YouTubeRipView: View {
             return
         }
 
-        isDownloading = true
+        guard downloadJobs.canStart else {
+            errorMessage = "A download is already running. Wait for it to finish or stop it first."
+            return
+        }
+
+        let crateAssignment: BackgroundAudioDownloadModel.CrateAssignment
+        switch crateAssignmentMode {
+        case .dated:
+            crateAssignment = .dated(prefix: normalizedCratePrefix)
+        case .existing:
+            guard let selectedExistingCrate else {
+                errorMessage = "Choose an existing crate first."
+                return
+            }
+            crateAssignment = .existing(selectedExistingCrate)
+        case .none:
+            crateAssignment = .none
+        }
+
         errorMessage = nil
         successMessage = nil
-        batchProgressMessage = "Preparing batch..."
 
-        let destinationFolderURL = destinationFolderURL
-        let selectedFormat = selectedFormat
-        let selectedQuality = selectedQuality
-        let selectedBitrateKbps = supportsExplicitBitrate ? selectedBitrate.kbps : nil
-        let crateAssignmentMode = crateAssignmentMode
-        let selectedExistingCrate = selectedExistingCrate
         let loadedInfoSnapshot = loadedInfo
         // Artist and title come out of the video title, not the channel name.
         // Album has no honest source here at all, so it stays empty for a
@@ -1012,173 +1024,24 @@ struct YouTubeRipView: View {
                 fallbackAlbum: nil,
                 fallbackComment: loadedInfoSnapshot?.webpageURL?.absoluteString
             )
-        let metadataForDownload = baseMetadata
-        let cratePrefix = normalizedCratePrefix
-        let subcratesDirectory = libraryService.subcratesDirectory
-        let rootDirectory = libraryService.rootDirectory
-        let databaseFileURL = libraryService.databaseFile
-        let firstParsedURL = parsedVideoURL
 
-        Task {
-            var downloadedFileURLs: [URL] = []
-            var failures: [String] = []
-            var id3Warnings: [String] = []
-            var seratoWarnings: [String] = []
-            var lastOutcome: SeratoWriteOutcome = .unchanged
+        let request = BackgroundAudioDownloadModel.Request(
+            videoURLs: videoURLs,
+            destinationFolderURL: destinationFolderURL,
+            audioFormat: selectedFormat,
+            audioQuality: selectedQuality,
+            audioBitrateKbps: supportsExplicitBitrate ? selectedBitrate.kbps : nil,
+            baseMetadata: baseMetadata,
+            writeID3Tags: selectedFormat == .mp3,
+            crateAssignment: crateAssignment,
+            subcratesDirectory: libraryService.subcratesDirectory,
+            rootDirectory: libraryService.rootDirectory,
+            databaseFileURL: libraryService.databaseFile,
+            firstParsedURL: parsedVideoURL,
+            loadedInfoSnapshot: loadedInfoSnapshot
+        )
 
-            for (index, videoURL) in videoURLs.enumerated() {
-                await MainActor.run {
-                    batchProgressMessage = "Processing \(index + 1) of \(videoURLs.count)..."
-                }
-
-                do {
-                    let result = try await Task.detached(priority: .userInitiated) {
-                        try YouTubeAudioImportService.downloadAudio(
-                            .init(
-                                videoURL: videoURL,
-                                destinationFolderURL: destinationFolderURL,
-                                audioFormat: selectedFormat,
-                                audioQuality: selectedQuality,
-                                audioBitrateKbps: selectedBitrateKbps,
-                                metadata: metadataForDownload
-                            )
-                        )
-                    }.value
-
-                    let fallbackInfo: YouTubeAudioImportService.VideoInfo?
-                    if let loadedInfoSnapshot, firstParsedURL == videoURL {
-                        fallbackInfo = loadedInfoSnapshot
-                    } else {
-                        fallbackInfo = try? await Task.detached(priority: .utility) {
-                            try YouTubeAudioImportService.fetchVideoInfo(videoURL: videoURL)
-                        }.value
-                    }
-
-                    let metadataForDatabaseWrite = enrichMetadata(
-                        baseMetadata,
-                        fallbackInfo: fallbackInfo,
-                        downloadedTitle: result.title
-                    )
-
-                    if selectedFormat == .mp3 {
-                        do {
-                            try SeratoTrackMetadataEditor.writeID3Tags(
-                                fileURL: result.outputFileURL,
-                                metadata: metadataForDatabaseWrite
-                            )
-                        } catch {
-                            id3Warnings.append("\(result.outputFileURL.lastPathComponent): \(error.localizedDescription)")
-                        }
-                    }
-
-                    do {
-                        lastOutcome = try writeSeratoMetadataForDownloadedFile(
-                            fileURL: result.outputFileURL,
-                            rootDirectory: rootDirectory,
-                            databaseFileURL: databaseFileURL,
-                            metadata: metadataForDatabaseWrite
-                        )
-                    } catch {
-                        seratoWarnings.append("\(result.outputFileURL.lastPathComponent): \(error.localizedDescription)")
-                    }
-
-                    downloadedFileURLs.append(result.outputFileURL)
-
-                    await MainActor.run {
-                        appendRecentDownload(
-                            title: fallbackInfo?.title ?? result.title,
-                            fileName: result.outputFileURL.lastPathComponent,
-                            crateLabel: crateAssignmentMode == .none ? "No Crate" : "Queued for crate"
-                        )
-                    }
-                } catch {
-                    failures.append("\(videoURL.absoluteString): \(error.localizedDescription)")
-                }
-            }
-
-            guard !downloadedFileURLs.isEmpty else {
-                await MainActor.run {
-                    errorMessage = "All downloads failed."
-                    if !failures.isEmpty {
-                        errorMessage = "All downloads failed. " + failures.prefix(2).joined(separator: " | ")
-                    }
-                    batchProgressMessage = nil
-                    isDownloading = false
-                }
-                return
-            }
-
-            do {
-                let crateResult: AddMusicImportService.CrateCreationResult?
-                switch crateAssignmentMode {
-                case .dated:
-                    crateResult = try AddMusicImportService.createDatedCrate(
-                        forAudioFiles: downloadedFileURLs,
-                        crateNamePrefix: cratePrefix,
-                        subcratesDirectory: subcratesDirectory,
-                        rootDirectory: rootDirectory
-                    )
-                case .existing:
-                    guard let selectedExistingCrate else {
-                        throw AddMusicImportService.ImportError.missingCrateFileURL
-                    }
-                    crateResult = try AddMusicImportService.appendAudioFiles(
-                        downloadedFileURLs,
-                        toExistingCrate: selectedExistingCrate,
-                        rootDirectory: rootDirectory
-                    )
-                case .none:
-                    crateResult = nil
-                }
-
-                await MainActor.run {
-                    var summary = "Downloaded \(downloadedFileURLs.count) of \(videoURLs.count) link\(videoURLs.count == 1 ? "" : "s")."
-                    if let crateResult {
-                        summary += " Saved to crate \(crateResult.crateName)."
-                    } else {
-                        summary += " No crate assignment."
-                    }
-
-                    if !id3Warnings.isEmpty {
-                        summary += " ID3 warnings: \(id3Warnings.count)."
-                    }
-                    if !seratoWarnings.isEmpty {
-                        summary += " Serato warnings: \(seratoWarnings.count)."
-                    }
-                    if !failures.isEmpty {
-                        summary += " Failed: \(failures.count)."
-                    }
-
-                    successMessage = summary
-                    errorMessage = nil
-
-                    switch lastOutcome {
-                    case .inserted:
-                        lastSeratoWriteStatusMessage = "Serato DB: inserted new track row and wrote metadata"
-                    case .updated:
-                        lastSeratoWriteStatusMessage = "Serato DB: updated existing track metadata"
-                    case .unchanged:
-                        lastSeratoWriteStatusMessage = seratoWarnings.isEmpty ? "Serato DB: track row already up to date" : "Serato DB: some writes failed"
-                    }
-
-                    resetAfterSuccessfulDownload()
-                    batchProgressMessage = nil
-                    onLibraryChanged()
-                }
-            } catch {
-                await MainActor.run {
-                    errorMessage = error.localizedDescription
-                    if !failures.isEmpty {
-                        errorMessage = (errorMessage ?? "") + " Failed links: " + failures.prefix(2).joined(separator: " | ")
-                    }
-                    batchProgressMessage = nil
-                }
-            }
-
-            await MainActor.run {
-                isDownloading = false
-            }
-        }
+        downloadJobs.start(request, onLibraryChanged: onLibraryChanged)
     }
 
     private var normalizedCratePrefix: String {
@@ -1220,49 +1083,6 @@ struct YouTubeRipView: View {
             bpm: nil,
             year: nil
         )
-    }
-
-    private func enrichMetadata(
-        _ metadata: SeratoTrackMetadataUpdate,
-        fallbackInfo: YouTubeAudioImportService.VideoInfo?,
-        downloadedTitle: String
-    ) -> SeratoTrackMetadataUpdate {
-        var out = metadata
-
-        if out.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            // The raw video title carries the artist and the channel's format
-            // decoration ("… (Official Video)"); keep only the song part.
-            let rawTitle = fallbackInfo?.title.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let parsed = YouTubeTitleParser.parse(
-                videoTitle: rawTitle.isEmpty ? downloadedTitle : rawTitle,
-                uploader: fallbackInfo?.uploader)
-            out.title = parsed.title.isEmpty ? downloadedTitle : parsed.title
-        }
-
-        // The channel name is not the artist ("E40TV" uploads E-40 records) and
-        // is never an album. Read the artist out of the video title instead,
-        // and leave the field empty when there's nothing to read — a wrong
-        // value here propagates into the file name once auto-rename runs, and
-        // survives long after the tags themselves get corrected.
-        if out.artist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            out.artist = YouTubeTitleParser.parse(
-                videoTitle: fallbackInfo?.title ?? downloadedTitle,
-                uploader: fallbackInfo?.uploader
-            ).artist
-        }
-
-        if out.comment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            out.comment = fallbackInfo?.webpageURL?.absoluteString ?? ""
-        }
-
-        if out.year == nil,
-           let uploadDate = fallbackInfo?.uploadDate,
-           uploadDate.count >= 4,
-           let parsedYear = Int(uploadDate.prefix(4)) {
-            out.year = parsedYear
-        }
-
-        return out
     }
 
     private func formatDuration(_ seconds: Int) -> String {
@@ -1378,22 +1198,6 @@ struct YouTubeRipView: View {
         }
     }
 
-    private func appendRecentDownload(title: String, fileName: String, crateLabel: String) {
-        let resolvedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? fileName : title
-        recentDownloads.insert(
-            RecentDownload(
-                title: resolvedTitle,
-                fileName: fileName,
-                crateLabel: crateLabel,
-                downloadedAt: Date()
-            ),
-            at: 0
-        )
-        if recentDownloads.count > 5 {
-            recentDownloads = Array(recentDownloads.prefix(5))
-        }
-    }
-
     private func resetAfterSuccessfulDownload() {
         urlText = ""
         importedLinksFileName = nil
@@ -1487,89 +1291,6 @@ struct YouTubeRipView: View {
         ]
         .filter { !$0.isEmpty }
         .joined(separator: " • ")
-    }
-
-    private func writeSeratoMetadataForDownloadedFile(
-        fileURL: URL,
-        rootDirectory: URL,
-        databaseFileURL: URL,
-        metadata: SeratoTrackMetadataUpdate
-    ) throws -> SeratoWriteOutcome {
-        if FileManager.default.fileExists(atPath: databaseFileURL.path) {
-            try SeratoBackupBeforeWrite.snapshot(of: databaseFileURL)
-        }
-
-        let original = try Data(contentsOf: databaseFileURL)
-        let defaultStoredPath = SeratoLibraryLocator.seratoStoredPath(for: fileURL, rootDirectory: rootDirectory)
-        let storedPath = findExistingStoredPath(
-            for: fileURL,
-            rootDirectory: rootDirectory,
-            in: original
-        ) ?? defaultStoredPath
-
-        let ensured = SeratoDatabaseWriter.ensuringTrackExists(
-            forStoredPath: storedPath,
-            metadata: metadata,
-            in: original
-        )
-
-        let rewritten = SeratoDatabaseWriter.rewritingMetadata(
-            forStoredPath: storedPath,
-            metadata: metadata,
-            in: ensured.data
-        )
-
-        if ensured.didInsert || rewritten.didRewrite {
-            try AtomicFileWriter.write(rewritten.data, to: databaseFileURL)
-        }
-
-        if ensured.didInsert {
-            return .inserted
-        }
-        if rewritten.didRewrite {
-            return .updated
-        }
-        return .unchanged
-    }
-
-    private func findExistingStoredPath(
-        for fileURL: URL,
-        rootDirectory: URL,
-        in databaseData: Data
-    ) -> String? {
-        let targetPaths = canonicalFilePaths(for: fileURL)
-
-        for chunk in SeratoChunkCodec.readChunks(from: databaseData) where chunk.tag == "otrk" {
-            let fields = SeratoChunkCodec.readChunks(from: chunk.payload)
-            guard let pfil = fields.first(where: { $0.tag == "pfil" }) else { continue }
-
-            let storedPath = SeratoChunkCodec.decodeUTF16BEString(pfil.payload)
-            let resolvedURL = SeratoLibraryLocator.resolve(seratoStoredPath: storedPath, rootDirectory: rootDirectory)
-            if targetPaths.contains(canonicalPathString(for: resolvedURL)) {
-                return storedPath
-            }
-        }
-
-        return nil
-    }
-
-    private func canonicalFilePaths(for fileURL: URL) -> Set<String> {
-        var paths: Set<String> = []
-        paths.insert(canonicalPathString(for: fileURL))
-        paths.insert(canonicalPathString(for: fileURL.standardizedFileURL))
-        paths.insert(canonicalPathString(for: fileURL.resolvingSymlinksInPath().standardizedFileURL))
-        return paths
-    }
-
-    private func canonicalPathString(for fileURL: URL) -> String {
-        var path = fileURL.resolvingSymlinksInPath().standardizedFileURL.path
-
-        // macOS temp and some mounted paths can differ only by the /private prefix.
-        if path.hasPrefix("/private/") {
-            path.removeFirst("/private".count)
-        }
-
-        return path
     }
 
     private func resolvePreferredValue(_ primary: String, _ fallback: String?) -> String {

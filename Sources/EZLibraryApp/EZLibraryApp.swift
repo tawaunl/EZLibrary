@@ -71,6 +71,9 @@ struct EZLibraryApp: App {
     // running when the user leaves the Tracks & Tags view.
     @StateObject private var backgroundTagJobs = BackgroundTagJobsModel()
     @StateObject private var tagVerificationRun = TagVerificationRunModel()
+    // Owned at the app level so an audio download batch keeps running (and
+    // stays visible) when the user leaves the Download Audio view.
+    @StateObject private var audioDownloadJobs = BackgroundAudioDownloadModel()
     @ObservedObject private var themeController = ThemeController.shared
 
     init() {
@@ -108,6 +111,7 @@ struct EZLibraryApp: App {
                 .environmentObject(seratoRunning)
                 .environmentObject(backgroundTagJobs)
                 .environmentObject(tagVerificationRun)
+                .environmentObject(audioDownloadJobs)
                 .sheet(isPresented: $updateChecker.isPresented) {
                     UpdateCheckView(viewModel: updateChecker)
                         .textSelection(.enabled)

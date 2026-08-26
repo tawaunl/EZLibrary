@@ -56,6 +56,7 @@ struct ContentView: View {
     @EnvironmentObject private var seratoRunning: SeratoRunningModel
     @EnvironmentObject private var backgroundTagJobs: BackgroundTagJobsModel
     @EnvironmentObject private var tagVerificationRun: TagVerificationRunModel
+    @EnvironmentObject private var audioDownloadJobs: BackgroundAudioDownloadModel
     @ObservedObject var crateHierarchy: CrateHierarchyViewModel
     @ObservedObject var smartCrateHierarchy: CrateHierarchyViewModel
 
@@ -154,13 +155,13 @@ struct ContentView: View {
         }
     }
 
-    private func backgroundJobBar(text: String, onStop: @escaping () -> Void) -> some View {
+    private func backgroundJobBar(text: String, showSection: SidebarSection = .tracks, onStop: @escaping () -> Void) -> some View {
         HStack(spacing: 8) {
             ProgressView().controlSize(.small)
             Text(text).font(.caption)
             Spacer(minLength: 0)
-            if selectedSection != .tracks {
-                Button("Show") { selectedSection = .tracks }
+            if selectedSection != showSection {
+                Button("Show") { selectedSection = showSection }
                     .controlSize(.small)
             }
             Button("Stop", action: onStop)
@@ -169,6 +170,25 @@ struct ContentView: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(Color.accentColor.opacity(0.12))
+    }
+
+    /// An audio download keeps running when the user leaves the Download Audio
+    /// view, so it needs a follow-along indicator with a way back and a stop.
+    /// The view shows its own progress, so only surface this elsewhere.
+    @ViewBuilder
+    private var backgroundDownloadBanner: some View {
+        if audioDownloadJobs.isDownloading, selectedSection != .youtubeRip {
+            backgroundJobBar(text: backgroundDownloadText, showSection: .youtubeRip) {
+                audioDownloadJobs.cancel()
+            }
+        }
+    }
+
+    private var backgroundDownloadText: String {
+        let progress = audioDownloadJobs.total > 0
+            ? " (\(audioDownloadJobs.completed) of \(audioDownloadJobs.total))"
+            : ""
+        return "Downloading audio\(progress) in the background"
     }
 
     private var backgroundJobText: String {
@@ -184,6 +204,7 @@ struct ContentView: View {
             SeratoRunningBanner(model: seratoRunning)
             DependencyReadinessBanner(model: dependencyReadiness)
             backgroundTagJobsBanner
+            backgroundDownloadBanner
             HSplitView {
                 sidebar
                 middleContent
