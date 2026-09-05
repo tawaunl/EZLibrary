@@ -42,9 +42,15 @@ struct CollapsibleSidePanel<Content: View>: View {
             .buttonStyle(.plain)
             .help("Show \(title)")
 
-            Image(systemName: systemImage)
-                .font(.system(size: 15, weight: .regular))
-                .foregroundStyle(.secondary)
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) { isCollapsed = false }
+            } label: {
+                Image(systemName: systemImage)
+                    .font(.system(size: 15, weight: .regular))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Show \(title)")
 
             Spacer(minLength: 0)
         }
