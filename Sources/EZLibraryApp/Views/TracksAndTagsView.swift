@@ -75,6 +75,8 @@ struct TracksAndTagsView: View {
     var onAudioEdited: (() -> Void)?
 
     @AppStorage("SeratoToolsConfirmTrackDeleteActions") private var confirmDeleteActions = true
+    @AppStorage("TracksCratePanelWidth") private var cratePanelWidth: Double = 280
+    @AppStorage("TracksCratePanelCollapsed") private var cratePanelCollapsed = false
     @State private var selectedScopeID: String = Self.allTracksID
     @State private var selectedTracks: [Track] = []
     @State private var metadataLookupTrack: Track?
@@ -292,9 +294,20 @@ struct TracksAndTagsView: View {
     /// every edit because no single expression was at fault — the chain was.
     private var contentWithSheets: some View {
         VStack(spacing: 0) {
-            HSplitView {
-                crateListPane
-                    .frame(minWidth: 260, idealWidth: 280, maxWidth: 320)
+            HStack(spacing: 0) {
+                CollapsibleSidePanel(
+                    title: "Crates",
+                    systemImage: "square.stack",
+                    isCollapsed: $cratePanelCollapsed,
+                    width: Binding(
+                        get: { CGFloat(cratePanelWidth) },
+                        set: { cratePanelWidth = Double($0) }
+                    ),
+                    minWidth: 220,
+                    maxWidth: 520
+                ) {
+                    crateListPane
+                }
 
                 VStack(alignment: .leading, spacing: 10) {
                     statsHeader

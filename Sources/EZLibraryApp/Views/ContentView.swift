@@ -48,8 +48,17 @@ struct ContentView: View {
     private static let recentLibraryFoldersDefaultsKey = "SeratoToolsRecentLibraryFolders"
     private static let recentCentralFoldersDefaultsKey = "SeratoToolsRecentCentralFolders"
 
-    private let sidebarWidth: CGFloat = 220
-    private let middlePaneWidth: CGFloat = 320
+    private static let sidebarItems: [(section: SidebarSection, title: String, icon: String)] = [
+        (.tracks, "Tracks & Tags", "music.note.list"),
+        (.duplicates, "Duplicates", "rectangle.on.rectangle"),
+        (.playlistMatch, "PlaylistMatch", "music.quarternote.3"),
+        (.addMusic, "Add Music", "plus.square.on.square"),
+        (.youtubeRip, "Download Audio", "arrow.down.circle"),
+        (.crates, "Crates", "square.stack"),
+        (.missingTracks, "Missing Tracks", "exclamationmark.triangle"),
+        (.backup, "Backup", "externaldrive.badge.plus"),
+        (.libraryConsolidation, "Library Consolidation", "arrow.triangle.merge")
+    ]
 
     @EnvironmentObject private var libraryService: LibraryService
     @EnvironmentObject private var dependencyReadiness: DependencyReadinessModel
@@ -93,6 +102,10 @@ struct ContentView: View {
     @State private var audioActivationToken = 0
     @AppStorage(Self.confirmDeleteActionsDefaultsKey) private var confirmDeleteActions = true
     @AppStorage(SeratoFeatureFlags.mainMusicFolderDefaultsKey) private var centralMusicFolderPath = ""
+    @AppStorage("CratesPanelWidth") private var cratesPanelWidth: Double = 320
+    @AppStorage("CratesPanelCollapsed") private var cratesPanelCollapsed = false
+    @AppStorage("NavSidebarWidth") private var navSidebarWidth: Double = 220
+    @AppStorage("NavSidebarCollapsed") private var navSidebarCollapsed = false
 
     private var totalCratesCount: Int {
         libraryService.crates.count
@@ -458,18 +471,85 @@ struct ContentView: View {
     }
 
     private var sidebar: some View {
-        List(selection: $selectedSection) {
-            Label("Tracks & Tags", systemImage: "music.note.list").tag(SidebarSection.tracks)
-            Label("Duplicates", systemImage: "rectangle.on.rectangle").tag(SidebarSection.duplicates)
-            Label("PlaylistMatch", systemImage: "music.quarternote.3").tag(SidebarSection.playlistMatch)
-            Label("Add Music", systemImage: "plus.square.on.square").tag(SidebarSection.addMusic)
-            Label("Download Audio", systemImage: "arrow.down.circle").tag(SidebarSection.youtubeRip)
-            Label("Crates", systemImage: "square.stack").tag(SidebarSection.crates)
-            Label("Missing Tracks", systemImage: "exclamationmark.triangle").tag(SidebarSection.missingTracks)
-            Label("Backup", systemImage: "externaldrive.badge.plus").tag(SidebarSection.backup)
-            Label("Library Consolidation", systemImage: "arrow.triangle.merge").tag(SidebarSection.libraryConsolidation)
+        Group {
+            if navSidebarCollapsed {
+                collapsedSidebar
+            } else {
+                expandedSidebar
+            }
         }
-        .frame(minWidth: sidebarWidth, idealWidth: sidebarWidth, maxWidth: sidebarWidth)
+    }
+
+    private var expandedSidebar: some View {
+        HStack(spacing: 0) {
+            VStack(spacing: 0) {
+                HStack {
+                    Spacer(minLength: 0)
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.18)) { navSidebarCollapsed = true }
+                    } label: {
+                        Image(systemName: "sidebar.left")
+                    }
+                    .buttonStyle(.plain)
+                    .help("Collapse sidebar to icons")
+                }
+                .padding(.horizontal, 10)
+                .padding(.top, 8)
+
+                List(selection: $selectedSection) {
+                    ForEach(Self.sidebarItems, id: \.section) { item in
+                        Label(item.title, systemImage: item.icon).tag(item.section)
+                    }
+                }
+            }
+            .frame(width: CGFloat(navSidebarWidth))
+
+            PanelResizeHandle(
+                width: Binding(
+                    get: { CGFloat(navSidebarWidth) },
+                    set: { navSidebarWidth = Double($0) }
+                ),
+                minWidth: 180,
+                maxWidth: 340
+            )
+        }
+    }
+
+    private var collapsedSidebar: some View {
+        VStack(spacing: 6) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) { navSidebarCollapsed = false }
+            } label: {
+                Image(systemName: "sidebar.left")
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 8)
+            .help("Expand sidebar")
+
+            ForEach(Self.sidebarItems, id: \.section) { item in
+                Button {
+                    selectedSection = item.section
+                } label: {
+                    Image(systemName: item.icon)
+                        .font(.system(size: 15))
+                        .frame(width: 30, height: 30)
+                        .background(
+                            RoundedRectangle(cornerRadius: 7)
+                                .fill(selectedSection == item.section ? Color.accentColor.opacity(0.9) : Color.clear)
+                        )
+                        .foregroundStyle(selectedSection == item.section ? Color.white : Color.primary)
+                }
+                .buttonStyle(.plain)
+                .help(item.title)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 6)
+        .frame(width: 46)
+        .frame(maxHeight: .infinity)
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+        .overlay(alignment: .trailing) { Divider() }
     }
 
     @ViewBuilder
@@ -571,15 +651,26 @@ struct ContentView: View {
 
                 cratesStatsHeader
 
-                HStack(spacing: 12) {
-                    CrateTreeView(
-                        crateHierarchy: crateHierarchy,
-                        smartCrateHierarchy: smartCrateHierarchy,
-                        scope: $crateScope,
-                        listFilterMode: crateListFilterMode,
-                        onCratesChanged: reloadLibrary
-                    )
-                    .frame(minWidth: middlePaneWidth, idealWidth: middlePaneWidth, maxWidth: middlePaneWidth)
+                HStack(spacing: 0) {
+                    CollapsibleSidePanel(
+                        title: "Crates",
+                        systemImage: "square.stack",
+                        isCollapsed: $cratesPanelCollapsed,
+                        width: Binding(
+                            get: { CGFloat(cratesPanelWidth) },
+                            set: { cratesPanelWidth = Double($0) }
+                        ),
+                        minWidth: 240,
+                        maxWidth: 620
+                    ) {
+                        CrateTreeView(
+                            crateHierarchy: crateHierarchy,
+                            smartCrateHierarchy: smartCrateHierarchy,
+                            scope: $crateScope,
+                            listFilterMode: crateListFilterMode,
+                            onCratesChanged: reloadLibrary
+                        )
+                    }
 
                     Group {
                         switch crateScope {
@@ -611,6 +702,7 @@ struct ContentView: View {
                         }
                     }
                     .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .padding(.leading, 12)
                 }
             }
             .padding(.horizontal, 8)
