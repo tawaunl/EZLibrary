@@ -9,6 +9,13 @@ version (`CFBundleShortVersionString.CFBundleVersion`) and are used verbatim by
 > the highest priority — see [SECURITY.md](../SECURITY.md). This changelog is kept
 > up to date so you can see exactly what changed and when.
 
+## 1.0.6
+
+### Downloaded audio no longer stores the source link in the comment tag
+- Ripping a track from YouTube, SoundCloud or any other source used to stamp the
+  original web link into the ID3 comment. That link now stays blank, so imported
+  tracks land in your library with a clean comment field ready for your own cue notes.
+
 ## 1.0.5
 
 ### Automatic cleanup of stale library locations
