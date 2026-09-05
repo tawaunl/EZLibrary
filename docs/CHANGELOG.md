@@ -9,6 +9,16 @@ version (`CFBundleShortVersionString.CFBundleVersion`) and are used verbatim by
 > the highest priority — see [SECURITY.md](../SECURITY.md). This changelog is kept
 > up to date so you can see exactly what changed and when.
 
+## 1.0.7
+
+### Resizable and collapsible side panels
+- The Crates list next to the track list — and the crate/scope panel in Tracks &amp; Tags —
+  can now be dragged wider or narrower, so you can hand more room to the track columns on a
+  smaller screen or give the crate tree more space when you need it.
+- Each panel collapses to a slim icon strip with a single click, and clicking that icon (or
+  the arrow) brings it right back. The main sidebar collapses the same way, shrinking to
+  icon-only navigation. Panel widths and collapsed state are remembered between launches.
+
 ## 1.0.6
 
 ### Downloaded audio no longer stores the source link in the comment tag
