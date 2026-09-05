@@ -293,6 +293,7 @@ FEATURES: list[Feature] = [
             ("No accidental doubles", "Adding a track a crate already lists does nothing, rather than filing it twice — Serato reads a repeated path as a second copy of the track."),
             ("Fast filtering", "Filter within a crate and sort by any column to find what you are after."),
             ("Crate-scoped operations", "Use a crate as the scope for bulk tag edits, duplicate scans and single-crate backups."),
+            ("Resize or collapse the tree", "Drag the crate panel wider or narrower to hand more room to the track columns, or collapse it to a slim icon strip with one click — the width and collapsed state are remembered between launches."),
             ("Safe deletes", "Deleting a crate moves it to the Trash rather than destroying it."),
         ),
         steps=(
@@ -710,7 +711,7 @@ def cta_band() -> str:
         Download for macOS
       </a>
     </div>
-        <p class="meta-line">v<span data-latest-version>1.0.3</span> · <span data-latest-size>9.1 MB</span> · macOS 13+ · Apple Silicon &amp; Intel</p>
+        <p class="meta-line">v<span data-latest-version>1.0.7</span> · <span data-latest-size>9.1 MB</span> · macOS 13+ · Apple Silicon &amp; Intel</p>
   </div>
 </section>"""
 
