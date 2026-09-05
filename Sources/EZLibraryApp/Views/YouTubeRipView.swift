@@ -949,7 +949,7 @@ struct YouTubeRipView: View {
                     id3Title = parsed.title
                     id3Artist = parsed.artist
                     id3Album = ""
-                    id3Comment = info.webpageURL?.absoluteString ?? ""
+                    id3Comment = ""
                     if info.uploadDate.count >= 4 {
                         id3Year = String(info.uploadDate.prefix(4))
                     } else {
@@ -1022,7 +1022,7 @@ struct YouTubeRipView: View {
                 fallbackTitle: parsedInfo?.title,
                 fallbackArtist: parsedInfo?.artist,
                 fallbackAlbum: nil,
-                fallbackComment: loadedInfoSnapshot?.webpageURL?.absoluteString
+                fallbackComment: nil
             )
 
         let request = BackgroundAudioDownloadModel.Request(

@@ -325,10 +325,6 @@ final class BackgroundAudioDownloadModel: ObservableObject {
             ).artist
         }
 
-        if out.comment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            out.comment = fallbackInfo?.webpageURL?.absoluteString ?? ""
-        }
-
         if out.year == nil,
            let uploadDate = fallbackInfo?.uploadDate,
            uploadDate.count >= 4,

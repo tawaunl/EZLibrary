@@ -1922,7 +1922,7 @@ struct PlaylistMatchView: View {
             artist: entry.artist,
             album: "",
             genre: "",
-            comment: sourceVideoURL.absoluteString,
+            comment: "",
             key: "",
             bpm: nil,
             year: nil
