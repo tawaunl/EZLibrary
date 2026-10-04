@@ -334,6 +334,15 @@ struct TrackMetadataEditorSheet: View {
         }
         .padding(16)
         .frame(width: 560)
+        // Both ways in are a "Lookup ID3 Online" button, so the search is what
+        // the user came for: start it rather than wait for a second click.
+        // A track with no title, artist, or album has nothing to search on,
+        // and an error on open would read as a failure the user didn't cause.
+        .task {
+            let terms = [title, artist, album].map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            guard terms.contains(where: { !$0.isEmpty }) else { return }
+            searchOnline()
+        }
     }
 
     private func row(_ label: String, text: Binding<String>) -> some View {
