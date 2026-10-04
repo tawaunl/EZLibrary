@@ -568,6 +568,19 @@ a.card::after {
 }
 .board-status { padding: 40px 18px; }
 
+.column-more {
+  display: block; width: 100%;
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 9px; padding: 10px;
+  color: var(--text-2); font: inherit; font-size: 0.86rem; font-weight: 600;
+  cursor: pointer; text-align: center;
+  transition: all 0.16s ease;
+}
+.column-more:hover {
+  border-color: rgba(233, 179, 60, 0.5); color: var(--gold-bright);
+  background: rgba(233, 179, 60, 0.1);
+}
+
 .skeleton {
   height: 78px; border-radius: 11px;
   background: linear-gradient(100deg, var(--surface) 30%, var(--surface-2) 50%, var(--surface) 70%);

@@ -26,7 +26,7 @@
   var REPO = "tawaunl/EZLibrary";
   var CACHE_KEY = "ezlibrary-roadmap-v1";
   var CACHE_MS = 10 * 60 * 1000;
-  var COMPLETED_LIMIT = 9;
+  var VISIBLE_LIMIT = 5;
   var BODY_CHARS = 165;
 
   var SESSION_KEY = "ezlibrary-roadmap-session-v1";
@@ -46,6 +46,8 @@
   var AUTH_ENABLED = !!(CLIENT_ID && FUNCTIONS);
 
   var session = readSession();
+  var lastIssues = null;
+  var expandedColumns = {};
 
   var COLUMNS = [
     {
@@ -73,7 +75,6 @@
       sort: function (a, b) {
         return Date.parse(b.closed_at || 0) - Date.parse(a.closed_at || 0);
       },
-      limit: COMPLETED_LIMIT,
       empty: "Shipped work will show up here."
     }
   ];
@@ -171,6 +172,7 @@
       showStatus("No roadmap items yet — be the first to suggest one.", false);
       return;
     }
+    lastIssues = issues;
 
     COLUMNS.forEach(function (column) {
       var body = document.getElementById("col-" + column.id);
@@ -178,7 +180,8 @@
       if (!body) return;
 
       var items = issues.filter(column.match).sort(column.sort);
-      var shown = column.limit ? items.slice(0, column.limit) : items;
+      var isExpanded = !!expandedColumns[column.id];
+      var shown = isExpanded ? items : items.slice(0, VISIBLE_LIMIT);
 
       body.textContent = "";
       if (count) count.textContent = String(items.length);
@@ -190,7 +193,28 @@
       shown.forEach(function (issue) {
         body.appendChild(card(issue));
       });
+
+      if (items.length > VISIBLE_LIMIT) {
+        body.appendChild(moreControl(column, items.length, isExpanded));
+      }
     });
+  }
+
+  /* "View all N" / "Show fewer" toggle at the bottom of a column that has
+     more items than VISIBLE_LIMIT. Re-renders from the already-fetched
+     issues, so toggling never refetches. */
+  function moreControl(column, total, isExpanded) {
+    var button = document.createElement("button");
+    button.type = "button";
+    button.className = "column-more";
+    button.textContent = isExpanded
+      ? "Show fewer"
+      : "View all " + total + " →";
+    button.addEventListener("click", function () {
+      expandedColumns[column.id] = !isExpanded;
+      if (lastIssues) render(lastIssues);
+    });
+    return button;
   }
 
   function card(issue) {

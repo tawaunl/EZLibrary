@@ -72,3 +72,41 @@ touch `site/`. Do that as part of the same change, before pushing:
 4. Minor changes don't need a new feature card — the changelog entry is enough.
 
 Site deploy is automatic: `pages.yml` runs on every push to `main` that touches `site/**`.
+
+## Roadmap board
+
+The board at `site/roadmap/` (rendered by [site/assets/js/roadmap.js](site/assets/js/roadmap.js))
+is a live view over GitHub Issues labelled `roadmap`, not generated content —
+edit it directly, not through a script.
+
+- Each column shows at most 5 items (`VISIBLE_LIMIT`) with a "View all" button
+  that expands in place from the already-fetched issues; it doesn't refetch.
+- An issue moves to **In Progress** by getting the `in progress` label, and to
+  **Recently Completed** just by being closed. [.github/workflows/roadmap-in-progress.yml](.github/workflows/roadmap-in-progress.yml)
+  adds that label automatically when a PR whose title/body uses a closing
+  keyword ("Fixes #123", "Closes #123", etc.) is opened against a roadmap
+  issue — that's the "move to In Progress as we're building it" mechanism.
+  It only acts on issues that already carry the `roadmap` label, and it
+  doesn't revert the label if the PR is later abandoned without merging; a
+  maintainer removes it by hand in that case.
+
+### File the roadmap issue yourself — the user forgets to
+
+The user doesn't reliably file a roadmap issue before asking for a feature or
+enhancement, so whichever agent does the work is responsible for keeping the
+board honest. **Recently Completed only shows closed issues that carry the
+`roadmap` label** — nothing lands there on its own, so skipping this step is
+why things go missing from that column.
+
+- When you build any **feature or enhancement** (not a plain bug fix), check
+  for an existing roadmap issue first: `gh issue list --label roadmap --search "<keywords>"`.
+- If none exists, file one yourself, labelled at creation so it's never
+  dropped: `gh issue create --title "..." --body "..." --label roadmap`.
+- Reference its number in the PR with a closing keyword (`Fixes #123`) so
+  it's moved to **In Progress** automatically while the PR is open, and to
+  **Recently Completed** automatically when the PR merges and the issue closes.
+- If you only notice after the fact that something already shipped without
+  ever getting an issue — including a past release — don't let it stay
+  untracked: file the issue, then close it right away (`gh issue close <N>`)
+  so it still shows up as shipped.
+- Do this without being asked each time; it's the whole point of this note.

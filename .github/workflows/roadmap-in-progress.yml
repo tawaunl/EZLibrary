@@ -1,0 +1,93 @@
+name: "Roadmap: mark in progress"
+
+# When a PR says it closes a roadmap issue ("Fixes #123"), label that issue
+# "in progress" so it moves from "Requested & Planned" to "In Progress" on
+# the live roadmap board (site/roadmap/, read by assets/js/roadmap.js). The
+# issue moves itself on to "Recently Completed" when the PR merges and
+# GitHub closes it — this workflow only handles the "work has started" half.
+#
+# Runs as pull_request_target, not pull_request, so forked-repo PRs (this is
+# a GPLv3 project that takes outside contributions) get labelled too — the
+# default token for `pull_request` is read-only on a fork PR. This is safe
+# here because the job never checks out the PR's code; it only reads
+# `github.event.pull_request.title`/`.body`, trusted event metadata that
+# can't run anything on the fork's behalf.
+
+on:
+  pull_request_target:
+    types: [opened, reopened, edited, ready_for_review]
+
+concurrency:
+  group: roadmap-in-progress-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+# Least privilege: only issues need write access, and only to add a label.
+permissions:
+  issues: write
+  pull-requests: read
+
+jobs:
+  label-linked-issues:
+    name: Label closing-referenced issues
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add "in progress" to issues this PR closes
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // GitHub's own closing-keyword set: close(s/d), fix(es/ed), resolve(s/d).
+            const CLOSES = /\b(close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)\b\s*:?\s*#(\d+)/gi;
+
+            const pr = context.payload.pull_request;
+            const text = `${pr.title}\n${pr.body || ""}`;
+            const numbers = new Set();
+            let match;
+            while ((match = CLOSES.exec(text)) !== null) {
+              numbers.add(Number(match[2]));
+            }
+
+            if (numbers.size === 0) {
+              core.info("No closing keywords referencing an issue found — nothing to label.");
+              return;
+            }
+
+            for (const issue_number of numbers) {
+              let issue;
+              try {
+                ({ data: issue } = await github.rest.issues.get({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number,
+                }));
+              } catch (error) {
+                core.info(`#${issue_number}: couldn't look it up (${error.message}) — skipping.`);
+                continue;
+              }
+
+              if (issue.pull_request) {
+                core.info(`#${issue_number} is a pull request, not an issue — skipping.`);
+                continue;
+              }
+              if (issue.state !== "open") {
+                core.info(`#${issue_number} is already closed — skipping.`);
+                continue;
+              }
+
+              const labels = issue.labels.map((label) => (typeof label === "string" ? label : label.name));
+              if (!labels.includes("roadmap")) {
+                core.info(`#${issue_number} isn't on the roadmap board — skipping.`);
+                continue;
+              }
+              if (labels.includes("in progress")) {
+                core.info(`#${issue_number} is already marked in progress.`);
+                continue;
+              }
+
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number,
+                labels: ["in progress"],
+              });
+              core.info(`#${issue_number}: labelled "in progress".`);
+            }
