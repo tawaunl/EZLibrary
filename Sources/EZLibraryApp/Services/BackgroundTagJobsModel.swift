@@ -82,6 +82,13 @@ final class BackgroundTagJobsModel: ObservableObject {
         self.isRunning = true
     }
 
+    /// Renames the running job, for one that moves into a second stage
+    /// (a verification run waiting on its iTunes retries).
+    func relabel(_ label: String) {
+        guard isRunning else { return }
+        self.label = label
+    }
+
     func report(done: Int, total: Int) {
         self.done = done
         self.total = total

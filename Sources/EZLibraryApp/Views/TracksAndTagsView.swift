@@ -242,8 +242,10 @@ struct TracksAndTagsView: View {
             isPresented: $showVerifiedApplyPrompt,
             titleVisibility: .visible
         ) {
-            Button("Check \(selectedTracks.count) Track\(selectedTracks.count == 1 ? "" : "s")") {
-                runVerifiedBulkApply()
+            ForEach(bulkEngineChoices, id: \.self) { engine in
+                Button("Check \(selectedTracks.count) with \(bulkEngineButtonName(engine))") {
+                    runVerifiedBulkApply(engine: engine)
+                }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -1091,20 +1093,36 @@ struct TracksAndTagsView: View {
     private func startVerifiedBulkApply() {
         guard !selectedTracks.isEmpty else { return }
 
-        // Verifying is no longer nearly free: the cloud tier bills per track and
-        // the on-device tier takes seconds per track. Confirm before spending
-        // either, rather than after.
-        if engineResolution.didFallBack
-            || verificationEngine.isPaid
-            || selectedTracks.count > Self.bulkConfirmThreshold {
-            showVerifiedApplyPrompt = true
-        } else {
-            runVerifiedBulkApply()
-        }
+        // Always asked: the prompt is where the engine is chosen, and the
+        // cloud tier bills per track while the on-device one takes seconds
+        // per track, so the choice is worth making each time.
+        showVerifiedApplyPrompt = true
     }
 
-    /// Selections at or below this run without a pre-flight prompt.
-    private static let bulkConfirmThreshold = 25
+    /// The engines offered for a bulk apply: Apple's on-device model and the
+    /// cloud model, whichever can run here, with the one last chosen for
+    /// verification first. The free cross-check is offered only when neither
+    /// can run, so the button never offers nothing.
+    private var bulkEngineChoices: [TagVerificationEngineKind] {
+        let available = [TagVerificationEngineKind.onDevice, .cloudModel]
+            .filter { TagVerificationCoordinator.availability(of: $0).isAvailable }
+        guard !available.isEmpty else { return [.consensus] }
+        let preferred = verificationEngine
+        return available.filter { $0 == preferred } + available.filter { $0 != preferred }
+    }
+
+    private func bulkEngineButtonName(_ engine: TagVerificationEngineKind) -> String {
+        switch engine {
+        case .consensus:
+            return "the Free Database Cross-Check"
+        case .onDevice:
+            return "On-Device AI"
+        case .cloudModel:
+            let options = TagVerificationCoordinator.cloudOptionsFromSettings()
+            let name = options.provider == .anthropic ? options.model.displayName : (options.modelName ?? "your provider")
+            return "Cloud AI (\(name))"
+        }
+    }
 
     private var engineResolution: TagVerificationCoordinator.EngineResolution {
         TagVerificationCoordinator.resolveEngine()
@@ -1182,29 +1200,27 @@ struct TracksAndTagsView: View {
     }
 
     private var verifiedApplyPromptMessage: String {
-        let engine = verificationEngine
         let count = selectedTracks.count
-        let cost = TagVerificationCoordinator.costText(
-            for: engine,
-            trackCount: count,
-            cloudOptions: TagVerificationCoordinator.cloudOptionsFromSettings()
-        )
-        var message = ""
-        // If the chosen engine cannot run, say so here rather than quietly
-        // running something else and letting the results imply it.
-        if let requested = engineResolution.requested {
-            message += "\(requested.displayName) can't run: "
-                + "\(engineResolution.fallbackReason ?? "it is not configured."). "
-                + "Using \(engine.displayName) instead. "
+        let cloudOptions = TagVerificationCoordinator.cloudOptionsFromSettings()
+        var lines = ["Choose what checks \(count) track\(count == 1 ? "" : "s"):"]
+        for engine in bulkEngineChoices {
+            var line = "• \(bulkEngineButtonName(engine)): "
+                + TagVerificationCoordinator.costText(for: engine, trackCount: count, cloudOptions: cloudOptions)
+            if let duration = TagVerificationCoordinator.estimatedDurationText(for: engine, trackCount: count) {
+                line += " About \(duration)."
+            }
+            lines.append(line)
         }
-        message += "\(count) track\(count == 1 ? "" : "s") will be checked with \(engine.displayName). \(cost)"
-        if let duration = TagVerificationCoordinator.estimatedDurationText(for: engine, trackCount: count) {
-            message += " This will take \(duration) — you can stop it partway and keep what it found."
+        // Say why an engine is missing rather than leaving the user to wonder.
+        for engine in [TagVerificationEngineKind.onDevice, .cloudModel] where !bulkEngineChoices.contains(engine) {
+            let reason = TagVerificationCoordinator.availability(of: engine).unavailableReason ?? "it is not set up."
+            lines.append("• \(engine.displayName) can't run: \(reason)")
         }
-        return message + " Nothing is written until you confirm the changes it finds."
+        lines.append("You can stop it partway and keep what it found. Nothing is written until you confirm the changes it finds.")
+        return lines.joined(separator: "\n")
     }
 
-    private func runVerifiedBulkApply() {
+    private func runVerifiedBulkApply(engine: TagVerificationEngineKind) {
         guard backgroundTagJobs.canStart else { return }
         let tracksSnapshot = backgroundTagJobs.unlockedTracks(selectedTracks)
         guard !tracksSnapshot.isEmpty else { return }
@@ -1215,7 +1231,6 @@ struct TracksAndTagsView: View {
         backgroundTagJobs.begin(label: "Applying verified tags", lock: tracksSnapshot)
 
         let onlyFillEmptySnapshot = onlyFillEmpty
-        let engine = verificationEngine
         // All five. Title is included now that every engine's title correction
         // passes through the descriptor-preserving choke point in
         // `metadataUpdate(applying:)`, so a bulk run cannot strip the version
@@ -1239,10 +1254,14 @@ struct TracksAndTagsView: View {
             var abortedMessage: String?
             var completed = 0
             var total = tracksSnapshot.count
+            // Nothing is ticked or applied until the run ends, so every track
+            // that skipped iTunes stays open for a retry; the confirmation
+            // waits for them, and a better answer replaces the first.
             let events = TagVerificationCoordinator.verify(
                 tracks: tracksSnapshot,
                 using: engine,
-                cloudOptions: cloudOptions
+                cloudOptions: cloudOptions,
+                iTunesRetryCheck: { _ in true }
             )
             for await event in events {
                 if Task.isCancelled { break }
@@ -1279,8 +1298,31 @@ struct TracksAndTagsView: View {
                 case let .aborted(message):
                     abortedMessage = message
                     log?.recordAborted(message: message)
-                case .finished, .retried, .iTunesRetriesPending:
-                    // No iTunes retries are asked for here, so none arrive.
+                case let .retried(track, improvement, _):
+                    guard let improvement else { continue }
+                    updates.removeAll { $0.0.id == track.id }
+                    decisions.removeAll { $0.path == track.fileURL.path }
+                    let fields = TagVerificationCoordinator.autoApplicableFields(
+                        in: improvement,
+                        engine: engine,
+                        limitedTo: writableFields,
+                        onlyFillEmpty: onlyFillEmptySnapshot
+                    )
+                    let chosen = Set(improvement.proposedChanges.filter { fields.contains($0.field) }.map(\.id))
+                    log?.record(improvement, preselected: chosen)
+                    guard !fields.isEmpty else { continue }
+                    updates.append((improvement.track, improvement.metadataUpdate(applying: fields)))
+                    decisions.append(TagVerificationRunLog.AppliedTrack(
+                        result: improvement,
+                        selectedFieldIDs: chosen,
+                        artworkSelected: false,
+                        artworkFailed: false
+                    ))
+                case let .iTunesRetriesPending(pending):
+                    backgroundTagJobs.relabel(pending > 0
+                        ? "Applying verified tags — searching iTunes again for \(pending) track\(pending == 1 ? "" : "s")"
+                        : "Applying verified tags")
+                case .finished:
                     break
                 }
             }
