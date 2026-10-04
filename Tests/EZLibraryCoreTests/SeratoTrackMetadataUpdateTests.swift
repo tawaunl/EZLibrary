@@ -34,7 +34,8 @@ struct SeratoTrackMetadataUpdateTests {
         #expect(metadata.title == "Dump Truck")
         #expect(metadata.artist == "E-40 & Too $hort")
         #expect(metadata.album == "Single")
-        #expect(metadata.genre == "Hip-Hop")
+        // Trimmed, and spelled the library's one way for hip hop.
+        #expect(metadata.genre == "Hip Hop")
         #expect(metadata.comment == "from youtube")
         #expect(metadata.key == "8A")
     }
@@ -55,7 +56,7 @@ struct SeratoTrackMetadataUpdateTests {
         #expect(metadata.artist == "Drake")
         #expect(metadata.title == "Family Matters")
         #expect(metadata.album == "Album")
-        #expect(metadata.genre == "Rap")
+        #expect(metadata.genre == "Hip Hop")
         #expect(metadata.comment == "note")
         #expect(metadata.key == "1A")
     }
@@ -119,7 +120,7 @@ struct SeratoTrackMetadataUpdateTests {
         #expect(track.title == "Dump Truck")
         #expect(track.artist == "E-40 & Too $hort")
         #expect(track.album == "Single")
-        #expect(track.genre == "Hip-Hop")
+        #expect(track.genre == "Hip Hop")
     }
 
     /// Padding used to survive into the rendered file name as a doubled

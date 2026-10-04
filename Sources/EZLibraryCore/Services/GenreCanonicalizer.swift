@@ -29,11 +29,8 @@ public enum GenreCanonicalizer {
     /// a taxonomy on someone's library.
     static let canonicalSpellings: [String: String] = {
         var map: [String: String] = [:]
-        for variant in [
-            "hip hop", "hiphop", "hip hop rap", "rap hip hop", "hip hop and rap",
-            "rap and hip hop", "rap", "hip hop music", "rap music"
-        ] {
-            map[variant] = "Hip Hop"
+        for variant in hipHopVariants {
+            map[variant] = hipHop
         }
         for variant in ["r and b", "rnb", "r b", "rhythm and blues", "r b soul", "soul r b"] {
             map[variant] = "R&B"
@@ -43,6 +40,31 @@ public enum GenreCanonicalizer {
         }
         return map
     }()
+
+    /// The one spelling this library uses for hip hop and rap.
+    public static let hipHop = "Hip Hop"
+
+    /// Every way the sources and users write hip hop or rap, as normalised
+    /// keys: "Hip-Hop", "Rap", "Hip-Hop/Rap", "Rap/Hip Hop", "HipHop/Rap"…
+    static let hipHopVariants: Set<String> = [
+        "hip hop", "hiphop", "hip hop rap", "rap hip hop", "hip hop and rap",
+        "rap and hip hop", "rap", "hip hop music", "rap music",
+        "hiphop rap", "rap hiphop", "hip hop rap music"
+    ]
+
+    /// The genre as every tag write stores it: hip hop and rap in any
+    /// spelling become "Hip Hop"; anything else is only trimmed.
+    ///
+    /// Applied at the one point every write passes through
+    /// (`SeratoTrackMetadataUpdate`), so a manual edit, an online lookup, a
+    /// bulk apply and an AI verification all store the same genre. Narrower
+    /// than `canonical` on purpose: the R&B and Drum & Bass spellings are
+    /// unified when comparing sources, but rewriting a "DnB" someone typed
+    /// by hand was not asked for.
+    public static func forWriting(_ rawGenre: String) -> String {
+        let trimmed = rawGenre.trimmingCharacters(in: .whitespacesAndNewlines)
+        return hipHopVariants.contains(normalizedKey(trimmed)) ? hipHop : trimmed
+    }
 
     /// Genres that count as electronic for the year rule.
     static let electronicGenres: Set<String> = [

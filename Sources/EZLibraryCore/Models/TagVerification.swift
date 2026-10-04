@@ -53,7 +53,10 @@ public struct TagFieldVerification: Sendable, Hashable, Identifiable {
         self.field = field
         self.verdict = verdict
         self.currentValue = currentValue
-        self.proposedValue = proposedValue
+        // A genre is proposed as it will be written: "Hip-Hop/Rap" shows as
+        // "Hip Hop", and is then no change at all for a track already tagged
+        // "Hip Hop".
+        self.proposedValue = field == .genre ? GenreCanonicalizer.forWriting(proposedValue) : proposedValue
         self.confidence = confidence
         self.evidence = evidence
         self.sourceURL = sourceURL

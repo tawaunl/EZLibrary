@@ -26,7 +26,9 @@ public struct SeratoTrackMetadataUpdate: Sendable {
     public var title: String { didSet { title = Self.trimmed(title) } }
     public var artist: String { didSet { artist = Self.trimmed(artist) } }
     public var album: String { didSet { album = Self.trimmed(album) } }
-    public var genre: String { didSet { genre = Self.trimmed(genre) } }
+    /// Also spelled one way for hip hop and rap ("Hip-Hop", "Rap" → "Hip
+    /// Hop"): every tag write in the app passes through here.
+    public var genre: String { didSet { genre = GenreCanonicalizer.forWriting(genre) } }
     public var comment: String { didSet { comment = Self.trimmed(comment) } }
     public var key: String { didSet { key = Self.trimmed(key) } }
     public var bpm: Double?
@@ -50,7 +52,7 @@ public struct SeratoTrackMetadataUpdate: Sendable {
         self.title = Self.trimmed(title)
         self.artist = Self.trimmed(artist)
         self.album = Self.trimmed(album)
-        self.genre = Self.trimmed(genre)
+        self.genre = GenreCanonicalizer.forWriting(genre)
         self.comment = Self.trimmed(comment)
         self.key = Self.trimmed(key)
         self.bpm = bpm
