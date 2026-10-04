@@ -136,6 +136,13 @@ public final class TagVerificationRunLog: @unchecked Sendable {
             sourceURLs: result.sourceURLs.map(\.absoluteString),
             usage: result.usage.map(UsageRecord.init),
             costUSD: cost,
+            timings: result.timings.map { timings in
+                TimingsRecord(
+                    lookupSeconds: timings.lookupSeconds,
+                    modelSeconds: timings.modelSeconds,
+                    toolCalls: timings.toolCalls
+                )
+            },
             fields: result.fields.map { field in
                 FieldRecord(
                     field: field.field.rawValue,
@@ -337,6 +344,12 @@ public final class TagVerificationRunLog: @unchecked Sendable {
         }
     }
 
+    private struct TimingsRecord: Encodable {
+        let lookupSeconds: Double
+        let modelSeconds: Double
+        let toolCalls: Int
+    }
+
     private struct FieldRecord: Encodable {
         let field: String
         let verdict: String
@@ -370,6 +383,7 @@ public final class TagVerificationRunLog: @unchecked Sendable {
         let sourceURLs: [String]
         let usage: UsageRecord?
         let costUSD: Double?
+        let timings: TimingsRecord?
         let fields: [FieldRecord]
         let artwork: ArtworkRecord?
     }

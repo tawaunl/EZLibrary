@@ -200,7 +200,8 @@ public enum TagVerificationCoordinator {
             webSearchCount: verification.webSearchCount,
             usage: verification.usage,
             artwork: verification.artwork,
-            neededSearchPass: verification.neededSearchPass
+            neededSearchPass: verification.neededSearchPass,
+            timings: verification.timings
         )
     }
 
@@ -335,7 +336,14 @@ public enum TagVerificationCoordinator {
         case .onDevice:
             #if canImport(FoundationModels)
             if #available(macOS 26.0, *) {
-                return OnDeviceTagVerificationService.verify(tracks: tracks)
+                // The same sources the sheet's "Evidence sources" switches
+                // chose for the free check. Left unset, this engine used to
+                // query every source — MusicBrainz included, at one request a
+                // second and sometimes ten seconds a search — on every track.
+                return OnDeviceTagVerificationService.verify(
+                    tracks: tracks,
+                    sourceSelection: consensusOptions.sourceSelection
+                )
             }
             #endif
             return aborted(availability(of: .onDevice).unavailableReason ?? "The on-device model is unavailable.")

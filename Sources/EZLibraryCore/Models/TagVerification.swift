@@ -111,6 +111,33 @@ public struct TagVerificationUsage: Sendable, Equatable {
     }
 }
 
+/// Where one track's time went, so a slow run can be pinned on the network or
+/// on the model instead of guessed at.
+public struct TagVerificationTimings: Sendable, Equatable {
+    /// Gathering evidence: reading the file's tags and the database lookups.
+    public let lookupSeconds: Double
+    /// Waiting on the model, across every pass.
+    public let modelSeconds: Double
+    /// Searches the model itself asked for through a tool, on top of the
+    /// up-front lookup. Each one is another lookup *and* another round of
+    /// model output.
+    public let toolCalls: Int
+
+    public init(lookupSeconds: Double, modelSeconds: Double, toolCalls: Int = 0) {
+        self.lookupSeconds = lookupSeconds
+        self.modelSeconds = modelSeconds
+        self.toolCalls = toolCalls
+    }
+}
+
+extension Duration {
+    /// Seconds as a Double, for timings that get logged and compared.
+    var seconds: Double {
+        let parts = components
+        return Double(parts.seconds) + Double(parts.attoseconds) / 1e18
+    }
+}
+
 /// A model's published list prices, in USD per million tokens.
 ///
 /// One shape for every provider, so the pre-run estimate, the running spend,
@@ -191,6 +218,8 @@ public struct TrackTagVerification: Sendable, Identifiable {
     /// often the cheap pass was enough — the number every cost decision about
     /// this tier turns on.
     public let neededSearchPass: Bool
+    /// Nil for engines that do not measure it.
+    public let timings: TagVerificationTimings?
 
     public var id: UUID { track.id }
 
@@ -208,7 +237,8 @@ public struct TrackTagVerification: Sendable, Identifiable {
         webSearchCount: Int = 0,
         usage: TagVerificationUsage? = nil,
         artwork: ArtworkProposal? = nil,
-        neededSearchPass: Bool = false
+        neededSearchPass: Bool = false,
+        timings: TagVerificationTimings? = nil
     ) {
         self.track = track
         self.engineName = engineName
@@ -220,6 +250,25 @@ public struct TrackTagVerification: Sendable, Identifiable {
         self.usage = usage
         self.artwork = artwork
         self.neededSearchPass = neededSearchPass
+        self.timings = timings
+    }
+
+    /// The same result with timings attached. Engines measure from outside
+    /// the code that builds the result, so they add it afterwards.
+    public func with(timings: TagVerificationTimings) -> TrackTagVerification {
+        TrackTagVerification(
+            track: track,
+            engineName: engineName,
+            identityConfidence: identityConfidence,
+            identitySummary: identitySummary,
+            fields: fields,
+            sourceURLs: sourceURLs,
+            webSearchCount: webSearchCount,
+            usage: usage,
+            artwork: artwork,
+            neededSearchPass: neededSearchPass,
+            timings: timings
+        )
     }
 
     /// Builds the update that applies exactly the named fields. Every other

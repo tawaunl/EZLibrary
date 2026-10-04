@@ -104,6 +104,8 @@ public enum OnDeviceTagVerificationService {
 
         let session: URLSession
         let sourceSelection: OnlineTrackMetadataLookupService.SourceSelection
+        /// Counts the searches the model asks for, for the run's timings.
+        let calls = CallCounter()
 
         @Generable
         struct Arguments {
@@ -114,6 +116,7 @@ public enum OnDeviceTagVerificationService {
         }
 
         func call(arguments: Arguments) async throws -> String {
+            calls.increment()
             let query = OnlineTrackMetadataLookupService.Query(
                 title: arguments.title,
                 artist: arguments.artist,
@@ -130,6 +133,23 @@ public enum OnDeviceTagVerificationService {
                 return "No database returned a match for that search."
             }
             return OnDeviceTagVerificationService.formattedCandidates(candidates)
+        }
+    }
+
+    final class CallCounter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var count = 0
+
+        func increment() {
+            lock.lock()
+            count += 1
+            lock.unlock()
+        }
+
+        var value: Int {
+            lock.lock()
+            defer { lock.unlock() }
+            return count
         }
     }
 
@@ -225,7 +245,7 @@ public enum OnDeviceTagVerificationService {
 
     public static func verify(
         tracks: [Track],
-        sourceSelection: OnlineTrackMetadataLookupService.SourceSelection = .all,
+        sourceSelection: OnlineTrackMetadataLookupService.SourceSelection = .recommended,
         session: URLSession = OnlineTrackMetadataLookupService.defaultSession
     ) -> AsyncStream<TagVerificationEvent> {
         AsyncStream { continuation in
@@ -279,12 +299,15 @@ public enum OnDeviceTagVerificationService {
 
     public static func verify(
         track: Track,
-        sourceSelection: OnlineTrackMetadataLookupService.SourceSelection = .all,
+        sourceSelection: OnlineTrackMetadataLookupService.SourceSelection = .recommended,
         session: URLSession = OnlineTrackMetadataLookupService.defaultSession
     ) async throws -> TrackTagVerification {
         if let unavailable = availabilityError {
             throw unavailable
         }
+
+        let clock = ContinuousClock()
+        let lookupStart = clock.now
 
         // Read once: the file's own ID3 tags are both what the search uses and
         // what the model judges, the same rule the consensus and cloud engines
@@ -303,18 +326,29 @@ public enum OnDeviceTagVerificationService {
             deduplicate: false
         )) ?? []
 
+        let lookupSeconds = (clock.now - lookupStart).seconds
+
         let tool = MusicDatabaseSearchTool(session: session, sourceSelection: sourceSelection)
         let modelSession = LanguageModelSession(tools: [tool], instructions: instructions)
 
+        // Includes any searches the model makes through the tool — they happen
+        // inside the response — which is why the tool calls are counted too.
+        let modelStart = clock.now
         let response = try await modelSession.respond(
             to: prompt(for: track, fileTags: fileTags, candidates: candidates),
             generating: TrackVerdict.self
         )
+        let modelSeconds = (clock.now - modelStart).seconds
 
         let result = verification(from: response.content, for: track)
         // Completing empty fields is a priority: fill any the model left blank
         // from the same candidates it was shown.
         return TagVerificationCoordinator.completingEmptyFields(in: result, candidates: candidates)
+            .with(timings: TagVerificationTimings(
+                lookupSeconds: lookupSeconds,
+                modelSeconds: modelSeconds,
+                toolCalls: tool.calls.value
+            ))
     }
 
     static let instructions = """

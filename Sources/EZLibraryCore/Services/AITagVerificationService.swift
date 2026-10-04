@@ -333,7 +333,17 @@ public enum AITagVerificationService {
         apiKey: String? = nil,
         session: URLSession = ClaudeAPIClient.defaultSession
     ) async throws -> TrackVerification {
+        let clock = ContinuousClock()
+        let lookupStart = clock.now
         let (evidence, candidates) = await gatherEvidence(for: track, options: options)
+        let lookupSeconds = (clock.now - lookupStart).seconds
+        let modelStart = clock.now
+        func timed(_ result: TrackVerification) -> TrackVerification {
+            result.with(timings: TagVerificationTimings(
+                lookupSeconds: lookupSeconds,
+                modelSeconds: (clock.now - modelStart).seconds
+            ))
+        }
 
         switch options.provider {
         case .anthropic:
@@ -353,7 +363,7 @@ public enum AITagVerificationService {
             let unsettled = unsettledFields(in: firstPass)
             let identityUnsure = firstPass.identityConfidence <= searchEscalationConfidence
             guard options.useWebSearch, identityUnsure || !unsettled.isEmpty else {
-                return TagVerificationCoordinator.completingEmptyFields(in: firstPass, candidates: candidates)
+                return timed(TagVerificationCoordinator.completingEmptyFields(in: firstPass, candidates: candidates))
             }
 
             let searchPass = try await askClaude(
@@ -365,7 +375,7 @@ public enum AITagVerificationService {
                 session: session,
                 earlierUsage: firstPass.usage
             )
-            return TagVerificationCoordinator.completingEmptyFields(in: searchPass, candidates: candidates)
+            return timed(TagVerificationCoordinator.completingEmptyFields(in: searchPass, candidates: candidates))
 
         case .openAICompatible:
             guard let configuration = OpenAICompatibleClient.configuration() else {
@@ -377,14 +387,14 @@ public enum AITagVerificationService {
                 configuration: configuration,
                 session: session
             )
-            return try TagVerificationCoordinator.completingEmptyFields(
+            return try timed(TagVerificationCoordinator.completingEmptyFields(
                 in: parse(
                     text: response.text,
                     for: track,
                     provenance: Provenance(engineLabel: configuration.model, usage: response.usage)
                 ),
                 candidates: candidates
-            )
+            ))
         }
     }
 
