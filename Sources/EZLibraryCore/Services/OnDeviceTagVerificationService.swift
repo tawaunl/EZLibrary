@@ -253,6 +253,9 @@ public enum OnDeviceTagVerificationService {
 
     // MARK: - Running
 
+    /// How many tracks are verified at once. See `verify(tracks:)`.
+    public static let concurrentTracks = 2
+
     public static func verify(
         tracks: [Track],
         sourceSelection: OnlineTrackMetadataLookupService.SourceSelection = .recommended,
@@ -276,24 +279,50 @@ public enum OnDeviceTagVerificationService {
 
                 var verified = 0
                 var failed = 0
+                var iterator = tracks.makeIterator()
+                let parallelism = min(concurrentTracks, tracks.count)
 
-                // Deliberately serial. The on-device model runs on this Mac's
-                // own neural engine, so parallel sessions contend for the same
-                // hardware and finish no sooner while making the machine
-                // unusable for anything else.
-                for track in tracks {
-                    if Task.isCancelled { break }
-                    do {
-                        let result = try await verify(
-                            track: track,
-                            sourceSelection: sourceSelection,
-                            session: session
-                        )
-                        verified += 1
-                        continuation.yield(.verified(result))
-                    } catch {
-                        failed += 1
-                        continuation.yield(.failed(track: track, message: error.localizedDescription))
+                // Two at a time. Measured on 12 tracks: 49s one at a time, 35s
+                // two at a time, and no faster at three or four. The model
+                // itself serves roughly one request at a time — each track's
+                // model time doubles at two — so the gain is one track's
+                // database lookup overlapping another's model time. Beyond two
+                // nothing more overlaps, and every extra session is more load
+                // on the Mac for nothing.
+                await withTaskGroup(of: (Track, Result<TrackTagVerification, Error>).self) { group in
+                    func addNext() {
+                        guard !Task.isCancelled, let track = iterator.next() else { return }
+                        group.addTask {
+                            do {
+                                return (track, .success(try await verify(
+                                    track: track,
+                                    sourceSelection: sourceSelection,
+                                    session: session
+                                )))
+                            } catch {
+                                return (track, .failure(error))
+                            }
+                        }
+                    }
+
+                    for _ in 0..<parallelism {
+                        addNext()
+                    }
+
+                    while let (track, result) = await group.next() {
+                        if Task.isCancelled {
+                            group.cancelAll()
+                            break
+                        }
+                        switch result {
+                        case let .success(verification):
+                            verified += 1
+                            continuation.yield(.verified(verification))
+                        case let .failure(error):
+                            failed += 1
+                            continuation.yield(.failed(track: track, message: error.localizedDescription))
+                        }
+                        addNext()
                     }
                 }
 

@@ -104,8 +104,13 @@ public enum AITagVerificationService {
         /// Proposals below this confidence are returned but not pre-selected
         /// in the review UI.
         public var minimumConfidence: Double
-        /// How many tracks are verified at once. Kept low by default: each one
-        /// is a long, search-heavy request, and Anthropic rate limits per key.
+        /// How many tracks are verified at once. Each track spends most of its
+        /// time waiting on the network — the databases, then the model — so
+        /// several in flight finish a run sooner. Bounded because providers
+        /// rate limit per key; both clients wait out a rate-limit reply and
+        /// retry rather than failing the track. A model server on this Mac
+        /// gets `localModelConcurrentTracks` instead (see
+        /// `withCompatibleSettings`).
         public var maxConcurrentTracks: Int
         public var effort: String?
         /// The model name for an OpenAI-compatible run, for display and the
@@ -122,7 +127,7 @@ public enum AITagVerificationService {
             useFingerprint: Bool = true,
             useOnlineCandidates: Bool = true,
             minimumConfidence: Double = 0.75,
-            maxConcurrentTracks: Int = 3,
+            maxConcurrentTracks: Int = 5,
             effort: String? = "high"
         ) {
             self.provider = provider
@@ -145,8 +150,17 @@ public enum AITagVerificationService {
             var copy = self
             copy.compatibleModelName = endpoint.model
             copy.compatiblePricing = OpenAICompatibleClient.pricing(baseURL: endpoint.baseURL, model: endpoint.model)
+            if OpenAICompatibleClient.isLocalEndpoint(endpoint.baseURL) {
+                copy.maxConcurrentTracks = min(copy.maxConcurrentTracks, Self.localModelConcurrentTracks)
+            }
             return copy
         }
+
+        /// A model server on this Mac (Ollama, LM Studio) shares its hardware
+        /// the way Apple's on-device model does, which measured no faster
+        /// beyond two tracks at once — two overlaps one track's database
+        /// lookup with another's model time, and more only adds load.
+        public static let localModelConcurrentTracks = 2
 
         /// The rates this run is billed at, or nil when they are not known.
         public var pricing: ModelPricing? {
@@ -524,6 +538,20 @@ public enum AITagVerificationService {
         // Read once: these are both the search terms and the thing being judged.
         let fileTags = await AudioFileTagReader.readTags(from: track.fileURL)
 
+        // The database search needs only the tags, so it starts now and runs
+        // while the fingerprint is computed and looked up, instead of after.
+        // Same rule as the consensus engine: search the file's own tags.
+        let query = TagConsensusService.searchQuery(for: track, fileTags: fileTags)
+        func searchDatabases() async -> [OnlineTrackMetadataCandidate] {
+            guard options.useOnlineCandidates else { return [] }
+            return (try? await OnlineTrackMetadataLookupService.lookup(
+                query: query,
+                maxResultsPerSource: 6,
+                deduplicate: false
+            )) ?? []
+        }
+        async let databaseResults = searchDatabases()
+
         lines.append("")
         lines.append("CURRENT TAGS:")
         lines.append("  title: \(displayValue(track.title))")
@@ -601,14 +629,8 @@ public enum AITagVerificationService {
             }
         }
 
+        let candidates = await databaseResults
         if options.useOnlineCandidates {
-            // Same rule as the consensus engine: search the file's own tags.
-            let query = TagConsensusService.searchQuery(for: track, fileTags: fileTags)
-            let candidates = (try? await OnlineTrackMetadataLookupService.lookup(
-                query: query,
-                maxResultsPerSource: 6,
-                deduplicate: false
-            )) ?? []
             fetchedCandidates = candidates
             if !candidates.isEmpty {
                 lines.append("")

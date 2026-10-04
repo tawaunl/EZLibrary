@@ -257,7 +257,7 @@ private let allWritable: Set<TagIntegrityAudit.Field> = [.artist, .album, .genre
     #expect(long?.contains("hour") == true)
 
     // The on-device model is seconds per track, so it crosses the line sooner.
-    #expect(TagVerificationCoordinator.estimatedDurationText(for: .onDevice, trackCount: 10)?.contains("minute") == true)
+    #expect(TagVerificationCoordinator.estimatedDurationText(for: .onDevice, trackCount: 30)?.contains("minute") == true)
 }
 
 // MARK: - Version descriptors must survive every correction

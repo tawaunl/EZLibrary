@@ -224,9 +224,18 @@ That division is what makes "AI that searches" work with no API key — the app
 does the searching, the model does the judging, and nothing leaves the Mac
 except the same database queries the consensus tier already makes.
 
-Expect roughly 5–25 seconds per track. Runs are deliberately serial: parallel
-sessions contend for the same neural engine and finish no sooner while making
-the machine unusable for anything else.
+Expect about 3 seconds per track. Two tracks run at once. Measured on 12
+tracks: 49s one at a time, 35s two at a time, and no faster at three or four.
+The model itself serves roughly one request at a time, so the gain is one
+track's database lookup overlapping another's model time; beyond two, extra
+sessions only add load. A model server on this Mac (Ollama, LM Studio) is held
+to two for the same reason.
+
+Hosted cloud models run five tracks at once, and within each track the
+database search runs alongside the audio fingerprint instead of after it. Both
+the Claude and the OpenAI-compatible clients wait out a rate-limit reply and
+retry (up to four attempts, honouring `retry-after`) rather than failing the
+track.
 
 ### What a small model gets wrong, and the guards for it
 

@@ -317,10 +317,7 @@ public enum OpenAICompatibleClient {
                 )
             )
 
-            let (data, response) = try await session.data(for: request)
-            guard let http = response as? HTTPURLResponse else {
-                throw ClientError.invalidResponse("no HTTP response")
-            }
+            let (data, http) = try await sendRetryingThrottles(request, session: session)
 
             switch http.statusCode {
             case 200...299:
@@ -342,6 +339,40 @@ public enum OpenAICompatibleClient {
 
         throw lastError ?? ClientError.invalidResponse("the request could not be completed")
     }
+
+    /// How many times a throttled or failing-server request is sent.
+    static let maxAttempts = 4
+
+    /// Sends `request`, waiting out rate-limit (429) and server-error (5xx)
+    /// replies and trying again, the way `ClaudeAPIClient` does. Several
+    /// tracks run at once, so a throttle is expected now and then on a busy
+    /// key; failing the track over it would waste the lookup already done.
+    /// Returns the last reply, so a request that never succeeds still
+    /// surfaces its own error.
+    private static func sendRetryingThrottles(
+        _ request: URLRequest,
+        session: URLSession
+    ) async throws -> (Data, HTTPURLResponse) {
+        var attempt = 1
+        while true {
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                throw ClientError.invalidResponse("no HTTP response")
+            }
+            let retryable = http.statusCode == 429 || (500...599).contains(http.statusCode)
+            guard retryable, attempt < maxAttempts else { return (data, http) }
+            let retryAfter = http.value(forHTTPHeaderField: "retry-after").flatMap(TimeInterval.init)
+            let wait = (retryAfter ?? min(16, pow(2, Double(attempt)))) * retryDelayScale
+            if wait > 0 {
+                try await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
+            }
+            attempt += 1
+        }
+    }
+
+    /// Scales every retry wait. Tests set it to 0 so the retry logic runs
+    /// without sleeping.
+    nonisolated(unsafe) static var retryDelayScale: Double = 1.0
 
     static func parse(_ data: Data) throws -> Response {
         // JSONSerialization throws NSCocoaErrorDomain 3840 on non-JSON, whose

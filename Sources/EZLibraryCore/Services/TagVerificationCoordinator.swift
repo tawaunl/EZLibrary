@@ -429,7 +429,8 @@ public enum TagVerificationCoordinator {
         case .consensus:
             secondsPerTrack = 0.8
         case .onDevice:
-            secondsPerTrack = 12
+            // Measured: ~2.9s a track, two tracks at a time.
+            secondsPerTrack = 3
         case .cloudModel:
             secondsPerTrack = 8
         }
