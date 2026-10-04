@@ -199,7 +199,8 @@ public enum TagVerificationCoordinator {
             sourceURLs: verification.sourceURLs,
             webSearchCount: verification.webSearchCount,
             usage: verification.usage,
-            artwork: verification.artwork
+            artwork: verification.artwork,
+            neededSearchPass: verification.neededSearchPass
         )
     }
 

@@ -70,12 +70,41 @@ public struct TagFieldVerification: Sendable, Hashable, Identifiable {
 
 /// Token spend for one verification, when the engine bills by tokens.
 public struct TagVerificationUsage: Sendable, Equatable {
+    /// Uncached input. Anthropic reports cached tokens separately, so this
+    /// does not include them.
     public let inputTokens: Int
     public let outputTokens: Int
+    /// Input written to the prompt cache, billed at 1.25× the input price.
+    public let cacheWriteTokens: Int
+    /// Input read back from the prompt cache, billed at the cache-read price.
+    public let cacheReadTokens: Int
 
-    public init(inputTokens: Int, outputTokens: Int) {
+    public init(inputTokens: Int, outputTokens: Int, cacheWriteTokens: Int = 0, cacheReadTokens: Int = 0) {
         self.inputTokens = inputTokens
         self.outputTokens = outputTokens
+        self.cacheWriteTokens = cacheWriteTokens
+        self.cacheReadTokens = cacheReadTokens
+    }
+
+    public static let zero = TagVerificationUsage(inputTokens: 0, outputTokens: 0)
+
+    public static func + (lhs: TagVerificationUsage, rhs: TagVerificationUsage) -> TagVerificationUsage {
+        TagVerificationUsage(
+            inputTokens: lhs.inputTokens + rhs.inputTokens,
+            outputTokens: lhs.outputTokens + rhs.outputTokens,
+            cacheWriteTokens: lhs.cacheWriteTokens + rhs.cacheWriteTokens,
+            cacheReadTokens: lhs.cacheReadTokens + rhs.cacheReadTokens
+        )
+    }
+
+    /// What these tokens cost on `model`, in USD. Web search fees are billed
+    /// separately and are not included.
+    public func tokenCost(on model: ClaudeModel) -> Double {
+        let input = model.inputCostPerMillionTokens
+        return (Double(inputTokens) * input
+            + Double(cacheWriteTokens) * input * 1.25
+            + Double(cacheReadTokens) * model.cacheReadCostPerMillionTokens
+            + Double(outputTokens) * model.outputCostPerMillionTokens) / 1_000_000
     }
 }
 
@@ -131,6 +160,11 @@ public struct TrackTagVerification: Sendable, Identifiable {
     /// Cover art on offer, when a source has some. Nil when no source returned
     /// any.
     public let artwork: ArtworkProposal?
+    /// True when a first pass without web search was not sure enough and the
+    /// track went round again with search. Recorded so a run can report how
+    /// often the cheap pass was enough — the number every cost decision about
+    /// this tier turns on.
+    public let neededSearchPass: Bool
 
     public var id: UUID { track.id }
 
@@ -147,7 +181,8 @@ public struct TrackTagVerification: Sendable, Identifiable {
         sourceURLs: [URL] = [],
         webSearchCount: Int = 0,
         usage: TagVerificationUsage? = nil,
-        artwork: ArtworkProposal? = nil
+        artwork: ArtworkProposal? = nil,
+        neededSearchPass: Bool = false
     ) {
         self.track = track
         self.engineName = engineName
@@ -158,6 +193,7 @@ public struct TrackTagVerification: Sendable, Identifiable {
         self.webSearchCount = webSearchCount
         self.usage = usage
         self.artwork = artwork
+        self.neededSearchPass = neededSearchPass
     }
 
     /// Builds the update that applies exactly the named fields. Every other

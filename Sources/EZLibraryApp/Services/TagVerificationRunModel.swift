@@ -51,9 +51,12 @@ final class TagVerificationRunModel: ObservableObject {
     ///
     /// Reported rather than estimated: every reply carries its own usage, so
     /// once a run is under way there is no need to guess what it is costing.
-    @Published private(set) var inputTokens = 0
-    @Published private(set) var outputTokens = 0
+    @Published private(set) var usage = TagVerificationUsage.zero
     @Published private(set) var webSearches = 0
+    /// Cloud tracks the pass without search did not settle. Against
+    /// `checkedCount`, this is how often the cheap pass is enough.
+    @Published private(set) var searchPassCount = 0
+    private var searchPassPossible = false
     private var pricing: ClaudeModel?
 
     /// Which proposals are ticked. Held here rather than in the sheet so a
@@ -62,6 +65,18 @@ final class TagVerificationRunModel: ObservableObject {
     @Published var selectedArtworkIDs: Set<UUID> = []
 
     private var task: Task<Void, Never>?
+    /// Identifies the run `task` belongs to. A cancelled task does not stop on
+    /// the spot — it finishes a moment later, on the main actor — so without
+    /// this its closing writes land on whatever run is current by then: a run
+    /// started in the meantime showed as finished with its task dropped (so
+    /// Stop no longer reached it), and a reset showed "finished" instead of
+    /// setup. A task only touches shared state while its ID is still this one.
+    private var currentRunID: UUID?
+    /// The permanent record of the current run. See `TagVerificationRunLog`.
+    private var log: TagVerificationRunLog?
+
+    /// Where this run is being recorded, for "Show Run Log".
+    var logFileURL: URL? { log?.fileURL }
 
     var isRunning: Bool { phase == .running }
 
@@ -94,12 +109,16 @@ final class TagVerificationRunModel: ObservableObject {
 
         selectionIDs = Set(selection.map(\.id))
 
-        inputTokens = 0
-        outputTokens = 0
+        usage = .zero
         webSearches = 0
+        searchPassCount = 0
         // Only the cloud tier bills; the other two are free, and showing them a
-        // running total of $0.00 would just be noise.
-        pricing = engine == .cloudModel ? cloudOptions.model : nil
+        // running total of $0.00 would just be noise. Only Anthropic is priced:
+        // Claude's rates say nothing about another provider's bill.
+        pricing = engine == .cloudModel && cloudOptions.provider == .anthropic ? cloudOptions.model : nil
+        searchPassPossible = engine == .cloudModel
+            && cloudOptions.useWebSearch
+            && cloudOptions.provider.supportsWebSearch
 
         results = []
         failures = []
@@ -113,7 +132,20 @@ final class TagVerificationRunModel: ObservableObject {
         engineName = engine.displayName
         phase = .running
 
+        log = TagVerificationRunLog.start(
+            engine: engine,
+            cloudOptions: engine == .cloudModel ? cloudOptions : nil,
+            trackCount: tracks.count,
+            selectionCount: selection.count,
+            appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
+        )
+
         let threshold = TagVerificationCoordinator.confidenceThreshold(for: engine)
+        // Captured, not read through `self`, so a run replaced by a newer one
+        // still closes its own log rather than the new run's.
+        let runLog = log
+        let runID = UUID()
+        currentRunID = runID
         task = Task { [weak self] in
             let events = TagVerificationCoordinator.verify(
                 tracks: tracks,
@@ -122,11 +154,14 @@ final class TagVerificationRunModel: ObservableObject {
                 cloudOptions: cloudOptions
             )
             for await event in events {
-                guard let self, !Task.isCancelled else { break }
+                guard let self, !Task.isCancelled, self.currentRunID == runID else { break }
                 self.handle(event, minimumConfidence: threshold)
             }
-            self?.phase = .finished
-            self?.task = nil
+            runLog?.finish(cancelled: Task.isCancelled)
+            guard let self, self.currentRunID == runID else { return }
+            self.phase = .finished
+            self.task = nil
+            self.currentRunID = nil
         }
     }
 
@@ -135,7 +170,10 @@ final class TagVerificationRunModel: ObservableObject {
     func cancel() {
         task?.cancel()
         task = nil
+        // Whatever the stopped task does on its way out is now stale.
+        currentRunID = nil
         if phase == .running {
+            log?.finish(cancelled: true)
             phase = .finished
         }
     }
@@ -160,10 +198,12 @@ final class TagVerificationRunModel: ObservableObject {
         appliedCount = 0
         abortMessage = nil
         selectionIDs = []
-        inputTokens = 0
-        outputTokens = 0
+        usage = .zero
         webSearches = 0
+        searchPassCount = 0
+        searchPassPossible = false
         pricing = nil
+        log = nil
         phase = .idle
     }
 
@@ -174,18 +214,24 @@ final class TagVerificationRunModel: ObservableObject {
         case let .verified(result):
             completedCount += 1
             checkedCount += 1
-            if let usage = result.usage {
-                inputTokens += usage.inputTokens
-                outputTokens += usage.outputTokens
+            if let resultUsage = result.usage {
+                usage = usage + resultUsage
+            }
+            if result.neededSearchPass {
+                searchPassCount += 1
             }
             webSearches += result.webSearchCount
             results.append(result)
             preselect(result, minimumConfidence: minimumConfidence)
+            let offered = Set(result.fields.map(\.id) + [result.artwork?.id].compactMap { $0 })
+            log?.record(result, preselected: offered.intersection(selectedFieldIDs.union(selectedArtworkIDs)))
         case let .failed(track, message):
             completedCount += 1
             failures.append((track, message))
+            log?.recordFailure(track: track, message: message)
         case let .aborted(message):
             abortMessage = message
+            log?.recordAborted(message: message)
         case .finished:
             break
         }
@@ -210,9 +256,7 @@ final class TagVerificationRunModel: ObservableObject {
     /// $10 per 1,000, so both halves are counted.
     var spendSoFar: Double? {
         guard let pricing, checkedCount > 0 else { return nil }
-        let tokenCost = Double(inputTokens) / 1_000_000 * pricing.inputCostPerMillionTokens
-            + Double(outputTokens) / 1_000_000 * pricing.outputCostPerMillionTokens
-        return tokenCost + Double(webSearches) * AITagVerificationService.costPerWebSearch
+        return usage.tokenCost(on: pricing) + Double(webSearches) * AITagVerificationService.costPerWebSearch
     }
 
     var spendSummary: String? {
@@ -220,7 +264,27 @@ final class TagVerificationRunModel: ObservableObject {
         let perTrack = spend / Double(max(checkedCount, 1))
         let total = spend < 0.01 ? "<$0.01" : String(format: "$%.2f", spend)
         let each = String(format: "$%.3f", perTrack)
-        return "\(total) so far — \(each) a track, \(webSearches) web search\(webSearches == 1 ? "" : "es")"
+        var parts = ["\(total) so far — \(each) a track"]
+        // Both of these are here to be checked against reality: how often the
+        // pass without search is enough decides what this tier really costs,
+        // and a cache share near zero means the cached prefix is breaking.
+        if searchPassPossible {
+            let settled = checkedCount - searchPassCount
+            parts.append("\(settled) of \(checkedCount) settled without searching")
+        }
+        parts.append("\(webSearches) web search\(webSearches == 1 ? "" : "es")")
+        if let share = cacheReadShare {
+            parts.append("\(Int((share * 100).rounded()))% of input from cache")
+        }
+        return parts.joined(separator: ", ")
+    }
+
+    /// Share of all input tokens served from the prompt cache, or nil before
+    /// any input has been billed.
+    var cacheReadShare: Double? {
+        let total = usage.inputTokens + usage.cacheWriteTokens + usage.cacheReadTokens
+        guard total > 0 else { return nil }
+        return Double(usage.cacheReadTokens) / Double(total)
     }
 
     // MARK: - Applying
@@ -271,8 +335,20 @@ final class TagVerificationRunModel: ObservableObject {
 
     /// Drops the tracks that were just written. Leaving them on screen showing
     /// their old values invites applying them twice.
-    func forget(tracks written: [Track]) {
+    ///
+    /// Called only after a successful write, so it is also where the log learns
+    /// what the user kept and what they unticked.
+    func forget(tracks written: [Track], artworkFailures: [String] = []) {
         let ids = Set(written.map(\.id))
+        let failedArtwork = Set(artworkFailures)
+        log?.recordApplied(results.filter { ids.contains($0.track.id) }.map { result in
+            TagVerificationRunLog.AppliedTrack(
+                result: result,
+                selectedFieldIDs: selectedFieldIDs,
+                artworkSelected: result.artwork.map { selectedArtworkIDs.contains($0.id) } ?? false,
+                artworkFailed: failedArtwork.contains(result.track.fileURL.lastPathComponent)
+            )
+        })
         results.removeAll { ids.contains($0.track.id) }
         appliedCount += written.count
         selectedFieldIDs = []

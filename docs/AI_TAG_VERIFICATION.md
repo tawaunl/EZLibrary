@@ -280,6 +280,49 @@ OpenAI-compatible provider, there is only the one pass.
 The pre-run quote assumes the worst case, where every track needs both passes.
 A library of mostly commercial releases should come in well under it.
 
+The running spend line reports what to check this against: how many tracks were
+settled without searching, and what share of input came from the prompt cache.
+Each result row says whether it needed the search pass and what it cost.
+
+### Run log
+
+A run lives only in memory, so every run, on every engine, is also written to
+`~/Library/Application Support/EZLibrary/Verification Runs/`. That covers the
+review sheet and the bulk "apply verified tags" job. Each run gets one JSON
+Lines file, one record per line, each with a `type`:
+
+| `type` | When | Holds |
+| --- | --- | --- |
+| `run` | Start | Engine, provider, model, effort, search on/off, the 0.8 escalation bar, track count, app version |
+| `track` | Each verified track | File, identity confidence, whether it needed the search pass, web searches, tokens (including cache), cost, and every field's verdict, values, confidence, evidence, source, and whether it was pre-ticked |
+| `failure` | Each failed track | File and error message. Failures are billed too |
+| `aborted` | Run could not start | The reason |
+| `applied` | Each apply decision | Outcome (`applied`, `declined`, `failed`) and, per track, the proposals kept and unticked |
+| `finished` | End or stop | Whether it was stopped, counts, total tokens and cost |
+
+Kept versus unticked proposals are the closest thing to an accuracy measure
+short of a test set. Cost per *kept* fix is the number for comparing models and
+effort levels. Proposals on tracks that never appear in an `applied` record were
+never applied. Cost is recorded only for Anthropic, because Claude's prices say
+nothing about another provider's bill. The files stay on the Mac and are never
+uploaded. "Show Run Log in Finder" in the review sheet opens the folder. Nothing
+deletes old logs; at a few KB per track they stay small.
+
+### Prompt caching
+
+The system prompt (about 1,100 tokens with the response schema) is identical for
+every track in a run, so it carries the one cache breakpoint. Tracks go out
+seconds apart, which keeps the 5-minute cache warm, and every track after the
+first reads the prompt at the cache price: $0.20 per million tokens instead of
+$4 on Opus 5.5. That takes roughly a tenth off the pass without search. The
+per-track message is never marked, because it differs every time and marking it
+would pay the 1.25× write premium for nothing. Haiku 4.5's minimum cacheable
+prompt is longer than ours, so the marker does nothing there.
+
+The two passes don't share a cache. The search tool comes first in the request,
+so the searching pass has a different prefix, and it builds its own cache across
+the tracks that escalate.
+
 ### What it actually costs
 
 Measured over ten tracks on Opus 5, August 2026 — not estimated:

@@ -371,14 +371,14 @@ public enum AITagVerificationService {
         }
     }
 
-    /// Told to the model on the no-search pass. Without it the system prompt's
-    /// "search the web when…" reads as available, and the model either claims
-    /// to have searched or hedges every field.
+    /// Told to the model on the no-search pass. The system prompt is shared by
+    /// both passes (so it caches), and says only "when you have web search";
+    /// this says plainly that it does not, and what its confidence now decides.
     static let firstPassNote = """
     WEB SEARCH: not available on this pass. Answer from the evidence above and what you reliably \
     know about this recording. Fill every empty field you can. Anything you report at 0.8 confidence \
-    or below is checked again with web search, so an honest low confidence costs nothing, while an \
-    overconfident guess gets written to the library.
+    or below is checked again with web search, so keep the number calibrated: an overconfident \
+    guess skips that check and gets written to the library.
     """
 
     static func searchPassNote(unsettled: [TagIntegrityAudit.Field], identityUnsure: Bool) -> String {
@@ -409,7 +409,10 @@ public enum AITagVerificationService {
             jsonSchema: responseSchema,
             enableWebSearch: webSearch,
             maxWebSearches: 6,
-            maxTokens: 8000,
+            // The recommended ceiling for a non-streaming request. A searching
+            // pass at high effort can think past 8K, and a cut-off reply is
+            // billed and thrown away.
+            maxTokens: 16000,
             effort: options.effort
         )
 
@@ -423,10 +426,13 @@ public enum AITagVerificationService {
                     : "\(engineName) (\(options.model.displayName))",
                 sourceURLs: response.sourceURLs.compactMap(URL.init(string:)),
                 webSearchCount: response.webSearchCount,
-                usage: TagVerificationUsage(
-                    inputTokens: response.usage.inputTokens + (earlierUsage?.inputTokens ?? 0),
-                    outputTokens: response.usage.outputTokens + (earlierUsage?.outputTokens ?? 0)
-                )
+                usage: (earlierUsage ?? .zero) + TagVerificationUsage(
+                    inputTokens: response.usage.inputTokens,
+                    outputTokens: response.usage.outputTokens,
+                    cacheWriteTokens: response.usage.cacheWriteTokens,
+                    cacheReadTokens: response.usage.cacheReadTokens
+                ),
+                neededSearchPass: earlierUsage != nil
             )
         )
     }
@@ -606,10 +612,10 @@ public enum AITagVerificationService {
     never copy it into a field.
     - Database candidates (iTunes, MusicBrainz, Discogs) are reliable for commercial releases and \
     unreliable for edits, bootlegs, mashups, and white labels.
-    - Search the web when the candidates disagree, when they are missing, or when the track looks \
-    like a remix, edit, bootleg, or mashup. Those are common in DJ libraries and frequently absent \
-    from the commercial databases, and a label page, Bandcamp listing, or discography page is often \
-    the only source that has them right.
+    - When you have web search, use it when the candidates disagree, when they are missing, or when \
+    the track looks like a remix, edit, bootleg, or mashup. Those are common in DJ libraries and \
+    frequently absent from the commercial databases, and a label page, Bandcamp listing, or \
+    discography page is often the only source that has them right.
 
     Rules:
     - Keep the version descriptor, exactly as written. "Extended Mix", "Radio Edit", "Dirty", \
@@ -626,17 +632,19 @@ public enum AITagVerificationService {
     release credits them there.
     - Never invent a value. If the evidence does not settle a field, return verdict "unverified" and \
     leave proposed_value empty. An empty tag you cannot fill is "unverified", not "incorrect".
-    - Completing empty fields is a priority. For a field that is currently empty, search harder — \
-    including the web — and propose a value whenever a credible source actually has one, even at \
-    lower confidence. Only leave an empty field unverified when no source provides a value.
+    - Completing empty fields is a priority. For a field that is currently empty, look harder — \
+    with web search when you have it — and propose a value whenever a credible source actually has \
+    one, even at lower confidence. Only leave an empty field unverified when no source provides a \
+    value.
     - Return verdict "incorrect" only when a specific source contradicts the current value. Cite that \
     source in source_url.
     - A pure capitalization or punctuation difference is worth correcting only when the current value \
     is clearly malformed, such as ALL CAPS or missing spaces.
     - Genre should be an actual genre, at roughly the specificity the library already uses.
-    - Year is the release year of this specific version, not of the original song when they differ.
-    - confidence is your own 0-1 probability that the verdict is right. Be honest and use the low end: \
-    a wrong tag written confidently is worse for this library than an unverified one.
+    - confidence is your calibrated 0-1 probability that the verdict is right: across many tracks, \
+    verdicts you give 0.9 should be right about nine times in ten. Do not shade it either way. A wrong \
+    tag written confidently is worse for this library than an unverified one, and a needlessly low \
+    number sends the track for a slower, costlier second look.
     - identity_confidence is how sure you are that you identified the correct recording at all.
     """
 
@@ -717,6 +725,7 @@ public enum AITagVerificationService {
         var sourceURLs: [URL] = []
         var webSearchCount: Int = 0
         var usage: TagVerificationUsage?
+        var neededSearchPass = false
     }
 
     static func parse(
@@ -765,7 +774,8 @@ public enum AITagVerificationService {
             fields: verifications,
             sourceURLs: provenance.sourceURLs,
             webSearchCount: provenance.webSearchCount,
-            usage: provenance.usage
+            usage: provenance.usage,
+            neededSearchPass: provenance.neededSearchPass
         )
     }
 

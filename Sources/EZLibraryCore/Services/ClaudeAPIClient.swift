@@ -105,6 +105,17 @@ public enum ClaudeModel: String, CaseIterable, Sendable {
             return 5.00
         }
     }
+
+    /// Prompt-cache reads. Not a fixed share of the input price: Opus 5.5
+    /// reads at 0.05×, the others at 0.1×.
+    public var cacheReadCostPerMillionTokens: Double {
+        switch self {
+        case .opus55, .sonnet55:
+            return 0.20
+        case .haiku45:
+            return 0.10
+        }
+    }
 }
 
 /// A minimal Claude Messages API client built directly on `URLSession`.
@@ -174,10 +185,14 @@ public enum ClaudeAPIClient {
     public struct Usage: Sendable, Equatable {
         public let inputTokens: Int
         public let outputTokens: Int
+        public let cacheWriteTokens: Int
+        public let cacheReadTokens: Int
 
-        public init(inputTokens: Int, outputTokens: Int) {
+        public init(inputTokens: Int, outputTokens: Int, cacheWriteTokens: Int = 0, cacheReadTokens: Int = 0) {
             self.inputTokens = inputTokens
             self.outputTokens = outputTokens
+            self.cacheWriteTokens = cacheWriteTokens
+            self.cacheReadTokens = cacheReadTokens
         }
     }
 
@@ -385,6 +400,8 @@ public enum ClaudeAPIClient {
         var accumulatedText = ""
         var inputTokens = 0
         var outputTokens = 0
+        var cacheWriteTokens = 0
+        var cacheReadTokens = 0
         var webSearchCount = 0
         var sourceURLs: [String] = []
         // Cleared if the API turns out to reject a schema-constrained reply
@@ -418,6 +435,8 @@ public enum ClaudeAPIClient {
             if let usage = payload["usage"] as? [String: Any] {
                 inputTokens += (usage["input_tokens"] as? Int) ?? 0
                 outputTokens += (usage["output_tokens"] as? Int) ?? 0
+                cacheWriteTokens += (usage["cache_creation_input_tokens"] as? Int) ?? 0
+                cacheReadTokens += (usage["cache_read_input_tokens"] as? Int) ?? 0
             }
 
             let content = (payload["content"] as? [[String: Any]]) ?? []
@@ -430,6 +449,12 @@ public enum ClaudeAPIClient {
                 let detail = (payload["stop_details"] as? [String: Any])?["explanation"] as? String
                 throw ClientError.refused(detail ?? "")
             }
+            if stopReason == "max_tokens" {
+                // The JSON is cut off mid-object, so it would only surface later
+                // as "not valid JSON" — which reads like a model bug rather than
+                // a limit this client set.
+                throw ClientError.invalidResponse("the reply hit the \(request.maxTokens)-token limit before it finished")
+            }
 
             guard stopReason == "pause_turn" else {
                 let text = accumulatedText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -438,7 +463,12 @@ public enum ClaudeAPIClient {
                 }
                 return Response(
                     text: text,
-                    usage: Usage(inputTokens: inputTokens, outputTokens: outputTokens),
+                    usage: Usage(
+                        inputTokens: inputTokens,
+                        outputTokens: outputTokens,
+                        cacheWriteTokens: cacheWriteTokens,
+                        cacheReadTokens: cacheReadTokens
+                    ),
                     webSearchCount: webSearchCount,
                     sourceURLs: sourceURLs,
                     droppedResponseSchema: droppedSchema
@@ -464,7 +494,17 @@ public enum ClaudeAPIClient {
         var body: [String: Any] = [
             "model": request.model.rawValue,
             "max_tokens": request.maxTokens,
-            "system": request.system,
+            // One cache breakpoint, on the system prompt. It is identical for
+            // every track in a run and tracks go out seconds apart, so each one
+            // after the first reads it back at the cache price. Nothing after
+            // it is worth caching: the user message is different every time.
+            "system": [
+                [
+                    "type": "text",
+                    "text": request.system,
+                    "cache_control": ["type": "ephemeral"]
+                ]
+            ],
             "messages": messages
         ]
 

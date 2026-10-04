@@ -437,6 +437,18 @@ struct AITagVerificationSheet: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            // Every run is recorded locally — settings, each track's verdicts,
+            // cost, and what was applied — so it can be looked at after the app
+            // has quit and this in-memory run is gone.
+            if let logURL = run.logFileURL {
+                Button("Show Run Log in Finder") {
+                    NSWorkspace.shared.activateFileViewerSelecting([logURL])
+                }
+                .buttonStyle(.link)
+                .font(.caption)
+                .help("Opens the folder of saved verification runs with this run's file selected.")
+            }
         }
     }
 
@@ -542,8 +554,21 @@ struct AITagVerificationSheet: View {
                     Text(result.engineName)
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
+                    if result.neededSearchPass {
+                        Text("· needed search")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .help("The first pass, without web search, was 80% sure or less, so it went round again with search.")
+                    }
                     if result.webSearchCount > 0 {
                         Text("· \(result.webSearchCount) web search\(result.webSearchCount == 1 ? "" : "es")")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                    if let usage = result.usage, options.provider == .anthropic {
+                        let cost = usage.tokenCost(on: options.model)
+                            + Double(result.webSearchCount) * AITagVerificationService.costPerWebSearch
+                        Text("· " + String(format: "$%.3f", cost))
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
                     }
@@ -861,7 +886,7 @@ struct AITagVerificationSheet: View {
                     applyErrorMessage = artworkFailureMessage(outcome.artworkFailures, includesOtherChanges: true)
                 }
 
-                run.forget(tracks: outcome.updates.map(\.0))
+                run.forget(tracks: outcome.updates.map(\.0), artworkFailures: outcome.artworkFailures)
                 onApplied?(outcome.updates.count, summary)
 
                 // Nothing more is coming, so the sheet has served its purpose.

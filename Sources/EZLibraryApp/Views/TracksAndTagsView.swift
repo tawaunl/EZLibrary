@@ -112,6 +112,11 @@ struct TracksAndTagsView: View {
     @State private var showVerifiedApplyPrompt = false
     @State private var verifiedProgress: (done: Int, total: Int)?
     @State private var verifiedApplyTask: Task<Void, Never>?
+    /// The log of the verified run whose changes are waiting in
+    /// `pendingTopHitUpdates`, with what it chose to apply, so the
+    /// confirmation's answer is recorded against that run. Nil when the
+    /// pending updates came from a plain top-hit lookup instead.
+    @State private var pendingVerifiedDecisions: (log: TagVerificationRunLog, tracks: [TagVerificationRunLog.AppliedTrack])?
 
     /// Snapshot of everything derived from `tracks` + the active scope/filters,
     /// recomputed off the main actor only when an input changes (never per
@@ -249,6 +254,10 @@ struct TracksAndTagsView: View {
             }
             Button("Cancel", role: .cancel) {
                 pendingTopHitUpdates = []
+                if let pending = pendingVerifiedDecisions {
+                    pending.log.recordApplied(pending.tracks, outcome: .declined)
+                    pendingVerifiedDecisions = nil
+                }
             }
         } message: {
             Text(
@@ -1167,8 +1176,19 @@ struct TracksAndTagsView: View {
         // wording that identifies which cut of a record this is.
         let writableFields: Set<TagIntegrityAudit.Field> = [.title, .artist, .album, .genre, .year]
 
+        let cloudOptions = TagVerificationCoordinator.cloudOptionsFromSettings()
+        pendingVerifiedDecisions = nil
+        let log = TagVerificationRunLog.start(
+            engine: engine,
+            cloudOptions: engine == .cloudModel ? cloudOptions : nil,
+            trackCount: tracksSnapshot.count,
+            selectionCount: selectedTracks.count,
+            appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
+        )
+
         verifiedApplyTask = Task {
             var updates: [(Track, SeratoTrackMetadataUpdate)] = []
+            var decisions: [TagVerificationRunLog.AppliedTrack] = []
             var failed = 0
             var abortedMessage: String?
             var completed = 0
@@ -1176,7 +1196,7 @@ struct TracksAndTagsView: View {
             let events = TagVerificationCoordinator.verify(
                 tracks: tracksSnapshot,
                 using: engine,
-                cloudOptions: TagVerificationCoordinator.cloudOptionsFromSettings()
+                cloudOptions: cloudOptions
             )
             for await event in events {
                 if Task.isCancelled { break }
@@ -1195,19 +1215,32 @@ struct TracksAndTagsView: View {
                         limitedTo: writableFields,
                         onlyFillEmpty: onlyFillEmptySnapshot
                     )
+                    // Here "pre-ticked" means what the bulk apply chose on its
+                    // own, since there is no review step to tick anything.
+                    let chosen = Set(verification.proposedChanges.filter { fields.contains($0.field) }.map(\.id))
+                    log?.record(verification, preselected: chosen)
                     guard !fields.isEmpty else { continue }
                     updates.append((verification.track, verification.metadataUpdate(applying: fields)))
-                case .failed:
+                    decisions.append(TagVerificationRunLog.AppliedTrack(
+                        result: verification,
+                        selectedFieldIDs: chosen,
+                        artworkSelected: false,
+                        artworkFailed: false
+                    ))
+                case let .failed(track, message):
                     completed += 1
                     failed += 1
                     verifiedProgress = (completed, total)
                     backgroundTagJobs.report(done: completed, total: total)
+                    log?.recordFailure(track: track, message: message)
                 case let .aborted(message):
                     abortedMessage = message
+                    log?.recordAborted(message: message)
                 case .finished:
                     break
                 }
             }
+            log?.finish(cancelled: Task.isCancelled)
 
             isBulkLookupRunning = false
             verifiedProgress = nil
@@ -1232,6 +1265,9 @@ struct TracksAndTagsView: View {
                 pendingTopHitUpdates = []
             } else {
                 pendingTopHitUpdates = updates
+                if let log {
+                    pendingVerifiedDecisions = (log, decisions)
+                }
                 backgroundTagJobs.finish(message: nil)
                 showTopHitConfirmation = true
             }
@@ -1321,6 +1357,15 @@ struct TracksAndTagsView: View {
             }
         } catch {
             operationErrorMessage = error.localizedDescription
+        }
+
+        if let pending = pendingVerifiedDecisions {
+            pending.log.recordApplied(
+                pending.tracks,
+                outcome: operationErrorMessage == nil ? .applied : .failed,
+                error: operationErrorMessage
+            )
+            pendingVerifiedDecisions = nil
         }
 
         if operationErrorMessage == nil {
