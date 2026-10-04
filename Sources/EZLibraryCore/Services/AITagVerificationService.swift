@@ -233,13 +233,24 @@ public enum AITagVerificationService {
     ///
     /// Tracks are independent, so one failure (a rate limit, an unreadable
     /// file) is reported against that track and the run continues.
+    /// - Parameters:
+    ///   - userDefaults: Where a key is looked up when `apiKey` is nil.
+    ///   - credentials: Likewise. Tests pass in-memory stores for both: left at
+    ///     the defaults, a "no key" test finds the developer's real key in the
+    ///     keychain and runs a live, billed verification.
     public static func verify(
         tracks: [Track],
         options: Options = Options(),
         apiKey: String? = nil,
+        userDefaults: UserDefaults = .standard,
+        credentials: any SecureCredentialStore = AppCredentials.keychain,
         session: URLSession = ClaudeAPIClient.defaultSession
     ) -> AsyncStream<Event> {
-        AsyncStream { continuation in
+        // Resolved here, not in the task: the stores aren't Sendable.
+        let storedKey = apiKey ?? (options.provider == .anthropic
+            ? ClaudeAPIClient.apiKey(userDefaults: userDefaults, credentials: credentials)
+            : nil)
+        return AsyncStream { continuation in
             let task = Task {
                 guard !tracks.isEmpty else {
                     continuation.yield(.finished(verified: 0, failed: 0))
@@ -250,7 +261,7 @@ public enum AITagVerificationService {
                 let key: String?
                 switch options.provider {
                 case .anthropic:
-                    guard let resolved = apiKey ?? ClaudeAPIClient.apiKey() else {
+                    guard let resolved = storedKey else {
                         continuation.yield(.aborted(
                             message: ClaudeAPIClient.ClientError.missingAPIKey.localizedDescription
                         ))

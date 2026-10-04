@@ -59,3 +59,20 @@ import Testing
     #expect(genre(current: "Rap", proposed: "Rap").isChange)
     #expect(genre(current: "Hip Hop", proposed: "R&B").isChange)
 }
+
+@Test func lookupResultsShowHipHopBeforeAnythingIsSaved() {
+    func candidate(genre: String) -> OnlineTrackMetadataCandidate {
+        OnlineTrackMetadataCandidate(
+            source: .itunes, title: "Lose Yourself", artist: "Eminem", album: "8 Mile",
+            genre: genre, year: 2002, bpm: nil
+        )
+    }
+    // What the window shows and the Genre button fills is already "Hip Hop".
+    for spelling in ["Hip-Hop", "Rap", "Hip-Hop/Rap", "Rap/Hip Hop", "hip hop"] {
+        #expect(candidate(genre: spelling).genre == "Hip Hop")
+    }
+    // Other genres come through as the source wrote them.
+    #expect(candidate(genre: "R&B/Soul").genre == "R&B/Soul")
+    #expect(candidate(genre: "Trip Hop").genre == "Trip Hop")
+    #expect(candidate(genre: "").genre == "")
+}

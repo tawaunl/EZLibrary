@@ -99,7 +99,10 @@ public struct OnlineTrackMetadataCandidate: Identifiable, Sendable, Hashable {
         self.title = title
         self.artist = artist
         self.album = album
-        self.genre = genre
+        // Spelled the way it will be saved, so a lookup shows and fills
+        // "Hip Hop" rather than iTunes' "Hip-Hop/Rap" or Deezer's "Rap/Hip
+        // Hop" — which the save would only correct after the fact.
+        self.genre = GenreCanonicalizer.forWriting(genre)
         self.year = year
         self.bpm = bpm
         self.comment = comment

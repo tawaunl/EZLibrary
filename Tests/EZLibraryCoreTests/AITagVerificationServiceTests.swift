@@ -250,13 +250,20 @@ private let fullVerdictJSON = """
 
 @Test func aMissingAPIKeyAbortsTheRunWithOneClearMessage() async {
     let defaults = TestDefaults.inMemory()
+    let credentials = InMemoryCredentialStore()
 
     // Only exercised when the environment has no key either; skip rather than
     // fail on a machine that exports one.
-    guard ClaudeAPIClient.apiKey(userDefaults: defaults, credentials: InMemoryCredentialStore()) == nil else { return }
+    guard ClaudeAPIClient.apiKey(userDefaults: defaults, credentials: credentials) == nil else { return }
 
+    // The same stores go to `verify`: without them it read the real keychain,
+    // found the developer's key, and ran a live, billed verification.
     var messages: [String] = []
-    for await event in AITagVerificationService.verify(tracks: [sampleTrack()]) {
+    for await event in AITagVerificationService.verify(
+        tracks: [sampleTrack()],
+        userDefaults: defaults,
+        credentials: credentials
+    ) {
         if case let .aborted(message) = event {
             messages.append(message)
         }
