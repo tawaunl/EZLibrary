@@ -82,21 +82,42 @@ PKGBUILD_ARGS=(
 # it. Both are needed: the app signature is what lets it launch, the installer
 # signature is what lets the .pkg open without a warning of its own.
 #
-# Resolved like the app identity: explicit env var, else the first matching
+# Resolved like the app identity: explicit env var, else the newest matching
 # identity in the keychain, else leave the package unsigned.
+# Prints the SHA-1 of the valid identity whose name starts with $1 and whose
+# certificate expires last; extra args go to `security find-identity`.
+#
+# Selecting by hash rather than name matters when certificates are renewed:
+# the old and new ones share the exact same name until the old one expires,
+# and codesign/pkgbuild refuse a name that matches more than one identity.
+#
+# Nothing in here may fail the build: under `set -euo pipefail` a missing
+# certificate would otherwise abort instead of falling through to the
+# unsigned path, hence the `|| true`s.
+newest_identity() {
+  local prefix="$1"
+  shift
+  security find-identity -v "$@" 2>/dev/null \
+    | sed -n "s/^ *[0-9]*) \([0-9A-F]\{40\}\) \"\(${prefix}[^\"]*\)\"$/\1 \2/p" \
+    | while read -r hash name; do
+      local end
+      end="$(security find-certificate -a -Z -p -c "$name" 2>/dev/null \
+        | awk -v h="$hash" '/^SHA-1 hash:/ {keep = ($3 == h); next} keep' \
+        | /usr/bin/openssl x509 -noout -enddate 2>/dev/null \
+        | cut -d= -f2)" || true
+      [[ -n "$end" ]] || continue
+      echo "$(date -j -u -f '%b %e %T %Y %Z' "$end" +%s 2>/dev/null || echo 0) $hash"
+    done \
+    | sort -rn | head -1 | cut -d' ' -f2 || true
+}
+
 resolve_pkg_sign_identity() {
   local explicit="${EZLIBRARY_PKG_SIGN_IDENTITY:-${SERATOTOOLS_PKG_SIGN_IDENTITY:-}}"
   if [[ -n "$explicit" ]]; then
     echo "$explicit"
     return
   fi
-  # `|| true` because having no identity is a normal state: under
-  # `set -euo pipefail` a grep that matches nothing exits 1 and would abort the
-  # build rather than fall through to an unsigned package.
-  security find-identity -v 2>/dev/null \
-    | grep "Developer ID Installer:" \
-    | head -1 \
-    | sed -n 's/.*"\(.*\)".*/\1/p' || true
+  newest_identity "Developer ID Installer:"
 }
 
 PKG_SIGN_IDENTITY="$(resolve_pkg_sign_identity)"

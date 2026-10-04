@@ -165,24 +165,41 @@ fi
 #
 # The identity is resolved in this order:
 #   1. $EZLIBRARY_CODESIGN_IDENTITY, if set (use "-" to force ad-hoc).
-#   2. The first "Developer ID Application" identity in the keychain.
+#   2. The newest "Developer ID Application" identity in the keychain.
 #   3. Ad-hoc.
+# Prints the SHA-1 of the valid identity whose name starts with $1 and whose
+# certificate expires last; extra args go to `security find-identity`.
+#
+# Selecting by hash rather than name matters when certificates are renewed:
+# the old and new ones share the exact same name until the old one expires,
+# and codesign/pkgbuild refuse a name that matches more than one identity.
+#
+# Nothing in here may fail the build: under `set -euo pipefail` a missing
+# certificate would otherwise abort instead of falling through to the
+# unsigned path, hence the `|| true`s.
+newest_identity() {
+	local prefix="$1"
+	shift
+	security find-identity -v "$@" 2>/dev/null \
+		| sed -n "s/^ *[0-9]*) \([0-9A-F]\{40\}\) \"\(${prefix}[^\"]*\)\"$/\1 \2/p" \
+		| while read -r hash name; do
+			local end
+			end="$(security find-certificate -a -Z -p -c "$name" 2>/dev/null \
+				| awk -v h="$hash" '/^SHA-1 hash:/ {keep = ($3 == h); next} keep' \
+				| /usr/bin/openssl x509 -noout -enddate 2>/dev/null \
+				| cut -d= -f2)" || true
+			[[ -n "$end" ]] || continue
+			echo "$(date -j -u -f '%b %e %T %Y %Z' "$end" +%s 2>/dev/null || echo 0) $hash"
+		done \
+		| sort -rn | head -1 | cut -d' ' -f2 || true
+}
+
 resolve_codesign_identity() {
 	if [[ -n "${EZLIBRARY_CODESIGN_IDENTITY:-}" ]]; then
 		echo "$EZLIBRARY_CODESIGN_IDENTITY"
 		return
 	fi
-	# `security find-identity` prints one identity per line as:
-	#   1) <40-hex-sha1> "Developer ID Application: Name (TEAMID)"
-	# Take the quoted name of the first Developer ID Application entry.
-	#
-	# `|| true` because no identity is a normal state, not an error: this script
-	# runs under `set -euo pipefail`, where grep matching nothing exits 1 and
-	# would abort the whole build instead of falling through to ad-hoc signing.
-	security find-identity -v -p codesigning 2>/dev/null \
-		| grep "Developer ID Application:" \
-		| head -1 \
-		| sed -n 's/.*"\(.*\)".*/\1/p' || true
+	newest_identity "Developer ID Application:" -p codesigning
 }
 
 CODESIGN_IDENTITY="$(resolve_codesign_identity)"
