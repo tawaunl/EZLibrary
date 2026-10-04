@@ -273,6 +273,30 @@ private let itunesHit = Data("""
         }
     }
 
+    /// A bulk run holds iTunes to its sustained rate from the first request,
+    /// instead of starting at the floor and losing requests to the throttle
+    /// while it backs off. An interactive search is still sent at the floor.
+    @Test func bulkPacingHoldsITunesToItsSustainedRate() async {
+        // Reserving a slot never sleeps, so real intervals cost nothing here.
+        RequestPacer.delayScale = 1
+        defer { RequestPacer.delayScale = 0 }
+
+        let bulkInterval = OnlineTrackMetadataLookupService.Pacing.bulk.minimumInterval(for: .itunes)
+        #expect(bulkInterval >= 3)
+        #expect(OnlineTrackMetadataLookupService.Pacing.interactive.minimumInterval(for: .itunes) == 0)
+        #expect(OnlineTrackMetadataLookupService.Pacing.bulk.minimumInterval(for: .deezer) == 0)
+
+        let bulk = RequestPacer(floor: 0.25)
+        #expect(await bulk.reserveSlot(minimumInterval: bulkInterval) == 0)
+        let secondBulk = await bulk.reserveSlot(minimumInterval: bulkInterval)
+        #expect(abs(secondBulk - bulkInterval) < 0.1)
+
+        let interactive = RequestPacer(floor: 0.25)
+        _ = await interactive.reserveSlot()
+        let secondInteractive = await interactive.reserveSlot()
+        #expect(abs(secondInteractive - 0.25) < 0.1)
+    }
+
     /// A throttled request is retried rather than given up on after one attempt.
     @Test func throttledRequestIsRetriedBeforeFailing() async {
         StubURLProtocol.reset(responses: [(429, Data()), (429, Data()), (200, itunesHit)])

@@ -63,7 +63,10 @@ struct TracksAndTagsView: View {
     @EnvironmentObject private var libraryService: LibraryService
 
     let onApplyMetadata: (Track, SeratoTrackMetadataUpdate) throws -> Void
-    let onApplyMetadataBatch: (([(Track, SeratoTrackMetadataUpdate)]) throws -> Void)?
+    /// Saves several edits in one database pass. The flag is
+    /// `backupBeforeWrite`: false only for the later saves of a job that backed
+    /// up on its first one.
+    let onApplyMetadataBatch: (([(Track, SeratoTrackMetadataUpdate)], Bool) throws -> Void)?
     let onTrackActivated: ((Track, [Track]) -> Void)?
     let onDeleteRequested: ([Track]) -> Void
     let onDeleteFromLibrary: ([Track]) -> Void
@@ -110,7 +113,6 @@ struct TracksAndTagsView: View {
     /// search survives leaving this view and its tracks stay locked.
     @EnvironmentObject private var backgroundTagJobs: BackgroundTagJobsModel
     @State private var showVerifiedApplyPrompt = false
-    @State private var verifiedProgress: (done: Int, total: Int)?
     @State private var verifiedApplyTask: Task<Void, Never>?
     /// The log of the verified run whose changes are waiting in
     /// `pendingTopHitUpdates`, with what it chose to apply, so the
@@ -410,13 +412,7 @@ struct TracksAndTagsView: View {
                 tracks: selectedTracks,
                 run: verificationRun,
                 onApply: { updates in
-                    if let onApplyMetadataBatch {
-                        try onApplyMetadataBatch(updates)
-                    } else {
-                        for (track, metadata) in updates {
-                            try onApplyMetadata(track, metadata)
-                        }
-                    }
+                    try applyMetadataBatch(updates)
                 },
                 // The sheet closes itself once its run is done, so the
                 // confirmation has to land somewhere still on screen.
@@ -612,17 +608,21 @@ struct TracksAndTagsView: View {
                 if isBulkLookupRunning {
                     ProgressView()
                         .controlSize(.small)
-                    if let verifiedProgress {
-                        // Verification is per-track and can run for minutes, so
-                        // a bare spinner would look like a hang.
-                        Text("\(verifiedProgress.done) of \(verifiedProgress.total)")
+                    if backgroundTagJobs.isRunning, backgroundTagJobs.total > 0 {
+                        // Bulk lookups run for minutes, at the sources' rate
+                        // limits, so a bare spinner would look like a hang.
+                        Text("\(backgroundTagJobs.done) of \(backgroundTagJobs.total)")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         Button("Stop") {
-                            verifiedApplyTask?.cancel()
-                            verifiedApplyTask = nil
-                            isBulkLookupRunning = false
-                            self.verifiedProgress = nil
+                            backgroundTagJobs.cancel()
+                            // The verified run only notices on its next event,
+                            // so release its UI now. The genre/year fill stops
+                            // within moments and finishes on its own.
+                            if verifiedApplyTask != nil {
+                                verifiedApplyTask = nil
+                                isBulkLookupRunning = false
+                            }
                         }
                         .controlSize(.small)
                     }
@@ -838,13 +838,7 @@ struct TracksAndTagsView: View {
         }
 
         do {
-            if let onApplyMetadataBatch {
-                try onApplyMetadataBatch(updates)
-            } else {
-                for (track, metadata) in updates {
-                    try onApplyMetadata(track, metadata)
-                }
-            }
+            try applyMetadataBatch(updates)
         } catch {
             operationErrorMessage = error.localizedDescription
             return
@@ -918,117 +912,156 @@ struct TracksAndTagsView: View {
 
         let updates = plan.changes.map { ($0.track, $0.metadata) }
         do {
-            if let onApplyMetadataBatch {
-                try onApplyMetadataBatch(updates)
-            } else {
-                for (track, metadata) in updates {
-                    try onApplyMetadata(track, metadata)
-                }
-            }
+            try applyMetadataBatch(updates)
             bulkLookupMessage = "Updated \(updates.count) track\(updates.count == 1 ? "" : "s") from their files' tags."
         } catch {
             operationErrorMessage = error.localizedDescription
         }
     }
 
+    private func applyMetadataBatch(
+        _ updates: [(Track, SeratoTrackMetadataUpdate)],
+        backupBeforeWrite: Bool = true
+    ) throws {
+        if let onApplyMetadataBatch {
+            try onApplyMetadataBatch(updates, backupBeforeWrite)
+        } else {
+            for (track, metadata) in updates {
+                try onApplyMetadata(track, metadata)
+            }
+        }
+    }
+
     private func lookupMissingGenreAndYear() {
         guard !selectedTracks.isEmpty, backgroundTagJobs.canStart else { return }
 
-        let tracksSnapshot = backgroundTagJobs.unlockedTracks(selectedTracks)
-        guard !tracksSnapshot.isEmpty else { return }
+        // Only tracks actually missing something are searched, locked, and
+        // counted, so the progress total matches the work being done.
+        let needingLookup = backgroundTagJobs.unlockedTracks(selectedTracks).filter {
+            Self.needsGenre($0) || $0.year == nil
+        }
+        guard !needingLookup.isEmpty else {
+            bulkLookupMessage = "The selected tracks already have a genre and year."
+            return
+        }
 
         bulkLookupMessage = nil
         operationErrorMessage = nil
         isBulkLookupRunning = true
-        backgroundTagJobs.begin(label: "Filling genre and year", lock: tracksSnapshot)
+        backgroundTagJobs.begin(label: "Filling genre and year", lock: needingLookup)
 
-        let lookupItems: [(key: String, track: Track, query: OnlineTrackMetadataLookupService.Query)] = tracksSnapshot.compactMap { track in
-            let needsGenre = track.genre.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            let needsYear = track.year == nil
-            guard needsGenre || needsYear else { return nil }
-
-            return (
-                key: bulkLookupKey(for: track),
-                track: track,
-                query: OnlineTrackMetadataLookupService.Query(
-                    title: track.title,
-                    artist: track.artist,
-                    album: track.album
-                )
-            )
+        // Copies of the same title/artist/album share one search: iTunes allows
+        // about 20 a minute, so a repeated search is three seconds lost.
+        let tracksByKey = Dictionary(grouping: needingLookup, by: bulkLookupKey)
+        let lookups = tracksByKey.map { key, tracks in
+            (key: key, query: OnlineTrackMetadataLookupService.Query(
+                title: tracks[0].title,
+                artist: tracks[0].artist,
+                album: tracks[0].album
+            ))
         }
+        let total = needingLookup.count
 
         let task = Task.detached(priority: .userInitiated) {
-            do {
-                let lookupOutcome = try await Self.fetchBulkLookupCandidates(
-                    for: lookupItems.map { ($0.key, $0.query) }
-                )
+            var completed = 0
+            var updatedCount = 0
+            var unwrittenCount = 0
+            var hasBackedUp = false
+            var stopError: String?
 
-                var updates: [(Track, SeratoTrackMetadataUpdate)] = []
-                for item in lookupItems {
-                    let needsGenre = item.track.genre.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    let needsYear = item.track.year == nil
+            // Each result is saved as it arrives, so a long run fills the
+            // library steadily and Stop keeps everything already found.
+            let lookupOutcome = await Self.fetchBulkLookupCandidates(for: lookups) { key, candidate in
+                let tracks = tracksByKey[key] ?? []
+                let updates = candidate.map { candidate in
+                    tracks.compactMap { Self.genreYearUpdate(for: $0, from: candidate) }
+                } ?? []
+                completed += tracks.count
 
-                    guard let candidate = lookupOutcome.candidates[item.key] else {
-                        continue
-                    }
-
-                    var metadata = SeratoTrackMetadataUpdate(
-                        title: item.track.title,
-                        artist: item.track.artist,
-                        album: item.track.album,
-                        genre: item.track.genre,
-                        comment: item.track.comment,
-                        key: item.track.key ?? "",
-                        bpm: item.track.bpm,
-                        year: item.track.year
-                    )
-
-                    if needsGenre, !candidate.genre.isEmpty {
-                        metadata.genre = candidate.genre
-                    }
-                    if needsYear, let year = candidate.year {
-                        metadata.year = year
-                    }
-
-                    guard metadata.genre != item.track.genre || metadata.year != item.track.year else {
-                        continue
-                    }
-
-                    updates.append((item.track, metadata))
-                }
-
-                let updatedCount = updates.count
-                if updatedCount > 0 {
-                    try await MainActor.run {
-                        if let onApplyMetadataBatch {
-                            try onApplyMetadataBatch(updates)
-                        } else {
-                            for (track, metadata) in updates {
-                                try onApplyMetadata(track, metadata)
-                            }
+                if !updates.isEmpty {
+                    do {
+                        // Back up once, before the first write, rather than
+                        // per track: a per-track backup would push the
+                        // pre-run copy out of the retention window.
+                        try await MainActor.run {
+                            try applyMetadataBatch(updates, backupBeforeWrite: !hasBackedUp)
                         }
+                        hasBackedUp = true
+                        updatedCount += updates.count
+                    } catch let partial as ContentView.BulkMetadataUpdateError {
+                        // Some files couldn't be written; the rest were saved.
+                        hasBackedUp = hasBackedUp || partial.successCount > 0
+                        updatedCount += partial.successCount
+                        unwrittenCount += partial.failedNames.count
+                    } catch {
+                        // Anything else — Serato open, database unreadable —
+                        // would fail every later save too, so stop searching.
+                        stopError = error.localizedDescription
+                        return false
                     }
                 }
 
                 await MainActor.run {
-                    isBulkLookupRunning = false
-                    let summary = updatedCount > 0
-                        ? "Updated genre/year for \(updatedCount) track\(updatedCount == 1 ? "" : "s")."
-                        : "No missing genre/year values were filled."
-                    let full = summary + (lookupOutcome.failureNote ?? "")
-                    bulkLookupMessage = full
-                    backgroundTagJobs.finish(message: full)
+                    backgroundTagJobs.report(done: completed, total: total)
                 }
-            } catch {
-                await MainActor.run {
-                    isBulkLookupRunning = false
-                    operationErrorMessage = error.localizedDescription
-                    backgroundTagJobs.finish(message: nil, error: error.localizedDescription)
+                return true
+            }
+
+            let wasStopped = Task.isCancelled
+            await MainActor.run {
+                isBulkLookupRunning = false
+                var summary = updatedCount > 0
+                    ? "Updated genre/year for \(updatedCount) track\(updatedCount == 1 ? "" : "s")."
+                    : "No missing genre/year values were filled."
+                if wasStopped {
+                    summary = "Stopped after \(completed) of \(total). " + summary
+                }
+                if unwrittenCount > 0 {
+                    summary += " \(unwrittenCount) file\(unwrittenCount == 1 ? "" : "s") couldn't be written."
+                }
+                summary += lookupOutcome.failureNote ?? ""
+
+                if let stopError {
+                    let message = updatedCount > 0 ? "\(stopError) \(summary)" : stopError
+                    operationErrorMessage = message
+                    backgroundTagJobs.finish(message: nil, error: message)
+                } else {
+                    bulkLookupMessage = summary
+                    backgroundTagJobs.finish(message: summary)
                 }
             }
         }
         backgroundTagJobs.store(task)
+    }
+
+    nonisolated private static func needsGenre(_ track: Track) -> Bool {
+        track.genre.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// The edit that fills `track`'s empty genre and year from `candidate`, or
+    /// nil when the candidate has nothing the track is missing.
+    nonisolated private static func genreYearUpdate(
+        for track: Track,
+        from candidate: OnlineTrackMetadataCandidate
+    ) -> (Track, SeratoTrackMetadataUpdate)? {
+        var metadata = SeratoTrackMetadataUpdate(
+            title: track.title,
+            artist: track.artist,
+            album: track.album,
+            genre: track.genre,
+            comment: track.comment,
+            key: track.key ?? "",
+            bpm: track.bpm,
+            year: track.year
+        )
+        if needsGenre(track), !candidate.genre.isEmpty {
+            metadata.genre = candidate.genre
+        }
+        if track.year == nil, let year = candidate.year {
+            metadata.year = year
+        }
+        guard metadata.genre != track.genre || metadata.year != track.year else { return nil }
+        return (track, metadata)
     }
 
     /// Verifies the selected tracks with the chosen engine and applies the
@@ -1169,7 +1202,6 @@ struct TracksAndTagsView: View {
         bulkLookupMessage = nil
         operationErrorMessage = nil
         isBulkLookupRunning = true
-        verifiedProgress = nil
         backgroundTagJobs.begin(label: "Applying verified tags", lock: tracksSnapshot)
 
         let onlyFillEmptySnapshot = onlyFillEmpty
@@ -1207,11 +1239,9 @@ struct TracksAndTagsView: View {
                 switch event {
                 case let .started(count):
                     total = count
-                    verifiedProgress = (0, count)
                     backgroundTagJobs.report(done: 0, total: count)
                 case let .verified(verification):
                     completed += 1
-                    verifiedProgress = (completed, total)
                     backgroundTagJobs.report(done: completed, total: total)
                     let fields = TagVerificationCoordinator.autoApplicableFields(
                         in: verification,
@@ -1234,7 +1264,6 @@ struct TracksAndTagsView: View {
                 case let .failed(track, message):
                     completed += 1
                     failed += 1
-                    verifiedProgress = (completed, total)
                     backgroundTagJobs.report(done: completed, total: total)
                     log?.recordFailure(track: track, message: message)
                 case let .aborted(message):
@@ -1247,7 +1276,6 @@ struct TracksAndTagsView: View {
             log?.finish(cancelled: Task.isCancelled)
 
             isBulkLookupRunning = false
-            verifiedProgress = nil
             verifiedApplyTask = nil
 
             if let abortedMessage {
@@ -1326,13 +1354,7 @@ struct TracksAndTagsView: View {
         operationErrorMessage = nil
 
         do {
-            if let onApplyMetadataBatch {
-                try onApplyMetadataBatch(updates)
-            } else {
-                for (track, metadata) in updates {
-                    try onApplyMetadata(track, metadata)
-                }
-            }
+            try applyMetadataBatch(updates)
         } catch {
             operationErrorMessage = error.localizedDescription
         }
@@ -1352,13 +1374,7 @@ struct TracksAndTagsView: View {
 
         let updatedCount = updates.count
         do {
-            if let onApplyMetadataBatch {
-                try onApplyMetadataBatch(updates)
-            } else {
-                for (track, metadata) in updates {
-                    try onApplyMetadata(track, metadata)
-                }
-            }
+            try applyMetadataBatch(updates)
         } catch {
             operationErrorMessage = error.localizedDescription
         }
@@ -1379,7 +1395,6 @@ struct TracksAndTagsView: View {
     }
 
     struct BulkLookupOutcome {
-        var candidates: [String: OnlineTrackMetadataCandidate] = [:]
         /// Lookups that failed outright, as opposed to simply finding no match.
         var failureCount = 0
         var wasRateLimited = false
@@ -1395,9 +1410,16 @@ struct TracksAndTagsView: View {
         }
     }
 
+    /// Looks up each query on iTunes, handing every result to `onResult` as it
+    /// lands — nil when nothing matched or the search failed — so the caller can
+    /// save and report progress during the run rather than after it.
+    ///
+    /// `onResult` returns false to end the run early. It is called from this
+    /// task only, one result at a time, so it may keep its own running totals.
     private static func fetchBulkLookupCandidates(
-        for lookups: [(key: String, query: OnlineTrackMetadataLookupService.Query)]
-    ) async throws -> BulkLookupOutcome {
+        for lookups: [(key: String, query: OnlineTrackMetadataLookupService.Query)],
+        onResult: (String, OnlineTrackMetadataCandidate?) async -> Bool
+    ) async -> BulkLookupOutcome {
         guard !lookups.isEmpty else { return BulkLookupOutcome() }
 
         var outcome = BulkLookupOutcome()
@@ -1413,7 +1435,8 @@ struct TracksAndTagsView: View {
                     do {
                         let lookupResults = try await OnlineTrackMetadataLookupService.lookup(
                             query: item.query,
-                            sourceSelection: .itunes
+                            sourceSelection: .itunes,
+                            pacing: .bulk
                         )
                         return (item.key, .success(lookupResults.first))
                     } catch {
@@ -1427,17 +1450,25 @@ struct TracksAndTagsView: View {
             }
 
             while let (key, result) = await group.next() {
+                // Stopped: the in-flight searches fail with cancellation, which
+                // is neither a lookup failure nor a result worth reporting.
+                if Task.isCancelled { break }
+
+                var candidate: OnlineTrackMetadataCandidate?
                 switch result {
-                case let .success(candidate):
-                    if let candidate {
-                        outcome.candidates[key] = candidate
-                    }
+                case let .success(found):
+                    candidate = found
                 case let .failure(error):
                     outcome.failureCount += 1
                     if let lookupError = error as? OnlineTrackMetadataLookupService.LookupError,
                        lookupError.isRateLimit {
                         outcome.wasRateLimited = true
                     }
+                }
+
+                guard await onResult(key, candidate) else {
+                    group.cancelAll()
+                    break
                 }
                 addNextTask()
             }

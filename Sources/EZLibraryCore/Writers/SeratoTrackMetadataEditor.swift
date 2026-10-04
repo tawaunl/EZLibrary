@@ -250,9 +250,16 @@ public enum SeratoTrackMetadataEditor {
     /// doesn't block the rest of the batch. Filename renaming isn't
     /// supported here: renaming mid-batch would shift stored paths out from
     /// under later lookups, so batch callers must keep it disabled.
+    ///
+    /// - Parameter backupBeforeWrite: Pass `false` only when this call is one
+    ///   of a series that already backed the database up on its first write.
+    ///   A job that saves each result as it arrives would otherwise take a
+    ///   backup per track, and with a fixed retention count those would push
+    ///   out the copy from before the job — the one worth restoring.
     public static func updateBatch(
         updates: [(track: Track, metadata: SeratoTrackMetadataUpdate)],
-        databaseFileURL: URL
+        databaseFileURL: URL,
+        backupBeforeWrite: Bool = true
     ) throws -> BatchUpdateResult {
         guard !updates.isEmpty else {
             return BatchUpdateResult(updatedTracks: [], failures: [])
@@ -282,7 +289,7 @@ public enum SeratoTrackMetadataEditor {
             return BatchUpdateResult(updatedTracks: [], failures: failures)
         }
 
-        if FileManager.default.fileExists(atPath: databaseFileURL.path) {
+        if backupBeforeWrite, FileManager.default.fileExists(atPath: databaseFileURL.path) {
             try SeratoBackupBeforeWrite.snapshot(of: databaseFileURL)
         }
 

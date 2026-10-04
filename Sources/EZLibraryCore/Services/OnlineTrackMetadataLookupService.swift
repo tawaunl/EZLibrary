@@ -190,10 +190,16 @@ actor RequestPacer {
     /// Claims the next send slot and returns how long the caller must wait
     /// before sending. The caller sleeps outside the actor so reserving a slot
     /// never blocks other callers.
-    func reserveSlot() -> TimeInterval {
+    ///
+    /// - Parameter minimumInterval: A spacing a bulk caller wants held after
+    ///   its slot regardless of the adaptive interval. Starting a long run at
+    ///   the floor and backing off only after being throttled wastes requests
+    ///   and drops tracks; a bulk run is better off at the source's sustained
+    ///   rate from the first request.
+    func reserveSlot(minimumInterval: TimeInterval = 0) -> TimeInterval {
         let now = Date()
         let slot = max(now, nextSlot)
-        nextSlot = slot.addingTimeInterval(interval)
+        nextSlot = slot.addingTimeInterval(max(interval, minimumInterval * Self.delayScale))
         return slot.timeIntervalSince(now) * Self.delayScale
     }
 
@@ -326,6 +332,29 @@ public enum OnlineTrackMetadataLookupService {
         }
     }
 
+    /// How a lookup spends a rate-limited source's request budget.
+    public enum Pacing: Sendable {
+        /// One search the user is waiting on: send immediately, and back off
+        /// only if the source pushes back.
+        case interactive
+        /// One of many queued searches: hold each source to the rate it will
+        /// actually sustain, so a long run neither trips the throttle nor
+        /// drops tracks to it.
+        case bulk
+
+        /// The spacing to hold after each request to `source`.
+        func minimumInterval(for source: OnlineMetadataSource) -> TimeInterval {
+            guard self == .bulk else { return 0 }
+            switch source {
+            // Apple documents the Search API at roughly 20 calls a minute.
+            case .itunes:
+                return 3.0
+            default:
+                return 0
+            }
+        }
+    }
+
     public struct Query: Sendable {
         public let title: String
         public let artist: String
@@ -393,13 +422,14 @@ public enum OnlineTrackMetadataLookupService {
         source: OnlineMetadataSource,
         pacer: RequestPacer,
         session: URLSession,
+        pacing: Pacing = .interactive,
         maxAttempts: Int = 3,
         errorMessage: (@Sendable (Data) -> String?)? = nil
     ) async throws -> Data {
         var lastThrottle: LookupError?
 
         for attempt in 1...maxAttempts {
-            let delay = await pacer.reserveSlot()
+            let delay = await pacer.reserveSlot(minimumInterval: pacing.minimumInterval(for: source))
             if delay > 0 {
                 try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             }
@@ -436,7 +466,8 @@ public enum OnlineTrackMetadataLookupService {
         sourceSelection: SourceSelection = .all,
         maxResultsPerSource: Int = 8,
         session: URLSession = defaultSession,
-        deduplicate: Bool = true
+        deduplicate: Bool = true,
+        pacing: Pacing = .interactive
     ) async throws -> [OnlineTrackMetadataCandidate] {
         let normalized = normalize(query: query)
         guard !normalized.title.isEmpty || !normalized.artist.isEmpty || !normalized.album.isEmpty else {
@@ -469,7 +500,8 @@ public enum OnlineTrackMetadataLookupService {
                                 maxResults: maxResultsPerSource,
                                 session: session,
                                 discogsToken: token,
-                                sourceSelection: sourceSelection
+                                sourceSelection: sourceSelection,
+                                pacing: pacing
                             ))
                         } catch {
                             return .failure(error)
@@ -502,7 +534,8 @@ public enum OnlineTrackMetadataLookupService {
                 maxResults: maxResultsPerSource,
                 session: session,
                 discogsToken: discogsToken(),
-                sourceSelection: sourceSelection
+                sourceSelection: sourceSelection,
+                pacing: pacing
             )
 
             result = deduplicate ? deduplicated(candidates: results) : results
@@ -659,11 +692,12 @@ public enum OnlineTrackMetadataLookupService {
         maxResults: Int,
         session: URLSession,
         discogsToken: String?,
-        sourceSelection: SourceSelection
+        sourceSelection: SourceSelection,
+        pacing: Pacing = .interactive
     ) async throws -> [OnlineTrackMetadataCandidate] {
         switch source {
         case .itunes:
-            return try await fetchITunes(query: query, maxResults: maxResults, session: session)
+            return try await fetchITunes(query: query, maxResults: maxResults, session: session, pacing: pacing)
         case .musicBrainz:
             return try await fetchMusicBrainz(query: query, maxResults: maxResults, session: session)
         case .deezer:
@@ -834,7 +868,8 @@ public enum OnlineTrackMetadataLookupService {
     private static func fetchITunes(
         query: Query,
         maxResults: Int,
-        session: URLSession
+        session: URLSession,
+        pacing: Pacing
     ) async throws -> [OnlineTrackMetadataCandidate] {
         let searchTerm = [query.artist, query.title, query.album]
             .filter { !$0.isEmpty }
@@ -855,7 +890,13 @@ public enum OnlineTrackMetadataLookupService {
         var request = URLRequest(url: url)
         request.setValue("EZLibrary/1.0 (metadata lookup)", forHTTPHeaderField: "User-Agent")
 
-        let data = try await performRequest(request, source: .itunes, pacer: .itunes, session: session)
+        let data = try await performRequest(
+            request,
+            source: .itunes,
+            pacer: .itunes,
+            session: session,
+            pacing: pacing
+        )
         let decoded: ITunesSearchResponse
         do {
             decoded = try JSONDecoder().decode(ITunesSearchResponse.self, from: data)

@@ -601,8 +601,8 @@ struct ContentView: View {
                     onApplyMetadata: { track, metadata in
                         try saveTrackMetadataEdit(track: track, metadata: metadata)
                     },
-                    onApplyMetadataBatch: { updates in
-                        try saveTrackMetadataEditsBatch(updates)
+                    onApplyMetadataBatch: { updates, backupBeforeWrite in
+                        try saveTrackMetadataEditsBatch(updates, backupBeforeWrite: backupBeforeWrite)
                     },
                     onTrackActivated: { track, list in
                         activateAudioTrack(track, in: list)
@@ -931,7 +931,7 @@ struct ContentView: View {
         }
     }
 
-    private struct BulkMetadataUpdateError: LocalizedError {
+    struct BulkMetadataUpdateError: LocalizedError {
         let successCount: Int
         let failedNames: [String]
 
@@ -1016,7 +1016,10 @@ struct ContentView: View {
         }
     }
 
-    private func saveTrackMetadataEditsBatch(_ updates: [(Track, SeratoTrackMetadataUpdate)]) throws {
+    private func saveTrackMetadataEditsBatch(
+        _ updates: [(Track, SeratoTrackMetadataUpdate)],
+        backupBeforeWrite: Bool = true
+    ) throws {
         guard !updates.isEmpty else { return }
 
         // Bulk edits fill metadata across many tracks and must not rename
@@ -1026,7 +1029,8 @@ struct ContentView: View {
         // support it at all.
         let result = try SeratoTrackMetadataEditor.updateBatch(
             updates: updates.map { (track: $0.0, metadata: $0.1) },
-            databaseFileURL: libraryService.databaseFile
+            databaseFileURL: libraryService.databaseFile,
+            backupBeforeWrite: backupBeforeWrite
         )
 
         // Off-main re-parse; the failure summary below doesn't depend on it.
