@@ -101,7 +101,7 @@ struct TrackMetadataEditorForm: View {
     let position: (index: Int, count: Int)?
     @Binding var sourceSelection: OnlineTrackMetadataLookupService.SourceSelection
     @Binding fileprivate var lockedFields: Set<MetadataField>
-    /// Moves by `step` (-1 or +1). Only called once unsaved edits are dealt with.
+    /// Moves by `step` (-1 or +1). Only called once unsaved edits are autosaved.
     let onNavigate: (Int) -> Void
     let onSave: (SeratoTrackMetadataUpdate) throws -> Void
 
@@ -126,8 +126,6 @@ struct TrackMetadataEditorForm: View {
     @State private var artworkStatusMessage: String?
     @State private var showArtworkPreview = false
     @State private var searchTask: Task<Void, Never>?
-    /// The step the user asked for while this track had unsaved edits.
-    @State private var pendingStep: Int?
 
     fileprivate init(
         track: Track,
@@ -164,25 +162,6 @@ struct TrackMetadataEditorForm: View {
         // results list was squeezed to nothing. Fixing the height to the
         // editor's keeps the sheet sizing to its content.
         .fixedSize(horizontal: false, vertical: true)
-        .confirmationDialog(
-            "Save changes to \u{201C}\(track.title.isEmpty ? track.fileURL.lastPathComponent : track.title)\u{201D}?",
-            isPresented: Binding(
-                get: { pendingStep != nil },
-                set: { if !$0 { pendingStep = nil } }
-            )
-        ) {
-            Button("Save and Continue") {
-                if let step = pendingStep, save() { onNavigate(step) }
-                pendingStep = nil
-            }
-            Button("Discard Changes", role: .destructive) {
-                if let step = pendingStep { onNavigate(step) }
-                pendingStep = nil
-            }
-            Button("Cancel", role: .cancel) { pendingStep = nil }
-        } message: {
-            Text("This track has edits that haven't been saved.")
-        }
         .onDisappear { searchTask?.cancel() }
     }
 
@@ -488,13 +467,16 @@ struct TrackMetadataEditorForm: View {
         return (0..<position.count).contains(position.index + step)
     }
 
+    /// Autosaves any unsaved edits before stepping, so moving through a run of
+    /// tracks never stops to ask "save changes?" — it just saves them. If the
+    /// save fails, `save()` has already surfaced the error and we stay put
+    /// rather than navigate away from a track that didn't actually save.
     private func navigate(_ step: Int) {
         guard canStep(step) else { return }
         if hasUnsavedChanges {
-            pendingStep = step
-        } else {
-            onNavigate(step)
+            guard save() else { return }
         }
+        onNavigate(step)
     }
 
     private var hasUnsavedChanges: Bool {
