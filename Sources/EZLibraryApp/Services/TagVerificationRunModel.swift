@@ -57,7 +57,7 @@ final class TagVerificationRunModel: ObservableObject {
     /// `checkedCount`, this is how often the cheap pass is enough.
     @Published private(set) var searchPassCount = 0
     private var searchPassPossible = false
-    private var pricing: ClaudeModel?
+    private var pricing: ModelPricing?
 
     /// Which proposals are ticked. Held here rather than in the sheet so a
     /// review survives the window being closed and reopened.
@@ -113,9 +113,9 @@ final class TagVerificationRunModel: ObservableObject {
         webSearches = 0
         searchPassCount = 0
         // Only the cloud tier bills; the other two are free, and showing them a
-        // running total of $0.00 would just be noise. Only Anthropic is priced:
-        // Claude's rates say nothing about another provider's bill.
-        pricing = engine == .cloudModel && cloudOptions.provider == .anthropic ? cloudOptions.model : nil
+        // running total of $0.00 would just be noise. A cloud model is priced
+        // only when its rates are known; another provider's bill is its own.
+        pricing = engine == .cloudModel ? cloudOptions.pricing.flatMap { $0.isFree ? nil : $0 } : nil
         searchPassPossible = engine == .cloudModel
             && cloudOptions.useWebSearch
             && cloudOptions.provider.supportsWebSearch
@@ -256,7 +256,7 @@ final class TagVerificationRunModel: ObservableObject {
     /// $10 per 1,000, so both halves are counted.
     var spendSoFar: Double? {
         guard let pricing, checkedCount > 0 else { return nil }
-        return usage.tokenCost(on: pricing) + Double(webSearches) * AITagVerificationService.costPerWebSearch
+        return usage.tokenCost(at: pricing) + Double(webSearches) * AITagVerificationService.costPerWebSearch
     }
 
     var spendSummary: String? {

@@ -261,6 +261,26 @@ still receive the full evidence bundle — fingerprint match, database candidate
 filename, current tags, stage 1 findings — so they have real material to judge;
 they simply cannot go and look anything else up.
 
+On OpenAI's own endpoint the same three-tier choice is built in and priced, so a
+run gets a cost estimate, a running spend, and a costed run log:
+
+| Tier | Claude | OpenAI | OpenAI $ / MTok in / out |
+| --- | --- | --- | --- |
+| Most accurate | Opus 5.5 | `gpt-6-astra` | $10 / $50 |
+| Balanced | Sonnet 5.5 | `gpt-6.1-sol` (default) | $2 / $10 |
+| Cheapest | Haiku 4.5 | `gpt-6-luna` | $0.10 / $0.50 |
+
+On OpenAI's endpoint a blank model name means `gpt-6.1-sol`, so pasting a key is
+the only setup step. Sol is the default, not Astra, because Astra costs two and a
+half times Opus 5.5, and without web search the extra spend buys less. These are
+standard, short-context prices (≤272K input; a track's request is a few thousand
+tokens). Any other model name still works, but with no price on file it gets no
+cost figures, the same as any other provider. A model on this Mac is free. The
+per-track token counts behind the estimate were measured on Claude, and OpenAI's
+tokenizer differs, so the estimate is approximate. OpenAI includes cached tokens
+inside its prompt count, so they are split out and billed once, at the cached
+rate.
+
 ### Search only when unsure
 
 Every track gets a first pass **without** web search, answered from the evidence

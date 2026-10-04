@@ -71,11 +71,24 @@ private func makeCredentials() -> InMemoryCredentialStore { InMemoryCredentialSt
 @Test func aMissingModelNameMeansNotConfigured() {
     let (defaults, _) = makeDefaults()
 
+    // Not OpenAI's own endpoint: there, a blank model means the default one.
     let store = makeCredentials()
-    defaults.set("https://api.openai.com/v1", forKey: OpenAICompatibleClient.baseURLDefaultsKey)
+    defaults.set("https://api.groq.com/openai/v1", forKey: OpenAICompatibleClient.baseURLDefaultsKey)
     OpenAICompatibleClient.setAPIKey("sk-test", userDefaults: defaults, credentials: store)
 
-    #expect(OpenAICompatibleClient.configuration(environment: [:], userDefaults: defaults, credentials: makeCredentials()) == nil)
+    #expect(OpenAICompatibleClient.configuration(environment: [:], userDefaults: defaults, credentials: store) == nil)
+}
+
+@Test func onOpenAIsEndpointABlankModelMeansTheDefaultSoAKeyIsEnough() {
+    let (defaults, _) = makeDefaults()
+
+    let store = makeCredentials()
+    OpenAICompatibleClient.setAPIKey("sk-test", userDefaults: defaults, credentials: store)
+
+    // Nothing set but the key — the base URL defaults to OpenAI's.
+    let configuration = OpenAICompatibleClient.configuration(environment: [:], userDefaults: defaults, credentials: store)
+    #expect(configuration?.model == "gpt-6.1-sol")
+    #expect(configuration?.baseURL == "https://api.openai.com/v1")
 }
 
 @Test func theEnvironmentSuppliesTheKeyWhenNoneIsSaved() {

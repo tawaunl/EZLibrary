@@ -317,6 +317,7 @@ public enum TagVerificationCoordinator {
             provider: AITagVerificationService.selectedProvider(userDefaults: userDefaults),
             model: ClaudeAPIClient.selectedModel(userDefaults: userDefaults)
         )
+        .withCompatibleSettings(userDefaults: userDefaults)
     }
 
     /// Runs `kind` over `tracks`, yielding the same events whichever tier does

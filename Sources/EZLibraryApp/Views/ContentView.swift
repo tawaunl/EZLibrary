@@ -1318,6 +1318,21 @@ private struct CloudModelProviderSection: View {
         AITagVerificationService.Provider(rawValue: providerRawValue) ?? .anthropic
     }
 
+    /// A blank model on OpenAI's endpoint means the default one.
+    private var effectiveCompatibleModel: String {
+        let typed = compatibleModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        return typed.isEmpty && OpenAICompatibleClient.isOpenAIEndpoint(baseURL)
+            ? OpenAIModel.default.rawValue
+            : typed
+    }
+
+    private var openAIModelBinding: Binding<String> {
+        Binding(
+            get: { effectiveCompatibleModel },
+            set: { compatibleModel = $0 }
+        )
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Cloud AI Provider (Tag Verification)")
@@ -1398,8 +1413,40 @@ private struct CloudModelProviderSection: View {
 
         TextField("API base URL", text: $baseURL)
             .textFieldStyle(.roundedBorder)
-        TextField("Model name (for example gpt-5)", text: $compatibleModel)
-            .textFieldStyle(.roundedBorder)
+
+        if OpenAICompatibleClient.isOpenAIEndpoint(baseURL) {
+            // OpenAI's own endpoint gets the same three-tier choice as Claude,
+            // priced, so a run on it has a cost estimate and running spend.
+            // The text field below still takes any other model name.
+            Picker("OpenAI model", selection: openAIModelBinding) {
+                ForEach(OpenAIModel.allCases, id: \.rawValue) { model in
+                    Text(model.displayName).tag(model.rawValue)
+                }
+                if OpenAIModel(rawValue: effectiveCompatibleModel) == nil {
+                    Text("Other: \(effectiveCompatibleModel)").tag(effectiveCompatibleModel)
+                }
+            }
+            .pickerStyle(.menu)
+            .frame(maxWidth: 320, alignment: .leading)
+
+            if let model = OpenAIModel(rawValue: effectiveCompatibleModel) {
+                Text(String(
+                    format: "$%.2f in / $%.2f out per million tokens.",
+                    model.pricing.input,
+                    model.pricing.output
+                ))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+        }
+
+        TextField(
+            OpenAICompatibleClient.isOpenAIEndpoint(baseURL)
+                ? "Or type another model name (blank uses \(OpenAIModel.default.rawValue))"
+                : "Model name (for example llama3.1)",
+            text: $compatibleModel
+        )
+        .textFieldStyle(.roundedBorder)
         SecureField("API key (leave blank for a local model)", text: $compatibleKeyInput)
             .textFieldStyle(.roundedBorder)
 

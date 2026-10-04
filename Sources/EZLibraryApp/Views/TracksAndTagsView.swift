@@ -1141,7 +1141,11 @@ struct TracksAndTagsView: View {
     private var verifiedApplyPromptMessage: String {
         let engine = verificationEngine
         let count = selectedTracks.count
-        let cost = TagVerificationCoordinator.costText(for: engine, trackCount: count)
+        let cost = TagVerificationCoordinator.costText(
+            for: engine,
+            trackCount: count,
+            cloudOptions: TagVerificationCoordinator.cloudOptionsFromSettings()
+        )
         var message = ""
         // If the chosen engine cannot run, say so here rather than quietly
         // running something else and letting the results imply it.

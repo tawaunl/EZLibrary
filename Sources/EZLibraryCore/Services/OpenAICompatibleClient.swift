@@ -10,6 +10,48 @@
 
 import Foundation
 
+/// The OpenAI models offered out of the box, one per tier, matching the three
+/// Claude choices: most accurate, balanced, cheapest.
+///
+/// Any other model name still works — type it into Settings — but these three
+/// come with prices, so a run on them gets a cost estimate and a running
+/// spend the same way a Claude run does.
+public enum OpenAIModel: String, CaseIterable, Sendable {
+    case astra = "gpt-6-astra"
+    case sol = "gpt-6.1-sol"
+    case luna = "gpt-6-luna"
+
+    /// What a fresh setup uses, so pasting a key is the only step. Sol rather
+    /// than Astra: it is priced like Sonnet 5.5, where Astra costs two and a
+    /// half times Opus 5.5 — and with no web search on this path, the extra
+    /// spend buys less than it does on Claude.
+    public static let `default` = OpenAIModel.sol
+
+    public var displayName: String {
+        switch self {
+        case .astra:
+            return "GPT-6 Astra (most accurate)"
+        case .sol:
+            return "GPT-6.1 Sol (balanced)"
+        case .luna:
+            return "GPT-6 Luna (cheapest)"
+        }
+    }
+
+    /// Standard-tier, short-context (≤272K input) list prices. A track's
+    /// request is a few thousand tokens, so the long-context rates never apply.
+    public var pricing: ModelPricing {
+        switch self {
+        case .astra:
+            return ModelPricing(input: 10.00, output: 50.00, cacheRead: 1.00, cacheWrite: 12.50)
+        case .sol:
+            return ModelPricing(input: 2.00, output: 10.00, cacheRead: 0.10, cacheWrite: 2.50)
+        case .luna:
+            return ModelPricing(input: 0.10, output: 0.50, cacheRead: 0.01, cacheWrite: 0.125)
+        }
+    }
+}
+
 /// Talks to any service that speaks OpenAI's `/chat/completions` shape.
 ///
 /// That one wire format is what makes "bring a key from whichever model you
@@ -53,7 +95,7 @@ public enum OpenAICompatibleClient {
     }
 
     public static let presets: [Preset] = [
-        Preset(name: "OpenAI", baseURL: "https://api.openai.com/v1", exampleModel: "gpt-5"),
+        Preset(name: "OpenAI", baseURL: "https://api.openai.com/v1", exampleModel: OpenAIModel.default.rawValue),
         Preset(name: "OpenRouter", baseURL: "https://openrouter.ai/api/v1", exampleModel: "openai/gpt-5"),
         Preset(name: "Groq", baseURL: "https://api.groq.com/openai/v1", exampleModel: "llama-3.3-70b-versatile"),
         Preset(name: "Mistral", baseURL: "https://api.mistral.ai/v1", exampleModel: "mistral-large-latest"),
@@ -134,16 +176,45 @@ public enum OpenAICompatibleClient {
         )
     }
 
+    /// The endpoint and model chosen in Settings, whether or not a key is set.
+    ///
+    /// On OpenAI's own endpoint a blank model means the default one, so a new
+    /// user only has to paste a key. Anywhere else there is no sensible
+    /// default, and a blank model is nil.
+    public static func selectedEndpoint(userDefaults: UserDefaults = .standard) -> (baseURL: String, model: String)? {
+        let baseURL = (userDefaults.string(forKey: baseURLDefaultsKey)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }
+            ?? defaultBaseURL
+        let typed = userDefaults.string(forKey: modelDefaultsKey)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !typed.isEmpty {
+            return (baseURL, typed)
+        }
+        return isOpenAIEndpoint(baseURL) ? (baseURL, OpenAIModel.default.rawValue) : nil
+    }
+
+    /// What `model` costs at `baseURL`, when that is known: one of the three
+    /// OpenAI models on OpenAI's own endpoint, or anything running on this Mac
+    /// (free). Nil otherwise — another provider's rates are its own, and a
+    /// guessed price is worse than none.
+    public static func pricing(baseURL: String, model: String) -> ModelPricing? {
+        if isLocalEndpoint(baseURL) {
+            return .free
+        }
+        guard isOpenAIEndpoint(baseURL) else { return nil }
+        return OpenAIModel(rawValue: model)?.pricing
+    }
+
+    public static func isOpenAIEndpoint(_ baseURL: String) -> Bool {
+        URL(string: baseURL.trimmingCharacters(in: .whitespacesAndNewlines))?.host?.lowercased() == "api.openai.com"
+    }
+
     public static func configuration(
         environment: [String: String] = ProcessInfo.processInfo.environment,
         userDefaults: UserDefaults = .standard,
         credentials: any SecureCredentialStore = AppCredentials.keychain
     ) -> Configuration? {
-        let baseURL = (userDefaults.string(forKey: baseURLDefaultsKey)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }
-            ?? defaultBaseURL
-        guard let model = userDefaults.string(forKey: modelDefaultsKey)?
-            .trimmingCharacters(in: .whitespacesAndNewlines), !model.isEmpty else {
+        guard let (baseURL, model) = selectedEndpoint(userDefaults: userDefaults) else {
             return nil
         }
 
@@ -290,11 +361,17 @@ public enum OpenAICompatibleClient {
         }
 
         let usage = payload["usage"] as? [String: Any]
+        // OpenAI counts cached tokens *inside* prompt_tokens, where Anthropic
+        // reports them separately — so they are split out here, or a cached
+        // token would be billed twice: once as input and once as a read.
+        let promptTokens = (usage?["prompt_tokens"] as? Int) ?? 0
+        let cachedTokens = ((usage?["prompt_tokens_details"] as? [String: Any])?["cached_tokens"] as? Int) ?? 0
         return Response(
             text: content,
             usage: TagVerificationUsage(
-                inputTokens: (usage?["prompt_tokens"] as? Int) ?? 0,
-                outputTokens: (usage?["completion_tokens"] as? Int) ?? 0
+                inputTokens: max(promptTokens - cachedTokens, 0),
+                outputTokens: (usage?["completion_tokens"] as? Int) ?? 0,
+                cacheReadTokens: cachedTokens
             )
         )
     }

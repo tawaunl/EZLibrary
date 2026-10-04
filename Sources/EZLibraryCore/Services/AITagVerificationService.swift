@@ -108,6 +108,12 @@ public enum AITagVerificationService {
         /// is a long, search-heavy request, and Anthropic rate limits per key.
         public var maxConcurrentTracks: Int
         public var effort: String?
+        /// The model name for an OpenAI-compatible run, for display and the
+        /// run log. Unused for Anthropic.
+        public var compatibleModelName: String?
+        /// What that model costs, when known — see
+        /// `OpenAICompatibleClient.pricing(baseURL:model:)`.
+        public var compatiblePricing: ModelPricing?
 
         public init(
             provider: Provider = .anthropic,
@@ -127,6 +133,29 @@ public enum AITagVerificationService {
             self.minimumConfidence = minimumConfidence
             self.maxConcurrentTracks = maxConcurrentTracks
             self.effort = effort
+        }
+
+        /// Fills the OpenAI-compatible fields from Settings. A no-op for an
+        /// Anthropic run.
+        public func withCompatibleSettings(userDefaults: UserDefaults = .standard) -> Options {
+            guard provider == .openAICompatible,
+                  let endpoint = OpenAICompatibleClient.selectedEndpoint(userDefaults: userDefaults) else {
+                return self
+            }
+            var copy = self
+            copy.compatibleModelName = endpoint.model
+            copy.compatiblePricing = OpenAICompatibleClient.pricing(baseURL: endpoint.baseURL, model: endpoint.model)
+            return copy
+        }
+
+        /// The rates this run is billed at, or nil when they are not known.
+        public var pricing: ModelPricing? {
+            provider == .anthropic ? model.pricing : compatiblePricing
+        }
+
+        /// The model actually being called.
+        public var modelName: String? {
+            provider == .anthropic ? model.rawValue : compatibleModelName
         }
     }
 
@@ -158,18 +187,22 @@ public enum AITagVerificationService {
     /// without search, and this assumes every one of them also goes round
     /// again with it. How many actually do depends on the library, and an
     /// estimate that lands under the bill is worse than one that lands over.
+    ///
+    /// An OpenAI-compatible run is one pass with no search, priced at that
+    /// model's rates — or 0 when they are not known. The token counts were
+    /// measured on Claude; another tokenizer makes them approximate.
     public static func estimatedCost(trackCount: Int, options: Options) -> Double {
-        let model = options.model
+        guard let pricing = options.pricing else { return 0 }
         func tokenCost(input: Int, output: Int) -> Double {
-            Double(trackCount * input) / 1_000_000 * model.inputCostPerMillionTokens
-                + Double(trackCount * output) / 1_000_000 * model.outputCostPerMillionTokens
+            Double(trackCount * input) / 1_000_000 * pricing.input
+                + Double(trackCount * output) / 1_000_000 * pricing.output
         }
 
         let firstPass = tokenCost(
             input: estimatedInputTokensWithoutSearch,
             output: estimatedOutputTokensWithoutSearch
         )
-        guard options.useWebSearch else { return firstPass }
+        guard options.useWebSearch, options.provider.supportsWebSearch else { return firstPass }
 
         // Searches are billed on top of tokens, and at 1.7 per track they are
         // not a rounding error — leaving them out understated the total by
@@ -182,9 +215,15 @@ public enum AITagVerificationService {
     }
 
     public static func estimatedCostText(trackCount: Int, options: Options) -> String {
+        guard let pricing = options.pricing else {
+            return "billed by your provider at its own rates, which EZLibrary doesn't know"
+        }
+        if pricing.isFree {
+            return "free — the model runs on this Mac"
+        }
         let cost = estimatedCost(trackCount: trackCount, options: options)
         let rounded = cost < 0.01 ? "<$0.01" : String(format: "$%.2f", cost)
-        guard options.useWebSearch else { return "about \(rounded)" }
+        guard options.useWebSearch, options.provider.supportsWebSearch else { return "about \(rounded)" }
         return "at most about \(rounded) including web search fees — less when tracks are settled without searching"
     }
 

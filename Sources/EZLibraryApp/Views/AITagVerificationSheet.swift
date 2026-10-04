@@ -39,6 +39,9 @@ struct AITagVerificationSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     @AppStorage(ClaudeAPIClient.modelDefaultsKey) private var modelRawValue = ClaudeModel.opus55.rawValue
+    @AppStorage(OpenAICompatibleClient.baseURLDefaultsKey)
+    private var compatibleBaseURL = OpenAICompatibleClient.defaultBaseURL
+    @AppStorage(OpenAICompatibleClient.modelDefaultsKey) private var compatibleModel = ""
     @AppStorage(TagVerificationCoordinator.engineDefaultsKey)
     private var engineRawValue = TagVerificationEngineKind.consensus.rawValue
 
@@ -118,6 +121,48 @@ struct AITagVerificationSheet: View {
             useWebSearch: useWebSearch,
             useFingerprint: useFingerprint,
             useOnlineCandidates: useDiscogs
+        )
+        .withCompatibleSettings()
+    }
+
+    /// Claude's three models, OpenAI's three on OpenAI's own endpoint, and
+    /// otherwise just the model name typed into Settings — there is no list to
+    /// offer for an arbitrary provider.
+    @ViewBuilder
+    private var modelPicker: some View {
+        switch AITagVerificationService.selectedProvider() {
+        case .anthropic:
+            Picker("Model", selection: $modelRawValue) {
+                ForEach(ClaudeModel.allCases, id: \.rawValue) { option in
+                    Text(option.displayName).tag(option.rawValue)
+                }
+            }
+            .labelsHidden()
+            .frame(maxWidth: 260)
+        case .openAICompatible:
+            if OpenAICompatibleClient.isOpenAIEndpoint(compatibleBaseURL),
+               options.compatibleModelName.flatMap(OpenAIModel.init(rawValue:)) != nil {
+                Picker("Model", selection: openAIModelBinding) {
+                    ForEach(OpenAIModel.allCases, id: \.rawValue) { option in
+                        Text(option.displayName).tag(option.rawValue)
+                    }
+                }
+                .labelsHidden()
+                .frame(maxWidth: 260)
+            } else {
+                Text(options.compatibleModelName ?? "Not set — choose one in Settings → API Keys")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    /// The stored OpenAI model, with a blank one shown as the default it
+    /// resolves to.
+    private var openAIModelBinding: Binding<String> {
+        Binding(
+            get: { compatibleModel.isEmpty ? OpenAIModel.default.rawValue : compatibleModel },
+            set: { compatibleModel = $0 }
         )
     }
 
@@ -296,25 +341,23 @@ struct AITagVerificationSheet: View {
                         HStack(spacing: 8) {
                             Text("Model")
                                 .font(.caption.weight(.semibold))
-                            Picker("Model", selection: $modelRawValue) {
-                                ForEach(ClaudeModel.allCases, id: \.rawValue) { option in
-                                    Text(option.displayName).tag(option.rawValue)
-                                }
-                            }
-                            .labelsHidden()
-                            .frame(maxWidth: 260)
+                            modelPicker
                             Spacer(minLength: 0)
                         }
 
-                        Toggle("Search the web when unsure", isOn: $useWebSearch)
-                            .toggleStyle(.switch)
-                            .controlSize(.small)
-                            .help(
-                                "Every track is checked first without searching. If the model is 80% sure or "
-                                + "less about any field, or an empty field is still empty, it goes round again "
-                                + "and looks up label pages, discographies, and release listings. Turning this "
-                                + "off makes runs cheaper but much weaker on remixes, edits, and bootlegs — the "
-                                + "tracks the databases get wrong.")
+                        // Only Anthropic can search; offering the switch for
+                        // another provider would promise something it can't do.
+                        if options.provider.supportsWebSearch {
+                            Toggle("Search the web when unsure", isOn: $useWebSearch)
+                                .toggleStyle(.switch)
+                                .controlSize(.small)
+                                .help(
+                                    "Every track is checked first without searching. If the model is 80% sure or "
+                                    + "less about any field, or an empty field is still empty, it goes round again "
+                                    + "and looks up label pages, discographies, and release listings. Turning this "
+                                    + "off makes runs cheaper but much weaker on remixes, edits, and bootlegs — the "
+                                    + "tracks the databases get wrong.")
+                        }
                     }
 
                     DisclosureGroup("Evidence sources", isExpanded: $showAdvanced) {
@@ -565,8 +608,8 @@ struct AITagVerificationSheet: View {
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
                     }
-                    if let usage = result.usage, options.provider == .anthropic {
-                        let cost = usage.tokenCost(on: options.model)
+                    if let usage = result.usage, let pricing = options.pricing, !pricing.isFree {
+                        let cost = usage.tokenCost(at: pricing)
                             + Double(result.webSearchCount) * AITagVerificationService.costPerWebSearch
                         Text("· " + String(format: "$%.3f", cost))
                             .font(.caption2)

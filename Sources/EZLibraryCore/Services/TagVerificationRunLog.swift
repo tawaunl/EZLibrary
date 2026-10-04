@@ -30,7 +30,7 @@ public final class TagVerificationRunLog: @unchecked Sendable {
 
     private let lock = NSLock()
     private let encoder: JSONEncoder
-    private let pricing: ClaudeModel?
+    private let pricing: ModelPricing?
     private var totals = Totals()
     private var didFinish = false
 
@@ -51,9 +51,9 @@ public final class TagVerificationRunLog: @unchecked Sendable {
     /// file cannot be created.
     ///
     /// - Parameter cloudOptions: the cloud settings, for a cloud run only.
-    ///   Their model prices each track — but only when the provider is
-    ///   Anthropic, because Claude's rates say nothing about another
-    ///   provider's bill.
+    ///   They price each track when the model's rates are known — Claude, the
+    ///   three built-in OpenAI models, or a model on this Mac — and leave the
+    ///   cost out otherwise rather than guess at another provider's bill.
     public static func start(
         engine: TagVerificationEngineKind,
         cloudOptions: AITagVerificationService.Options?,
@@ -76,7 +76,7 @@ public final class TagVerificationRunLog: @unchecked Sendable {
         let url = directory.appendingPathComponent("\(stamp) \(runID.uuidString.prefix(8)).jsonl")
         guard fileManager.createFile(atPath: url.path, contents: nil) else { return nil }
 
-        let pricing = cloudOptions.flatMap { $0.provider == .anthropic ? $0.model : nil }
+        let pricing = cloudOptions?.pricing
         let log = TagVerificationRunLog(runID: runID, fileURL: url, pricing: pricing)
         log.write(RunRecord(
             runID: runID,
@@ -85,7 +85,7 @@ public final class TagVerificationRunLog: @unchecked Sendable {
             engine: engine.rawValue,
             engineName: engine.displayName,
             provider: cloudOptions?.provider.rawValue,
-            model: cloudOptions.map { $0.provider == .anthropic ? $0.model.rawValue : nil } ?? nil,
+            model: cloudOptions?.modelName,
             effort: cloudOptions?.effort,
             useWebSearch: cloudOptions?.useWebSearch,
             useFingerprint: cloudOptions?.useFingerprint,
@@ -97,7 +97,7 @@ public final class TagVerificationRunLog: @unchecked Sendable {
         return log
     }
 
-    private init(runID: UUID, fileURL: URL, pricing: ClaudeModel?) {
+    private init(runID: UUID, fileURL: URL, pricing: ModelPricing?) {
         self.runID = runID
         self.fileURL = fileURL
         self.pricing = pricing
@@ -272,7 +272,7 @@ public final class TagVerificationRunLog: @unchecked Sendable {
 
     private func cost(of result: TrackTagVerification) -> Double? {
         guard let pricing, let usage = result.usage else { return nil }
-        return usage.tokenCost(on: pricing)
+        return usage.tokenCost(at: pricing)
             + Double(result.webSearchCount) * AITagVerificationService.costPerWebSearch
     }
 

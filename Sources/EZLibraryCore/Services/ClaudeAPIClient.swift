@@ -116,6 +116,17 @@ public enum ClaudeModel: String, CaseIterable, Sendable {
             return 0.10
         }
     }
+
+    /// All four rates together. Cache writes (5-minute) are 1.25× input on
+    /// every current Claude model.
+    public var pricing: ModelPricing {
+        ModelPricing(
+            input: inputCostPerMillionTokens,
+            output: outputCostPerMillionTokens,
+            cacheRead: cacheReadCostPerMillionTokens,
+            cacheWrite: inputCostPerMillionTokens * 1.25
+        )
+    }
 }
 
 /// A minimal Claude Messages API client built directly on `URLSession`.

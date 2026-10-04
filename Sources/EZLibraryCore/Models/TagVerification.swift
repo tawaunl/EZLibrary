@@ -100,12 +100,38 @@ public struct TagVerificationUsage: Sendable, Equatable {
     /// What these tokens cost on `model`, in USD. Web search fees are billed
     /// separately and are not included.
     public func tokenCost(on model: ClaudeModel) -> Double {
-        let input = model.inputCostPerMillionTokens
-        return (Double(inputTokens) * input
-            + Double(cacheWriteTokens) * input * 1.25
-            + Double(cacheReadTokens) * model.cacheReadCostPerMillionTokens
-            + Double(outputTokens) * model.outputCostPerMillionTokens) / 1_000_000
+        tokenCost(at: model.pricing)
     }
+
+    public func tokenCost(at pricing: ModelPricing) -> Double {
+        (Double(inputTokens) * pricing.input
+            + Double(cacheWriteTokens) * pricing.cacheWrite
+            + Double(cacheReadTokens) * pricing.cacheRead
+            + Double(outputTokens) * pricing.output) / 1_000_000
+    }
+}
+
+/// A model's published list prices, in USD per million tokens.
+///
+/// One shape for every provider, so the pre-run estimate, the running spend,
+/// and the run log price a Claude run and an OpenAI run the same way.
+public struct ModelPricing: Sendable, Equatable {
+    public let input: Double
+    public let output: Double
+    public let cacheRead: Double
+    public let cacheWrite: Double
+
+    public init(input: Double, output: Double, cacheRead: Double, cacheWrite: Double) {
+        self.input = input
+        self.output = output
+        self.cacheRead = cacheRead
+        self.cacheWrite = cacheWrite
+    }
+
+    /// A model running on this Mac: there is no bill.
+    public static let free = ModelPricing(input: 0, output: 0, cacheRead: 0, cacheWrite: 0)
+
+    public var isFree: Bool { self == .free }
 }
 
 /// Cover art a source offers for a track.
