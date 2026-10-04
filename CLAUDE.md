@@ -58,3 +58,17 @@ matching `static func +=` rather than writing the long form
 
 - Always build universal: `EZLIBRARY_BUILD_UNIVERSAL=1`.
 - Developer ID Application + Installer certs (team `HMVH3CU559`) are installed; the scripts pick the newest by SHA-1.
+
+### Every release also updates the public site
+
+`Scripts/release.sh` publishes the `.pkg` to GitHub Releases, but it does **not**
+touch `site/`. Do that as part of the same change, before pushing:
+
+1. Add an entry to [docs/CHANGELOG.md](docs/CHANGELOG.md) under the new version heading — this is what `release.sh` copies verbatim into the GitHub release notes.
+2. Bump the hardcoded fallback version/release-count in [site/index.html](site/index.html) (`data-latest-version`, the "public releases" stat) — the live lookup overwrites these at runtime, but they're what shows before JS runs or if GitHub is unreachable.
+3. **If a change is major enough to be a headline feature** (not a bugfix or small tweak), give it a feature card:
+   - Add an entry to the `FEATURES` table in [Scripts/build-site-pages.py](Scripts/build-site-pages.py) — this generates both the card on [site/features/index.html](site/features/index.html) and its own page at `site/features/<slug>.html`.
+   - Regenerate and commit the output: `./Scripts/build-site-pages.py`. CI (`pages.yml`) re-runs this script and **fails the deploy** if `site/features/` doesn't match, so never hand-edit those generated files.
+4. Minor changes don't need a new feature card — the changelog entry is enough.
+
+Site deploy is automatic: `pages.yml` runs on every push to `main` that touches `site/**`.
