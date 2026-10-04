@@ -17,9 +17,12 @@ import EZLibraryCore
 /// the window for each one.
 struct TrackMetadataEditorSheet: View {
     @ObservedObject private var libraryService: LibraryService
-    private let tracks: [Track]
     private let onSave: (Track, SeratoTrackMetadataUpdate) throws -> Void
 
+    /// State, not a plain property: SwiftUI re-runs `init` whenever the
+    /// presenting view redraws, and a list re-read from the table each time
+    /// could reorder or shrink under `index` and jump to another track.
+    @State private var tracks: [Track]
     @State private var index: Int
     // Kept here rather than in the per-track form so a chosen source and a
     // locked field carry over as the user moves through the list.
@@ -35,7 +38,7 @@ struct TrackMetadataEditorSheet: View {
         onSave: @escaping (Track, SeratoTrackMetadataUpdate) throws -> Void
     ) {
         let start = tracks.firstIndex { $0.seratoStoredPath == track.seratoStoredPath }
-        self.tracks = start == nil ? [track] : tracks
+        _tracks = State(initialValue: start == nil ? [track] : tracks)
         self.libraryService = libraryService
         self.onSave = onSave
         _index = State(initialValue: start ?? 0)
@@ -156,6 +159,11 @@ struct TrackMetadataEditorForm: View {
             editor
             sideArrow(step: 1)
         }
+        // The arrows fill the height, which would make the whole sheet
+        // flexible: it then stopped growing when results arrived and the
+        // results list was squeezed to nothing. Fixing the height to the
+        // editor's keeps the sheet sizing to its content.
+        .fixedSize(horizontal: false, vertical: true)
         .confirmationDialog(
             "Save changes to \u{201C}\(track.title.isEmpty ? track.fileURL.lastPathComponent : track.title)\u{201D}?",
             isPresented: Binding(
@@ -694,11 +702,15 @@ struct TrackMetadataEditorForm: View {
                 )
 
                 for try await results in stream {
+                    guard !Task.isCancelled else { return }
                     await MainActor.run {
                         lookupResults = results
                     }
                 }
 
+                // Cancelled means a newer search replaced this one (or the
+                // form closed); reporting "no matches" here would overwrite it.
+                guard !Task.isCancelled else { return }
                 await MainActor.run {
                     if lookupResults.isEmpty {
                         lookupErrorMessage = "No matches found from the selected source(s)."
@@ -706,6 +718,7 @@ struct TrackMetadataEditorForm: View {
                     isSearchingOnline = false
                 }
             } catch {
+                guard !Task.isCancelled else { return }
                 await MainActor.run {
                     lookupResults = []
                     lookupErrorMessage = error.localizedDescription
