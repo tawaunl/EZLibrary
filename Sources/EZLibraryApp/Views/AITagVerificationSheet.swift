@@ -485,6 +485,11 @@ struct AITagVerificationSheet: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            if let retries = iTunesRetryText {
+                Text(retries)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
 
             // Every run is recorded locally — settings, each track's verdicts,
             // cost, and what was applied — so it can be looked at after the app
@@ -523,6 +528,24 @@ struct AITagVerificationSheet: View {
             return checked + " — \(changes) proposed change\(changes == 1 ? "" : "s") outstanding."
                 + appliedNote
         }
+    }
+
+    /// Tracks that skipped iTunes while it was busy are searched again in the
+    /// background. Said here so a result changing under the user is expected,
+    /// and so they know ticking a track keeps its current answer.
+    private var iTunesRetryText: String? {
+        let pending = run.iTunesRetriesPending
+        let improved = run.iTunesImprovedCount
+        guard pending > 0 || improved > 0 else { return nil }
+        var parts: [String] = []
+        if pending > 0 {
+            parts.append("Searching iTunes again for \(pending) track\(pending == 1 ? "" : "s") that skipped it while it was busy"
+                + " — ticked or applied tracks keep their answer")
+        }
+        if improved > 0 {
+            parts.append("\(improved) answer\(improved == 1 ? "" : "s") improved with iTunes results")
+        }
+        return parts.joined(separator: ". ") + "."
     }
 
     private var totalProposedChanges: Int {

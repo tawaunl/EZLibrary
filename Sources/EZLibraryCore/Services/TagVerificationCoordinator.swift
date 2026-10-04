@@ -378,7 +378,8 @@ public enum TagVerificationCoordinator {
         tracks: [Track],
         using kind: TagVerificationEngineKind,
         consensusOptions: TagConsensusService.Options = TagConsensusService.Options(),
-        cloudOptions: AITagVerificationService.Options = AITagVerificationService.Options()
+        cloudOptions: AITagVerificationService.Options = AITagVerificationService.Options(),
+        iTunesRetryCheck: AITagVerificationService.ITunesRetryCheck? = nil
     ) -> AsyncStream<TagVerificationEvent> {
         switch kind {
         case .consensus:
@@ -400,7 +401,11 @@ public enum TagVerificationCoordinator {
             return aborted(availability(of: .onDevice).unavailableReason ?? "The on-device model is unavailable.")
 
         case .cloudModel:
-            return AITagVerificationService.verify(tracks: tracks, options: cloudOptions)
+            return AITagVerificationService.verify(
+                tracks: tracks,
+                options: cloudOptions,
+                iTunesRetryCheck: iTunesRetryCheck
+            )
         }
     }
 

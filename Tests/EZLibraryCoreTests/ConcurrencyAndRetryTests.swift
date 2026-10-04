@@ -108,13 +108,13 @@ struct OpenAICompatibleRetryTests {
     #expect(AITagVerificationService.Options().maxConcurrentTracks == 12)
 }
 
-@Test func aHostedOpenAICompatibleServiceRunsFiveAtOnce() {
+@Test func aHostedOpenAICompatibleServiceRunsTenAtOnce() {
     let defaults = TestDefaults.inMemory()
     defaults.set("gpt-6.1-sol", forKey: OpenAICompatibleClient.modelDefaultsKey)
     let options = AITagVerificationService.Options(provider: .openAICompatible)
         .withCompatibleSettings(userDefaults: defaults)
     #expect(options.maxConcurrentTracks == AITagVerificationService.Options.compatibleConcurrentTracks)
-    #expect(options.maxConcurrentTracks == 5)
+    #expect(options.maxConcurrentTracks == 10)
 }
 
 @Test func aModelServerOnThisMacRunsTwoAtOnce() {

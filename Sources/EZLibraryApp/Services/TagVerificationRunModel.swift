@@ -61,6 +61,12 @@ final class TagVerificationRunModel: ObservableObject {
     @Published private(set) var lookupSeconds = 0.0
     @Published private(set) var modelSeconds = 0.0
     @Published private(set) var toolCalls = 0
+    /// Cloud tracks still waiting to be searched on iTunes again, after
+    /// skipping it while iTunes was busy. These can keep going after the
+    /// run finishes; the results can be reviewed and applied meanwhile.
+    @Published private(set) var iTunesRetriesPending = 0
+    /// Tracks whose answer was replaced by a better one once iTunes answered.
+    @Published private(set) var iTunesImprovedCount = 0
     private var searchPassPossible = false
     private var pricing: ModelPricing?
 
@@ -121,6 +127,8 @@ final class TagVerificationRunModel: ObservableObject {
         lookupSeconds = 0
         modelSeconds = 0
         toolCalls = 0
+        iTunesRetriesPending = 0
+        iTunesImprovedCount = 0
         // Only the cloud tier bills; the other two are free, and showing them a
         // running total of $0.00 would just be noise. A cloud model is priced
         // only when its rates are known; another provider's bill is its own.
@@ -155,12 +163,16 @@ final class TagVerificationRunModel: ObservableObject {
         let runLog = log
         let runID = UUID()
         currentRunID = runID
+        let isStillOpen: AITagVerificationService.ITunesRetryCheck = { [weak self] track in
+            await self?.isOpenForITunesRetry(track.id, runID: runID) ?? false
+        }
         task = Task { [weak self] in
             let events = TagVerificationCoordinator.verify(
                 tracks: tracks,
                 using: engine,
                 consensusOptions: consensusOptions,
-                cloudOptions: cloudOptions
+                cloudOptions: cloudOptions,
+                iTunesRetryCheck: isStillOpen
             )
             for await event in events {
                 guard let self, !Task.isCancelled, self.currentRunID == runID else { break }
@@ -169,6 +181,7 @@ final class TagVerificationRunModel: ObservableObject {
             runLog?.finish(cancelled: Task.isCancelled)
             guard let self, self.currentRunID == runID else { return }
             self.phase = .finished
+            self.iTunesRetriesPending = 0
             self.task = nil
             self.currentRunID = nil
         }
@@ -181,6 +194,7 @@ final class TagVerificationRunModel: ObservableObject {
         task = nil
         // Whatever the stopped task does on its way out is now stale.
         currentRunID = nil
+        iTunesRetriesPending = 0
         if phase == .running {
             log?.finish(cancelled: true)
             phase = .finished
@@ -214,6 +228,7 @@ final class TagVerificationRunModel: ObservableObject {
         lookupSeconds = 0
         modelSeconds = 0
         toolCalls = 0
+        iTunesImprovedCount = 0
         searchPassPossible = false
         pricing = nil
         log = nil
@@ -252,8 +267,36 @@ final class TagVerificationRunModel: ObservableObject {
             abortMessage = message
             log?.recordAborted(message: message)
         case .finished:
-            break
+            // Every track has its answer, so the results are ready to review
+            // and apply. iTunes retries may still be running behind them.
+            phase = .finished
+        case let .retried(track, improvement, retryUsage):
+            if let retryUsage {
+                usage += retryUsage
+            }
+            guard let improvement,
+                  isOpenForITunesRetry(track.id, runID: currentRunID),
+                  let index = results.firstIndex(where: { $0.track.id == track.id }) else { return }
+            results[index] = improvement
+            iTunesImprovedCount += 1
+            preselect(improvement, minimumConfidence: minimumConfidence)
+            let offered = Set(improvement.fields.map(\.id) + [improvement.artwork?.id].compactMap { $0 })
+            log?.record(improvement, preselected: offered.intersection(selectedFieldIDs.union(selectedArtworkIDs)))
+        case let .iTunesRetriesPending(count):
+            iTunesRetriesPending = count
         }
+    }
+
+    /// Whether a track's answer may still be replaced by an iTunes retry: it
+    /// is still listed (not applied) and none of its proposals are ticked.
+    /// Checked before each retry and again when the new answer arrives, since
+    /// the user can tick or apply in between.
+    private func isOpenForITunesRetry(_ trackID: UUID, runID: UUID?) -> Bool {
+        guard runID != nil, currentRunID == runID,
+              let result = results.first(where: { $0.track.id == trackID }) else { return false }
+        let ids = Set(result.fields.map(\.id))
+        let artworkTicked = result.artwork.map { selectedArtworkIDs.contains($0.id) } ?? false
+        return ids.isDisjoint(with: selectedFieldIDs) && !artworkTicked
     }
 
     /// Pre-ticks the proposals that are safe to trust and leaves the rest to be

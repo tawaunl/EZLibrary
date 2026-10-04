@@ -1279,7 +1279,8 @@ struct TracksAndTagsView: View {
                 case let .aborted(message):
                     abortedMessage = message
                     log?.recordAborted(message: message)
-                case .finished:
+                case .finished, .retried, .iTunesRetriesPending:
+                    // No iTunes retries are asked for here, so none arrive.
                     break
                 }
             }

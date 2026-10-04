@@ -517,6 +517,73 @@ public enum OnlineTrackMetadataLookupService {
         deduplicate: Bool = true,
         pacing: Pacing = .interactive
     ) async throws -> [OnlineTrackMetadataCandidate] {
+        try await lookupNotingMisses(
+            query: query,
+            sourceSelection: sourceSelection,
+            maxResultsPerSource: maxResultsPerSource,
+            session: session,
+            deduplicate: deduplicate,
+            pacing: pacing
+        ).candidates
+    }
+
+    /// What a search found, and which sources it went without because they
+    /// were busy or throttling — the ones worth asking again later.
+    public struct LookupOutcome: Sendable {
+        public var candidates: [OnlineTrackMetadataCandidate]
+        public var missedSources: Set<OnlineMetadataSource>
+    }
+
+    /// `lookup` that never throws over a busy or throttled source: the
+    /// search answers from whatever replied, and says which sources missed.
+    /// Any other failure still yields an empty result rather than an error,
+    /// since the caller is gathering evidence, not showing a search.
+    public static func lookupOutcome(
+        query: Query,
+        sourceSelection: SourceSelection = .all,
+        maxResultsPerSource: Int = 8,
+        session: URLSession = defaultSession,
+        deduplicate: Bool = true,
+        pacing: Pacing = .interactive
+    ) async -> LookupOutcome {
+        do {
+            return try await lookupNotingMisses(
+                query: query,
+                sourceSelection: sourceSelection,
+                maxResultsPerSource: maxResultsPerSource,
+                session: session,
+                deduplicate: deduplicate,
+                pacing: pacing
+            )
+        } catch {
+            // Every source failed (or the only one did).
+            let missed = sourceSelection.enabledSources.count == 1 && isWorthRetrying(error)
+                ? Set(sourceSelection.enabledSources)
+                : []
+            return LookupOutcome(candidates: [], missedSources: missed)
+        }
+    }
+
+    /// A source that was skipped as busy, or was throttling: asked again
+    /// later, it will probably answer.
+    static func isWorthRetrying(_ error: Error) -> Bool {
+        guard let error = error as? LookupError else { return false }
+        switch error {
+        case .busy, .rateLimited:
+            return true
+        case .missingSearchTerms, .missingDiscogsToken, .missingYouTubeKey, .sourceRequestFailed:
+            return false
+        }
+    }
+
+    private static func lookupNotingMisses(
+        query: Query,
+        sourceSelection: SourceSelection,
+        maxResultsPerSource: Int,
+        session: URLSession,
+        deduplicate: Bool,
+        pacing: Pacing
+    ) async throws -> LookupOutcome {
         let normalized = normalize(query: query)
         guard !normalized.title.isEmpty || !normalized.artist.isEmpty || !normalized.album.isEmpty else {
             throw LookupError.missingSearchTerms
@@ -528,8 +595,9 @@ public enum OnlineTrackMetadataLookupService {
             deduplicate: deduplicate
         )
         if let cached = await OnlineMetadataLookupCache.shared.get(cacheKey) {
-            return cached
+            return LookupOutcome(candidates: cached, missedSources: [])
         }
+        var missed: Set<OnlineMetadataSource> = []
 
         let result: [OnlineTrackMetadataCandidate]
         // Only a run where every source answered is worth caching: caching a
@@ -538,11 +606,13 @@ public enum OnlineTrackMetadataLookupService {
         var isComplete = true
         if sourceSelection.isMultiSource {
             let token = discogsToken()
-            let outcomes = await withTaskGroup(of: Result<[OnlineTrackMetadataCandidate], Error>.self) { group in
+            let tagged = await withTaskGroup(
+                of: (OnlineMetadataSource, Result<[OnlineTrackMetadataCandidate], Error>).self
+            ) { group in
                 for source in sourceSelection.enabledSources {
                     group.addTask {
                         do {
-                            return .success(try await fetchCandidates(
+                            return (source, .success(try await fetchCandidates(
                                 from: source,
                                 query: normalized,
                                 maxResults: maxResultsPerSource,
@@ -550,19 +620,23 @@ public enum OnlineTrackMetadataLookupService {
                                 discogsToken: token,
                                 sourceSelection: sourceSelection,
                                 pacing: pacing
-                            ))
+                            )))
                         } catch {
-                            return .failure(error)
+                            return (source, .failure(error))
                         }
                     }
                 }
 
-                var all: [Result<[OnlineTrackMetadataCandidate], Error>] = []
+                var all: [(OnlineMetadataSource, Result<[OnlineTrackMetadataCandidate], Error>)] = []
                 for await outcome in group {
                     all.append(outcome)
                 }
                 return all
             }
+            for case let (source, .failure(error)) in tagged where isWorthRetrying(error) {
+                missed.insert(source)
+            }
+            let outcomes = tagged.map(\.1)
 
             let combined = outcomes.flatMap { (try? $0.get()) ?? [] }
             isComplete = primaryFailure(in: outcomes) == nil
@@ -595,7 +669,7 @@ public enum OnlineTrackMetadataLookupService {
         if !result.isEmpty, isComplete {
             await OnlineMetadataLookupCache.shared.set(cacheKey, results: result)
         }
-        return result
+        return LookupOutcome(candidates: result, missedSources: missed)
     }
 
     /// Picks the most useful error to report when every source failed,

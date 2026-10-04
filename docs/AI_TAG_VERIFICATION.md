@@ -232,7 +232,7 @@ sessions only add load. A model server on this Mac (Ollama, LM Studio) is held
 to two for the same reason.
 
 Claude runs twelve tracks at once; a hosted OpenAI-compatible service runs
-five, because its account limits are unknown and a new account's are low.
+ten, a little under, because its account limits are unknown.
 Within each track the database search runs alongside the audio fingerprint
 instead of after it.
 
@@ -243,7 +243,29 @@ run at about five tracks at once. So the AI search uses
 track whose turn is more than 4 seconds away searches without it (Deezer,
 Wikipedia and MusicBrainz cover most of the same releases) and gives up its
 place, so it never delays the tracks behind it. A skipped lookup is not
-cached, so a later run can still get iTunes results for that track. Both
+cached, so a later run can still get iTunes results for that track.
+
+Tracks that skipped iTunes are not left without it. In the review sheet (not
+the bulk auto-apply, which asks for no retries) a background worker,
+`runITunesRetries`, searches iTunes again for them:
+
+- During the run it takes only a slot that is open right now, so new tracks
+  keep priority; after the run it goes at iTunes's full bulk rate until the
+  queue is empty. iTunes is kept busy the whole time.
+- A track is not retried when its first answer is already good enough
+  (`isGoodEnough`: identified, every field settled, cover art in the file or
+  on offer), or — checked before the search and again before paying for a new
+  answer — once any of its proposals is ticked or it has been applied. Ticked
+  includes the boxes pre-ticked for confident changes.
+- When iTunes finds something, the model is asked once more, with the iTunes
+  results first and no web search. The new answer replaces the first only when
+  it is better (`isImprovement`: fewer unsettled fields, then cover art, then a
+  surer identity) and the track is still unticked. What the second question
+  cost is added to the run's total either way.
+- The results are ready to review and apply as soon as every track has its
+  first answer; the sheet says how many retries are still pending.
+
+Both
 the Claude and the OpenAI-compatible clients wait out a rate-limit reply and
 retry (up to four attempts, honouring `retry-after`) rather than failing the
 track.

@@ -299,6 +299,35 @@ public struct TrackTagVerification: Sendable, Identifiable {
         )
     }
 
+    /// This answer, standing in for `earlier` — an answer for the same track
+    /// asked again with more evidence. It carries what both cost, and the
+    /// earlier one's search pass and timings, so the track's record still
+    /// says what it took to check it.
+    public func replacing(_ earlier: TrackTagVerification) -> TrackTagVerification {
+        let combinedUsage: TagVerificationUsage?
+        switch (earlier.usage, usage) {
+        case let (first?, second?):
+            var total = first
+            total += second
+            combinedUsage = total
+        case let (first, second):
+            combinedUsage = first ?? second
+        }
+        return TrackTagVerification(
+            track: track,
+            engineName: engineName,
+            identityConfidence: identityConfidence,
+            identitySummary: identitySummary,
+            fields: fields,
+            sourceURLs: Array(Set(earlier.sourceURLs + sourceURLs)).sorted { $0.absoluteString < $1.absoluteString },
+            webSearchCount: earlier.webSearchCount + webSearchCount,
+            usage: combinedUsage,
+            artwork: artwork,
+            neededSearchPass: earlier.neededSearchPass,
+            timings: earlier.timings
+        )
+    }
+
     /// Builds the update that applies exactly the named fields. Every other
     /// field is carried through unchanged, so this can be handed straight to
     /// the existing metadata writer.
@@ -368,5 +397,16 @@ public enum TagVerificationEvent: Sendable {
     /// Distinct from per-track failures so the UI can say why once rather than
     /// reporting every track as individually broken.
     case aborted(message: String)
+    /// Every track has had its answer. For a cloud run asked to retry iTunes,
+    /// `retried` and `iTunesRetriesPending` events can still follow this, and
+    /// the stream ends once those are done.
     case finished(verified: Int, failed: Int)
+    /// A track reported earlier, whose iTunes search was skipped while iTunes
+    /// was busy, got its iTunes results and was asked about again.
+    /// `improvement` is the better answer to show in place of the first
+    /// (see `TrackTagVerification.replacing`), or nil when it was no better;
+    /// `usage` is what asking again cost either way.
+    case retried(track: Track, improvement: TrackTagVerification?, usage: TagVerificationUsage?)
+    /// How many tracks are still waiting for an iTunes retry.
+    case iTunesRetriesPending(Int)
 }

@@ -170,9 +170,9 @@ public enum AITagVerificationService {
         public static let localModelConcurrentTracks = 2
 
         /// A hosted OpenAI-compatible service. Its limits depend on an
-        /// account tier this app cannot see, and a new account's are low,
-        /// so it keeps the earlier, safer five.
-        public static let compatibleConcurrentTracks = 5
+        /// account tier this app cannot see, so it stays a little under
+        /// Claude's twelve; a throttled reply is waited out and retried.
+        public static let compatibleConcurrentTracks = 10
 
         /// The longest a track waits for its turn at iTunes before searching
         /// without it. Deezer and Wikipedia cover most of the same releases,
@@ -270,13 +270,19 @@ public enum AITagVerificationService {
     ///   - credentials: Likewise. Tests pass in-memory stores for both: left at
     ///     the defaults, a "no key" test finds the developer's real key in the
     ///     keychain and runs a live, billed verification.
+    ///   - iTunesRetryCheck: When set, tracks whose iTunes search was skipped
+    ///     while iTunes was busy are searched again in the background (see
+    ///     `runITunesRetries`), and this is asked just before each one whether
+    ///     the track is still open — false once the user has ticked or applied
+    ///     it. Nil (the bulk auto-apply path) retries nothing.
     public static func verify(
         tracks: [Track],
         options: Options = Options(),
         apiKey: String? = nil,
         userDefaults: UserDefaults = .standard,
         credentials: any SecureCredentialStore = AppCredentials.keychain,
-        session: URLSession = ClaudeAPIClient.defaultSession
+        session: URLSession = ClaudeAPIClient.defaultSession,
+        iTunesRetryCheck: ITunesRetryCheck? = nil
     ) -> AsyncStream<Event> {
         // Resolved here, not in the task: the stores aren't Sendable.
         let storedKey = apiKey ?? (options.provider == .anthropic
@@ -319,18 +325,32 @@ public enum AITagVerificationService {
                 var iterator = tracks.makeIterator()
                 let parallelism = max(1, min(options.maxConcurrentTracks, tracks.count))
 
-                await withTaskGroup(of: (Track, Result<TrackVerification, Error>).self) { group in
+                let retryQueue = iTunesRetryCheck != nil && options.useOnlineCandidates ? ITunesRetryQueue() : nil
+                let retryWorker = retryQueue.map { queue in
+                    Task {
+                        await runITunesRetries(
+                            queue: queue,
+                            isStillOpen: iTunesRetryCheck ?? { _ in false },
+                            continuation: continuation,
+                            options: options,
+                            apiKey: key,
+                            session: session
+                        )
+                    }
+                }
+
+                await withTaskGroup(of: (Track, Result<(result: TrackVerification, evidence: Evidence), Error>).self) { group in
                     func addNext() {
                         guard let track = iterator.next() else { return }
                         group.addTask {
                             do {
-                                let result = try await verify(
+                                let verified = try await verifyKeepingEvidence(
                                     track: track,
                                     options: options,
                                     apiKey: key,
                                     session: session
                                 )
-                                return (track, .success(result))
+                                return (track, .success(verified))
                             } catch {
                                 return (track, .failure(error))
                             }
@@ -347,9 +367,17 @@ public enum AITagVerificationService {
                             break
                         }
                         switch result {
-                        case let .success(verification):
+                        case let .success((verification, evidence)):
                             verified += 1
                             continuation.yield(.verified(verification))
+                            if let retryQueue, evidence.missedITunes,
+                               !isGoodEnough(
+                                   verification,
+                                   fileHasArtwork: ArtworkFetchService.fileHasEmbeddedArtwork(at: track.fileURL)
+                               ) {
+                                let pending = await retryQueue.add(.init(track: track, evidence: evidence, first: verification))
+                                continuation.yield(.iTunesRetriesPending(pending))
+                            }
                         case let .failure(error):
                             failed += 1
                             continuation.yield(.failed(track: track, message: error.localizedDescription))
@@ -359,6 +387,14 @@ public enum AITagVerificationService {
                 }
 
                 continuation.yield(.finished(verified: verified, failed: failed))
+                if let retryQueue, let retryWorker {
+                    await retryQueue.markRunDone()
+                    await withTaskCancellationHandler {
+                        await retryWorker.value
+                    } onCancel: {
+                        retryWorker.cancel()
+                    }
+                }
                 continuation.finish()
             }
 
@@ -376,9 +412,22 @@ public enum AITagVerificationService {
         apiKey: String? = nil,
         session: URLSession = ClaudeAPIClient.defaultSession
     ) async throws -> TrackVerification {
+        try await verifyKeepingEvidence(track: track, options: options, apiKey: apiKey, session: session).result
+    }
+
+    /// `verify`, also handing back the evidence it was given, so a track
+    /// whose iTunes search was skipped can be asked again (`reverify`).
+    static func verifyKeepingEvidence(
+        track: Track,
+        options: Options,
+        apiKey: String?,
+        session: URLSession
+    ) async throws -> (result: TrackVerification, evidence: Evidence) {
         let clock = ContinuousClock()
         let lookupStart = clock.now
-        let (evidence, candidates) = await gatherEvidence(for: track, options: options)
+        let gathered = await gatherEvidence(for: track, options: options)
+        let evidence = gathered.text
+        let candidates = gathered.candidates
         let fileHasArtwork = ArtworkFetchService.fileHasEmbeddedArtwork(at: track.fileURL)
         let lookupSeconds = (clock.now - lookupStart).seconds
         let modelStart = clock.now
@@ -411,7 +460,7 @@ public enum AITagVerificationService {
             let unsettled = unsettledFields(in: firstPass)
             let identityUnsure = firstPass.identityConfidence <= searchEscalationConfidence
             guard options.useWebSearch, identityUnsure || !unsettled.isEmpty else {
-                return timed(firstPass)
+                return (timed(firstPass), gathered)
             }
 
             let searchPass = try await askClaude(
@@ -423,7 +472,7 @@ public enum AITagVerificationService {
                 session: session,
                 earlierUsage: firstPass.usage
             )
-            return timed(searchPass)
+            return (timed(searchPass), gathered)
 
         case .openAICompatible:
             guard let configuration = OpenAICompatibleClient.configuration() else {
@@ -435,11 +484,226 @@ public enum AITagVerificationService {
                 configuration: configuration,
                 session: session
             )
-            return try timed(parse(
+            return (try timed(parse(
                 text: response.text,
                 for: track,
                 provenance: Provenance(engineLabel: configuration.model, usage: response.usage)
-            ))
+            )), gathered)
+        }
+    }
+
+    /// Asks again about a track whose first answer was made without iTunes,
+    /// now that iTunes has answered. One pass, never a web search: the first
+    /// answer already had its search if it needed one, and what is new here
+    /// is the iTunes evidence, not the web.
+    static func reverify(
+        track: Track,
+        evidence: Evidence,
+        options: Options,
+        apiKey: String?,
+        session: URLSession
+    ) async throws -> TrackVerification {
+        let fileHasArtwork = ArtworkFetchService.fileHasEmbeddedArtwork(at: track.fileURL)
+        let text = evidence.text + "\n\n" + iTunesRetryNote
+        let result: TrackVerification
+        switch options.provider {
+        case .anthropic:
+            result = try await askClaude(
+                about: track,
+                evidence: text,
+                options: options,
+                webSearch: false,
+                apiKey: apiKey,
+                session: session
+            )
+        case .openAICompatible:
+            guard let configuration = OpenAICompatibleClient.configuration() else {
+                throw OpenAICompatibleClient.ClientError.missingConfiguration("The model name")
+            }
+            let response = try await OpenAICompatibleClient.send(
+                system: systemPrompt + "\n\n" + jsonOnlyInstruction,
+                user: text,
+                configuration: configuration,
+                session: session
+            )
+            result = try parse(
+                text: response.text,
+                for: track,
+                provenance: Provenance(engineLabel: configuration.model, usage: response.usage)
+            )
+        }
+        return TagVerificationCoordinator.finishing(
+            result,
+            candidates: evidence.candidates,
+            fileHasArtwork: fileHasArtwork
+        )
+    }
+
+    static let iTunesRetryNote = """
+    WEB SEARCH: not available on this pass. This track was checked once before without iTunes, \
+    which was busy; the iTunes results are now included above. Answer from the evidence and what \
+    you reliably know about this recording, and fill every empty field you can.
+    """
+
+    // MARK: - Retrying iTunes
+
+    /// Asked before each iTunes retry: is this track still open? False once
+    /// the user has ticked one of its proposals or applied it, since then a
+    /// new answer would only swap out what they already chose.
+    public typealias ITunesRetryCheck = @Sendable (Track) async -> Bool
+
+    /// During the run, a retry takes only an iTunes slot that is open now.
+    /// New tracks reserve theirs up to `Options.databaseMaxWait` ahead, so
+    /// they come first — their iTunes results go into the first answer,
+    /// where they count most — and retries fill the gaps they leave.
+    static let retryMaxWaitDuringRun: TimeInterval = 0.5
+    /// After the run, how many throttled iTunes searches a track gets before
+    /// it keeps its first answer. Each already retries inside the lookup.
+    static let maxRetriesAfterRun = 2
+
+    /// Good enough that iTunes could add nothing worth paying for: the
+    /// recording is identified, every field is settled (see
+    /// `unsettledFields`), and the file has cover art or a source offered some.
+    public static func isGoodEnough(_ result: TrackVerification, fileHasArtwork: Bool) -> Bool {
+        result.identityConfidence > searchEscalationConfidence
+            && unsettledFields(in: result).isEmpty
+            && (fileHasArtwork || result.artwork != nil)
+    }
+
+    /// Whether a second answer should replace the first: fewer unsettled
+    /// fields, then cover art where there was none, then a surer
+    /// identification. A tie keeps the first, which the user may already
+    /// have been looking at.
+    static func isImprovement(_ second: TrackVerification, over first: TrackVerification) -> Bool {
+        let secondOpen = unsettledFields(in: second).count
+        let firstOpen = unsettledFields(in: first).count
+        if secondOpen != firstOpen { return secondOpen < firstOpen }
+        if (second.artwork != nil) != (first.artwork != nil) { return second.artwork != nil }
+        return second.identityConfidence > first.identityConfidence
+    }
+
+    /// Tracks waiting for iTunes, oldest first.
+    actor ITunesRetryQueue {
+        struct Entry: Sendable {
+            let track: Track
+            let evidence: Evidence
+            let first: TrackVerification
+            var failures = 0
+        }
+
+        private var waiting: [Entry] = []
+        private var inFlight = 0
+        private(set) var runIsDone = false
+
+        var pendingCount: Int { waiting.count + inFlight }
+
+        func add(_ entry: Entry) -> Int {
+            waiting.append(entry)
+            return pendingCount
+        }
+
+        func next() -> Entry? {
+            guard !waiting.isEmpty else { return nil }
+            inFlight += 1
+            return waiting.removeFirst()
+        }
+
+        /// Back of the queue, to try again later.
+        func requeue(_ entry: Entry) {
+            inFlight -= 1
+            waiting.append(entry)
+        }
+
+        func done() -> Int {
+            inFlight -= 1
+            return pendingCount
+        }
+
+        func markRunDone() {
+            runIsDone = true
+        }
+    }
+
+    /// Works through the tracks whose iTunes search was skipped, for as long
+    /// as the run lasts and then until none are left, so iTunes is kept at
+    /// its full rate the whole time.
+    ///
+    /// For each track, just before searching and again before paying for a
+    /// new answer, it drops the track if `isStillOpen` says the user has
+    /// ticked or applied it. iTunes finding nothing ends a track's retries
+    /// too: there is nothing new to ask about.
+    static func runITunesRetries(
+        queue: ITunesRetryQueue,
+        isStillOpen: @escaping ITunesRetryCheck,
+        continuation: AsyncStream<Event>.Continuation,
+        options: Options,
+        apiKey: String?,
+        session: URLSession,
+        databaseSession: URLSession = OnlineTrackMetadataLookupService.defaultSession
+    ) async {
+        @Sendable func finish() async {
+            continuation.yield(.iTunesRetriesPending(await queue.done()))
+        }
+
+        // The model is asked in child tasks so the next iTunes search does
+        // not wait on it: one track's question overlaps the next one's search.
+        await withTaskGroup(of: Void.self) { group in
+            while !Task.isCancelled {
+                guard var entry = await queue.next() else {
+                    if await queue.runIsDone, await queue.pendingCount == 0 { break }
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    continue
+                }
+                guard await isStillOpen(entry.track) else {
+                    await finish()
+                    continue
+                }
+
+                let runIsDone = await queue.runIsDone
+                let outcome = await OnlineTrackMetadataLookupService.lookupOutcome(
+                    query: entry.evidence.query,
+                    sourceSelection: .itunes,
+                    maxResultsPerSource: 6,
+                    session: databaseSession,
+                    deduplicate: false,
+                    pacing: runIsDone ? .bulk : .concurrent(maxWait: retryMaxWaitDuringRun)
+                )
+                if outcome.missedSources.contains(.itunes) {
+                    // Busy during the run is expected and costs nothing; only
+                    // a throttled search after it counts against the track.
+                    if runIsDone { entry.failures += 1 }
+                    if entry.failures < maxRetriesAfterRun {
+                        await queue.requeue(entry)
+                    } else {
+                        await finish()
+                    }
+                    if !runIsDone { try? await Task.sleep(nanoseconds: 1_000_000_000) }
+                    continue
+                }
+                guard !outcome.candidates.isEmpty else {
+                    await finish()
+                    continue
+                }
+
+                let evidence = entry.evidence.adding(iTunes: outcome.candidates)
+                let first = entry.first
+                group.addTask {
+                    // Checked again: the user may have ticked it while iTunes
+                    // was being searched, and a new answer is what costs money.
+                    if !Task.isCancelled, await isStillOpen(first.track),
+                       let second = try? await reverify(
+                           track: first.track,
+                           evidence: evidence,
+                           options: options,
+                           apiKey: apiKey,
+                           session: session
+                       ) {
+                        let improvement = isImprovement(second, over: first) ? second.replacing(first) : nil
+                        continuation.yield(.retried(track: first.track, improvement: improvement, usage: second.usage))
+                    }
+                    await finish()
+                }
+            }
         }
     }
 
@@ -538,9 +802,8 @@ public enum AITagVerificationService {
     /// Every outside source here is best-effort: a throttled iTunes or a
     /// missing `fpcalc` weakens the evidence but must not fail the run, because
     /// web search can still answer the question on its own.
-    static func gatherEvidence(for track: Track, options: Options) async -> (text: String, candidates: [OnlineTrackMetadataCandidate]) {
+    static func gatherEvidence(for track: Track, options: Options) async -> Evidence {
         var lines: [String] = []
-        var fetchedCandidates: [OnlineTrackMetadataCandidate] = []
 
         // Listed last-ish and labelled as a hint: the model reproduces the shape
         // of whatever looks most like an answer, and a filename shaped
@@ -560,14 +823,14 @@ public enum AITagVerificationService {
         // while the fingerprint is computed and looked up, instead of after.
         // Same rule as the consensus engine: search the file's own tags.
         let query = TagConsensusService.searchQuery(for: track, fileTags: fileTags)
-        func searchDatabases() async -> [OnlineTrackMetadataCandidate] {
-            guard options.useOnlineCandidates else { return [] }
-            return (try? await OnlineTrackMetadataLookupService.lookup(
+        func searchDatabases() async -> OnlineTrackMetadataLookupService.LookupOutcome {
+            guard options.useOnlineCandidates else { return .init(candidates: [], missedSources: []) }
+            return await OnlineTrackMetadataLookupService.lookupOutcome(
                 query: query,
                 maxResultsPerSource: 6,
                 deduplicate: false,
                 pacing: .concurrent(maxWait: Options.databaseMaxWait)
-            )) ?? []
+            )
         }
         async let databaseResults = searchDatabases()
 
@@ -648,9 +911,30 @@ public enum AITagVerificationService {
             }
         }
 
-        let candidates = await databaseResults
-        if options.useOnlineCandidates {
-            fetchedCandidates = candidates
+        let outcome = await databaseResults
+        return Evidence(
+            leadingLines: lines,
+            candidates: outcome.candidates,
+            query: query,
+            missedITunes: outcome.missedSources.contains(.itunes)
+        )
+    }
+
+    /// What a track's prompt is built from. Kept in parts so a track whose
+    /// iTunes search was skipped can be asked again with iTunes added, without
+    /// reading the file and fingerprinting the audio a second time.
+    struct Evidence: Sendable {
+        /// Everything before the database candidates.
+        var leadingLines: [String]
+        var candidates: [OnlineTrackMetadataCandidate]
+        /// The database search, for asking iTunes again.
+        var query: OnlineTrackMetadataLookupService.Query
+        /// True when iTunes was skipped as busy or throttled — not when it
+        /// answered with nothing.
+        var missedITunes: Bool
+
+        var text: String {
+            var lines = leadingLines
             if !candidates.isEmpty {
                 lines.append("")
                 lines.append("DATABASE CANDIDATES:")
@@ -665,12 +949,20 @@ public enum AITagVerificationService {
                     lines.append("  - [\(candidate.source.displayName)] \(summary)")
                 }
             }
+            lines.append("")
+            lines.append("VERIFY THESE FIELDS: \(verifiableFields.map(\.rawValue).joined(separator: ", "))")
+            return lines.joined(separator: "\n")
         }
 
-        lines.append("")
-        lines.append("VERIFY THESE FIELDS: \(verifiableFields.map(\.rawValue).joined(separator: ", "))")
-
-        return (lines.joined(separator: "\n"), fetchedCandidates)
+        /// The same evidence with iTunes's results added. They go first: the
+        /// prompt shows twelve candidates, and the point of asking again is
+        /// that the model sees these.
+        func adding(iTunes results: [OnlineTrackMetadataCandidate]) -> Evidence {
+            var copy = self
+            copy.candidates = results + candidates
+            copy.missedITunes = false
+            return copy
+        }
     }
 
     private static func displayValue(_ value: String) -> String {
