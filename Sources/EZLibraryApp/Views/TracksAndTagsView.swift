@@ -83,6 +83,9 @@ struct TracksAndTagsView: View {
     @State private var selectedScopeID: String = Self.allTracksID
     @State private var selectedTracks: [Track] = []
     @State private var metadataLookupTrack: Track?
+    /// The table's rows in on-screen order, so the lookup window's Next and
+    /// Previous follow the user's search and sort.
+    @State private var tableVisibleTracks: [Track] = []
     @State private var audioEditTrack: Track?
     @State private var audioEditMessage: String?
     @State private var searchText = ""
@@ -345,6 +348,9 @@ struct TracksAndTagsView: View {
                         },
                         onTrackActivated: { track, list in
                             onTrackActivated?(track, list)
+                        },
+                        onDisplayedTracksChanged: { visible in
+                            tableVisibleTracks = visible
                         }
                     )
                 }
@@ -403,7 +409,11 @@ struct TracksAndTagsView: View {
             Text(operationErrorMessage ?? "")
         }
         .sheet(item: $metadataLookupTrack) { track in
-            TrackMetadataEditorSheet(track: track) { metadata in
+            TrackMetadataEditorSheet(
+                track: track,
+                in: tableVisibleTracks,
+                libraryService: libraryService
+            ) { track, metadata in
                 try onApplyMetadata(track, metadata)
             }
         }

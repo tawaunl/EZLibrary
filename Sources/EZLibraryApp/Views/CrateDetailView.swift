@@ -45,6 +45,9 @@ struct CrateDetailView: View {
     @State private var showTrackDeleteDialog = false
     @State private var selectedTracksForActions: [Track] = []
     @State private var metadataLookupTrack: Track?
+    /// The table's rows in on-screen order, so the lookup window's Next and
+    /// Previous follow the user's search and sort.
+    @State private var tableVisibleTracks: [Track] = []
     @State private var quickDeleteAction: QuickDeleteAction?
     @State private var showQuickDeleteConfirmation = false
     @State private var metadataSaveMessage: String?
@@ -116,6 +119,9 @@ struct CrateDetailView: View {
                         onTrackActivated: { track, list in
                             onTrackActivated?(track, list)
                         },
+                        onDisplayedTracksChanged: { visible in
+                            tableVisibleTracks = visible
+                        },
                         contextActions: TrackContextMenuActions(
                             currentCrateName: crate.name,
                             onRemoveFromCurrentCrate: { selected in
@@ -166,7 +172,11 @@ struct CrateDetailView: View {
                 }
             }
             .sheet(item: $metadataLookupTrack) { track in
-                TrackMetadataEditorSheet(track: track) { metadata in
+                TrackMetadataEditorSheet(
+                    track: track,
+                    in: tableVisibleTracks,
+                    libraryService: libraryService
+                ) { track, metadata in
                     try saveTrackMetadataEdit(track: track, metadata: metadata)
                 }
             }

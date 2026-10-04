@@ -47,6 +47,9 @@ struct TrackTableView: View {
     let onSelectionChanged: (([Track]) -> Void)?
     let onTrackSingleClick: ((Track) -> Void)?
     let onTrackActivated: ((Track, [Track]) -> Void)?
+    /// The rows in on-screen order after search and sort, for callers that
+    /// step through "the list" the way the user sees it.
+    let onDisplayedTracksChanged: (([Track]) -> Void)?
     let contextActions: TrackContextMenuActions
 
     @State private var searchText = ""
@@ -93,6 +96,7 @@ struct TrackTableView: View {
         onSelectionChanged: (([Track]) -> Void)? = nil,
         onTrackSingleClick: ((Track) -> Void)? = nil,
         onTrackActivated: ((Track, [Track]) -> Void)? = nil,
+        onDisplayedTracksChanged: (([Track]) -> Void)? = nil,
         contextActions: TrackContextMenuActions = TrackContextMenuActions()
     ) {
         self.tracks = tracks
@@ -103,6 +107,7 @@ struct TrackTableView: View {
         self.onSelectionChanged = onSelectionChanged
         self.onTrackSingleClick = onTrackSingleClick
         self.onTrackActivated = onTrackActivated
+        self.onDisplayedTracksChanged = onDisplayedTracksChanged
         self.contextActions = contextActions
     }
 
@@ -237,6 +242,7 @@ struct TrackTableView: View {
                 indexedKey = inputKey
                 displayedTracks = result.tracks
                 displayedKeys = result.keys
+                onDisplayedTracksChanged?(result.tracks)
                 selectedTrackKeys = selectedTrackKeys.intersection(Set(result.keys))
                 // Displayed set changed; tell the parent so it can re-derive
                 // its selection (replaces the old onChange(of: displayedTracks)

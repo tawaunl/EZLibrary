@@ -12,8 +12,62 @@ import SwiftUI
 import AppKit
 import EZLibraryCore
 
+/// The Lookup ID3 Online window. It steps through the list the user was
+/// looking at, so a run of tracks can be tagged without closing and reopening
+/// the window for each one.
 struct TrackMetadataEditorSheet: View {
-    private enum MetadataField: String, CaseIterable, Identifiable {
+    @ObservedObject private var libraryService: LibraryService
+    private let tracks: [Track]
+    private let onSave: (Track, SeratoTrackMetadataUpdate) throws -> Void
+
+    @State private var index: Int
+    // Kept here rather than in the per-track form so a chosen source and a
+    // locked field carry over as the user moves through the list.
+    @State private var sourceSelection: OnlineTrackMetadataLookupService.SourceSelection = .all
+    @State private var lockedFields: Set<TrackMetadataEditorForm.MetadataField> = []
+
+    /// - Parameter tracks: The list as the user sees it — searched and sorted —
+    ///   captured once, so saving a track can't reorder it mid-session.
+    init(
+        track: Track,
+        in tracks: [Track],
+        libraryService: LibraryService,
+        onSave: @escaping (Track, SeratoTrackMetadataUpdate) throws -> Void
+    ) {
+        let start = tracks.firstIndex { $0.seratoStoredPath == track.seratoStoredPath }
+        self.tracks = start == nil ? [track] : tracks
+        self.libraryService = libraryService
+        self.onSave = onSave
+        _index = State(initialValue: start ?? 0)
+    }
+
+    /// The library's current copy of the track. Track IDs are regenerated on
+    /// every reload, so it is found by path; going back to a track saved a
+    /// moment ago then shows what was saved, not the list's stale snapshot.
+    private var currentTrack: Track {
+        let snapshot = tracks[index]
+        return libraryService.tracks.first { $0.seratoStoredPath == snapshot.seratoStoredPath } ?? snapshot
+    }
+
+    var body: some View {
+        let track = currentTrack
+        TrackMetadataEditorForm(
+            track: track,
+            position: tracks.count > 1 ? (index, tracks.count) : nil,
+            sourceSelection: $sourceSelection,
+            lockedFields: $lockedFields,
+            onNavigate: { step in
+                index = min(max(index + step, 0), tracks.count - 1)
+            },
+            onSave: { metadata in try onSave(track, metadata) }
+        )
+        // A fresh form per track, so its edits, results, and search start clean.
+        .id(tracks[index].seratoStoredPath)
+    }
+}
+
+struct TrackMetadataEditorForm: View {
+    fileprivate enum MetadataField: String, CaseIterable, Identifiable {
         case title
         case artist
         case album
@@ -40,6 +94,12 @@ struct TrackMetadataEditorSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     let track: Track
+    /// Zero-based index and count when there is a list to step through.
+    let position: (index: Int, count: Int)?
+    @Binding var sourceSelection: OnlineTrackMetadataLookupService.SourceSelection
+    @Binding fileprivate var lockedFields: Set<MetadataField>
+    /// Moves by `step` (-1 or +1). Only called once unsaved edits are dealt with.
+    let onNavigate: (Int) -> Void
     let onSave: (SeratoTrackMetadataUpdate) throws -> Void
 
     @State private var title: String
@@ -50,7 +110,6 @@ struct TrackMetadataEditorSheet: View {
     @State private var key: String
     @State private var bpmText: String
     @State private var yearText: String
-    @State private var sourceSelection: OnlineTrackMetadataLookupService.SourceSelection = .all
     @State private var lookupResults: [OnlineTrackMetadataCandidate] = []
     @State private var fingerprintSuggestions: [AudioFingerprintSuggestion] = []
     @State private var isSearchingOnline = false
@@ -59,14 +118,27 @@ struct TrackMetadataEditorSheet: View {
     @State private var fingerprintErrorMessage: String?
     @State private var saveErrorMessage: String?
     @State private var saveSuccessMessage: String?
-    @State private var lockedFields: Set<MetadataField> = []
     @State private var pendingArtwork: ID3Artwork?
     @State private var isFetchingArtwork = false
     @State private var artworkStatusMessage: String?
     @State private var showArtworkPreview = false
+    @State private var searchTask: Task<Void, Never>?
+    /// The step the user asked for while this track had unsaved edits.
+    @State private var pendingStep: Int?
 
-    init(track: Track, onSave: @escaping (SeratoTrackMetadataUpdate) throws -> Void) {
+    fileprivate init(
+        track: Track,
+        position: (index: Int, count: Int)?,
+        sourceSelection: Binding<OnlineTrackMetadataLookupService.SourceSelection>,
+        lockedFields: Binding<Set<MetadataField>>,
+        onNavigate: @escaping (Int) -> Void,
+        onSave: @escaping (SeratoTrackMetadataUpdate) throws -> Void
+    ) {
         self.track = track
+        self.position = position
+        _sourceSelection = sourceSelection
+        _lockedFields = lockedFields
+        self.onNavigate = onNavigate
         self.onSave = onSave
         _title = State(initialValue: track.title)
         _artist = State(initialValue: track.artist)
@@ -79,12 +151,67 @@ struct TrackMetadataEditorSheet: View {
     }
 
     var body: some View {
+        HStack(spacing: 0) {
+            sideArrow(step: -1)
+            editor
+            sideArrow(step: 1)
+        }
+        .confirmationDialog(
+            "Save changes to \u{201C}\(track.title.isEmpty ? track.fileURL.lastPathComponent : track.title)\u{201D}?",
+            isPresented: Binding(
+                get: { pendingStep != nil },
+                set: { if !$0 { pendingStep = nil } }
+            )
+        ) {
+            Button("Save and Continue") {
+                if let step = pendingStep, save() { onNavigate(step) }
+                pendingStep = nil
+            }
+            Button("Discard Changes", role: .destructive) {
+                if let step = pendingStep { onNavigate(step) }
+                pendingStep = nil
+            }
+            Button("Cancel", role: .cancel) { pendingStep = nil }
+        } message: {
+            Text("This track has edits that haven't been saved.")
+        }
+        .onDisappear { searchTask?.cancel() }
+    }
+
+    private var editor: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Edit Track")
-                .font(.headline)
-            Text(track.fileURL.lastPathComponent)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Edit Track")
+                        .font(.headline)
+                    Text(track.fileURL.lastPathComponent)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if let position {
+                    Text("\(position.index + 1) of \(position.count)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                    Button {
+                        navigate(-1)
+                    } label: {
+                        Label("Previous", systemImage: "chevron.left")
+                    }
+                    .disabled(!canStep(-1))
+                    .keyboardShortcut("[", modifiers: .command)
+                    .help("Go to the previous track in the list (⌘[).")
+                    Button {
+                        navigate(1)
+                    } label: {
+                        Label("Next", systemImage: "chevron.right")
+                    }
+                    .disabled(!canStep(1))
+                    .keyboardShortcut("]", modifiers: .command)
+                    .help("Go to the next track in the list (⌘]).")
+                }
+            }
 
             HStack(spacing: 10) {
                 Picker("Source", selection: $sourceSelection) {
@@ -302,31 +429,12 @@ struct TrackMetadataEditorSheet: View {
                 Button("Cancel") { dismiss() }
                     .help("Close without saving changes.")
                 Button("Save") {
-                    do {
-                        try onSave(
-                            SeratoTrackMetadataUpdate(
-                                title: title,
-                                artist: artist,
-                                album: album,
-                                genre: genre,
-                                comment: comment,
-                                key: key,
-                                bpm: Double(bpmText.trimmingCharacters(in: .whitespacesAndNewlines)),
-                                year: Int(yearText.trimmingCharacters(in: .whitespacesAndNewlines)),
-                                artwork: pendingArtwork
-                            )
-                        )
-                        saveErrorMessage = nil
-                        saveSuccessMessage = "Tag updated and saved."
-                        Task {
-                            try? await Task.sleep(nanoseconds: 800_000_000)
-                            await MainActor.run {
-                                dismiss()
-                            }
+                    guard save() else { return }
+                    Task {
+                        try? await Task.sleep(nanoseconds: 800_000_000)
+                        await MainActor.run {
+                            dismiss()
                         }
-                    } catch {
-                        saveSuccessMessage = nil
-                        saveErrorMessage = error.localizedDescription
                     }
                 }
                 .keyboardShortcut(.defaultAction)
@@ -343,6 +451,80 @@ struct TrackMetadataEditorSheet: View {
             let terms = [title, artist, album].map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             guard terms.contains(where: { !$0.isEmpty }) else { return }
             searchOnline()
+        }
+    }
+
+    /// The tall edge buttons. Only shown with a list, and kept outside the
+    /// form's padding so they never sit on top of a field.
+    @ViewBuilder
+    private func sideArrow(step: Int) -> some View {
+        if position != nil {
+            Button {
+                navigate(step)
+            } label: {
+                Image(systemName: step < 0 ? "chevron.left" : "chevron.right")
+                    .font(.title2.weight(.semibold))
+                    .frame(width: 32)
+                    .frame(maxHeight: .infinity)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(canStep(step) ? Color.secondary : Color.secondary.opacity(0.25))
+            .disabled(!canStep(step))
+            .help(step < 0 ? "Previous track" : "Next track")
+        }
+    }
+
+    private func canStep(_ step: Int) -> Bool {
+        guard let position else { return false }
+        return (0..<position.count).contains(position.index + step)
+    }
+
+    private func navigate(_ step: Int) {
+        guard canStep(step) else { return }
+        if hasUnsavedChanges {
+            pendingStep = step
+        } else {
+            onNavigate(step)
+        }
+    }
+
+    private var hasUnsavedChanges: Bool {
+        pendingArtwork != nil
+            || title != track.title
+            || artist != track.artist
+            || album != track.album
+            || genre != track.genre
+            || comment != track.comment
+            || key != (track.key ?? "")
+            || bpmText != (track.bpm.map { String(format: "%.0f", $0) } ?? "")
+            || yearText != (track.year.map(String.init) ?? "")
+    }
+
+    /// Writes the fields and reports whether it worked; on failure the error
+    /// is shown in the form and the caller should stay on this track.
+    private func save() -> Bool {
+        do {
+            try onSave(
+                SeratoTrackMetadataUpdate(
+                    title: title,
+                    artist: artist,
+                    album: album,
+                    genre: genre,
+                    comment: comment,
+                    key: key,
+                    bpm: Double(bpmText.trimmingCharacters(in: .whitespacesAndNewlines)),
+                    year: Int(yearText.trimmingCharacters(in: .whitespacesAndNewlines)),
+                    artwork: pendingArtwork
+                )
+            )
+            saveErrorMessage = nil
+            saveSuccessMessage = "Tag updated and saved."
+            return true
+        } catch {
+            saveSuccessMessage = nil
+            saveErrorMessage = error.localizedDescription
+            return false
         }
     }
 
@@ -503,7 +685,8 @@ struct TrackMetadataEditorSheet: View {
         isSearchingOnline = true
         lookupResults = []
 
-        Task {
+        searchTask?.cancel()
+        searchTask = Task {
             do {
                 let stream = OnlineTrackMetadataLookupService.lookupStream(
                     query: .init(title: title, artist: artist, album: album),
