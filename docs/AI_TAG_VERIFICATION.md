@@ -261,6 +261,25 @@ still receive the full evidence bundle — fingerprint match, database candidate
 filename, current tags, stage 1 findings — so they have real material to judge;
 they simply cannot go and look anything else up.
 
+### Search only when unsure
+
+Every track gets a first pass **without** web search, answered from the evidence
+bundle and the model's own knowledge. The model is told the pass has no search
+and that a low confidence just sends the track round again. The track goes round
+a second time, with search, when any of these is true:
+
+- identity confidence is 0.8 or below,
+- any of the five fields is at 0.8 or below, or missing from the reply,
+- a field that is empty in the file is still left empty.
+
+The searching pass is told which of those it was unsure of, and its answer
+replaces the first one. Usage from both passes is added together, so the
+running spend stays accurate. With web search turned off, or on an
+OpenAI-compatible provider, there is only the one pass.
+
+The pre-run quote assumes the worst case, where every track needs both passes.
+A library of mostly commercial releases should come in well under it.
+
 ### What it actually costs
 
 Measured over ten tracks on Opus 5, August 2026 — not estimated:
@@ -287,6 +306,12 @@ So roughly **$17 per hundred tracks** with search on Opus 5.5, or **$3.50**
 without. Sonnet 5.5 is a little over half that, Haiku 4.5 about a third. The
 $0.017 per track in search fees is the same on every model, so it is a growing
 share of the bill on the cheaper ones.
+
+Those are single-pass figures. Under [search only when unsure](#search-only-when-unsure)
+every track pays the "without" cost, and a track that goes round again pays the
+"with search" cost on top. On Opus 5.5 that is $0.035 for a track settled on the
+first pass and $0.201 for one that needs both, or about $20 per hundred tracks in
+the worst case.
 
 Web search is the whole story: it multiplies input tokens by **eleven**, and
 searches are billed on top of tokens at $10 per 1,000. The first version of this

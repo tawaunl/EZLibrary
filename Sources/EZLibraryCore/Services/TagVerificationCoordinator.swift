@@ -396,8 +396,8 @@ public enum TagVerificationCoordinator {
         case .onDevice:
             return "Free — runs on this Mac, nothing is sent to a paid service."
         case .cloudModel:
-            return AITagVerificationService.estimatedCostText(trackCount: trackCount, options: cloudOptions)
-                .replacingOccurrences(of: "about", with: "About")
+            let text = AITagVerificationService.estimatedCostText(trackCount: trackCount, options: cloudOptions)
+            return text.prefix(1).uppercased() + text.dropFirst()
         }
     }
 }

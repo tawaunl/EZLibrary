@@ -151,33 +151,41 @@ public enum AITagVerificationService {
     /// Anthropic's published rate for the web search tool: $10 per 1,000.
     public static let costPerWebSearch = 0.01
 
-    /// Approximate token cost in USD for verifying `trackCount` tracks.
-    /// Excludes Anthropic's per-search web search fee, which is billed
-    /// separately from tokens.
+    /// Approximate cost in USD for verifying `trackCount` tracks, including
+    /// Anthropic's per-search web search fee.
+    ///
+    /// With search on, this is the ceiling: every track pays for the pass
+    /// without search, and this assumes every one of them also goes round
+    /// again with it. How many actually do depends on the library, and an
+    /// estimate that lands under the bill is worse than one that lands over.
     public static func estimatedCost(trackCount: Int, options: Options) -> Double {
-        let inputTokens = options.useWebSearch
-            ? estimatedInputTokensWithSearch
-            : estimatedInputTokensWithoutSearch
-        let outputTokens = options.useWebSearch
-            ? estimatedOutputTokensWithSearch
-            : estimatedOutputTokensWithoutSearch
+        let model = options.model
+        func tokenCost(input: Int, output: Int) -> Double {
+            Double(trackCount * input) / 1_000_000 * model.inputCostPerMillionTokens
+                + Double(trackCount * output) / 1_000_000 * model.outputCostPerMillionTokens
+        }
 
-        let inputCost = Double(trackCount * inputTokens) / 1_000_000 * options.model.inputCostPerMillionTokens
-        let outputCost = Double(trackCount * outputTokens) / 1_000_000 * options.model.outputCostPerMillionTokens
+        let firstPass = tokenCost(
+            input: estimatedInputTokensWithoutSearch,
+            output: estimatedOutputTokensWithoutSearch
+        )
+        guard options.useWebSearch else { return firstPass }
+
         // Searches are billed on top of tokens, and at 1.7 per track they are
         // not a rounding error — leaving them out understated the total by
         // about a tenth.
-        let searchCost = options.useWebSearch
-            ? Double(trackCount) * estimatedWebSearchesPerTrack * costPerWebSearch
-            : 0
-        return inputCost + outputCost + searchCost
+        let searchPass = tokenCost(
+            input: estimatedInputTokensWithSearch,
+            output: estimatedOutputTokensWithSearch
+        ) + Double(trackCount) * estimatedWebSearchesPerTrack * costPerWebSearch
+        return firstPass + searchPass
     }
 
     public static func estimatedCostText(trackCount: Int, options: Options) -> String {
         let cost = estimatedCost(trackCount: trackCount, options: options)
         let rounded = cost < 0.01 ? "<$0.01" : String(format: "$%.2f", cost)
-        let suffix = options.useWebSearch ? " including web search fees" : ""
-        return "about \(rounded)\(suffix)"
+        guard options.useWebSearch else { return "about \(rounded)" }
+        return "at most about \(rounded) including web search fees — less when tracks are settled without searching"
     }
 
     // MARK: - Running
@@ -290,36 +298,35 @@ public enum AITagVerificationService {
 
         switch options.provider {
         case .anthropic:
-            let request = ClaudeAPIClient.Request(
-                model: options.model,
-                system: systemPrompt,
-                userMessage: evidence,
-                jsonSchema: responseSchema,
-                enableWebSearch: options.useWebSearch,
-                maxWebSearches: 6,
-                maxTokens: 8000,
-                effort: options.effort
+            // Search last, not first. Web search multiplies the input roughly
+            // elevenfold, and most of a library is commercial releases the
+            // evidence plus the model's own knowledge already settle. So every
+            // track gets a cheap pass without search, and only the ones that
+            // pass leaves unsure go round again with it.
+            let firstPass = try await askClaude(
+                about: track,
+                evidence: options.useWebSearch ? evidence + "\n\n" + firstPassNote : evidence,
+                options: options,
+                webSearch: false,
+                apiKey: apiKey,
+                session: session
             )
+            let unsettled = unsettledFields(in: firstPass)
+            let identityUnsure = firstPass.identityConfidence <= searchEscalationConfidence
+            guard options.useWebSearch, identityUnsure || !unsettled.isEmpty else {
+                return TagVerificationCoordinator.completingEmptyFields(in: firstPass, candidates: candidates)
+            }
 
-            let response = try await ClaudeAPIClient.send(request, apiKey: apiKey, session: session)
-            return try TagVerificationCoordinator.completingEmptyFields(
-                in: parse(
-                    text: response.text,
-                    for: track,
-                    provenance: Provenance(
-                        engineLabel: response.droppedResponseSchema
-                            ? "\(engineName) (\(options.model.displayName), no schema)"
-                            : "\(engineName) (\(options.model.displayName))",
-                        sourceURLs: response.sourceURLs.compactMap(URL.init(string:)),
-                        webSearchCount: response.webSearchCount,
-                        usage: TagVerificationUsage(
-                            inputTokens: response.usage.inputTokens,
-                            outputTokens: response.usage.outputTokens
-                        )
-                    )
-                ),
-                candidates: candidates
+            let searchPass = try await askClaude(
+                about: track,
+                evidence: evidence + "\n\n" + searchPassNote(unsettled: unsettled, identityUnsure: identityUnsure),
+                options: options,
+                webSearch: true,
+                apiKey: apiKey,
+                session: session,
+                earlierUsage: firstPass.usage
             )
+            return TagVerificationCoordinator.completingEmptyFields(in: searchPass, candidates: candidates)
 
         case .openAICompatible:
             guard let configuration = OpenAICompatibleClient.configuration() else {
@@ -340,6 +347,88 @@ public enum AITagVerificationService {
                 candidates: candidates
             )
         }
+    }
+
+    // MARK: - Search escalation
+
+    /// A first-pass answer has to be **over** this — for the identity and for
+    /// every field — to stand without a web search.
+    public static let searchEscalationConfidence = 0.8
+
+    /// The fields a pass without search did not settle: anything at or below
+    /// the escalation bar, anything it skipped, and any empty field it left
+    /// empty. The last case is the point of the search — the goal is all five
+    /// fields filled, and an empty field the model is sure it cannot fill
+    /// without looking is exactly what the web is for.
+    static func unsettledFields(in verification: TrackVerification) -> [TagIntegrityAudit.Field] {
+        verifiableFields.filter { field in
+            guard let result = verification.fields.first(where: { $0.field == field }) else { return true }
+            if result.confidence <= searchEscalationConfidence { return true }
+            let isEmpty = result.currentValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            let fills = result.verdict == .incorrect
+                && !result.proposedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            return isEmpty && !fills
+        }
+    }
+
+    /// Told to the model on the no-search pass. Without it the system prompt's
+    /// "search the web when…" reads as available, and the model either claims
+    /// to have searched or hedges every field.
+    static let firstPassNote = """
+    WEB SEARCH: not available on this pass. Answer from the evidence above and what you reliably \
+    know about this recording. Fill every empty field you can. Anything you report at 0.8 confidence \
+    or below is checked again with web search, so an honest low confidence costs nothing, while an \
+    overconfident guess gets written to the library.
+    """
+
+    static func searchPassNote(unsettled: [TagIntegrityAudit.Field], identityUnsure: Bool) -> String {
+        var doubts = unsettled.map(\.rawValue)
+        if identityUnsure {
+            doubts.insert("which recording this is", at: 0)
+        }
+        return "A FIRST PASS WITHOUT WEB SEARCH WAS NOT SURE OF: \(doubts.joined(separator: ", ")). "
+            + "Search for those first, and fill every empty field a source has a value for. "
+            + "Still return every field."
+    }
+
+    /// One request to Claude, parsed. `earlierUsage` is added in so a track
+    /// that took two passes reports what it actually cost.
+    private static func askClaude(
+        about track: Track,
+        evidence: String,
+        options: Options,
+        webSearch: Bool,
+        apiKey: String?,
+        session: URLSession,
+        earlierUsage: TagVerificationUsage? = nil
+    ) async throws -> TrackVerification {
+        let request = ClaudeAPIClient.Request(
+            model: options.model,
+            system: systemPrompt,
+            userMessage: evidence,
+            jsonSchema: responseSchema,
+            enableWebSearch: webSearch,
+            maxWebSearches: 6,
+            maxTokens: 8000,
+            effort: options.effort
+        )
+
+        let response = try await ClaudeAPIClient.send(request, apiKey: apiKey, session: session)
+        return try parse(
+            text: response.text,
+            for: track,
+            provenance: Provenance(
+                engineLabel: response.droppedResponseSchema
+                    ? "\(engineName) (\(options.model.displayName), no schema)"
+                    : "\(engineName) (\(options.model.displayName))",
+                sourceURLs: response.sourceURLs.compactMap(URL.init(string:)),
+                webSearchCount: response.webSearchCount,
+                usage: TagVerificationUsage(
+                    inputTokens: response.usage.inputTokens + (earlierUsage?.inputTokens ?? 0),
+                    outputTokens: response.usage.outputTokens + (earlierUsage?.outputTokens ?? 0)
+                )
+            )
+        )
     }
 
     // MARK: - Evidence

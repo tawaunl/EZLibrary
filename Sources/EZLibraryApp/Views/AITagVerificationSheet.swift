@@ -306,13 +306,15 @@ struct AITagVerificationSheet: View {
                             Spacer(minLength: 0)
                         }
 
-                        Toggle("Search the web to confirm", isOn: $useWebSearch)
+                        Toggle("Search the web when unsure", isOn: $useWebSearch)
                             .toggleStyle(.switch)
                             .controlSize(.small)
                             .help(
-                                "Lets the model look up label pages, discographies, and release listings. "
-                                + "Turning this off makes runs cheaper but much weaker on remixes, edits, and "
-                                + "bootlegs — the tracks the databases get wrong.")
+                                "Every track is checked first without searching. If the model is 80% sure or "
+                                + "less about any field, or an empty field is still empty, it goes round again "
+                                + "and looks up label pages, discographies, and release listings. Turning this "
+                                + "off makes runs cheaper but much weaker on remixes, edits, and bootlegs — the "
+                                + "tracks the databases get wrong.")
                     }
 
                     DisclosureGroup("Evidence sources", isExpanded: $showAdvanced) {
@@ -378,7 +380,17 @@ struct AITagVerificationSheet: View {
             trackCount: count,
             cloudOptions: options
         )
-        let unit = engine == .consensus ? "" : ", one request each"
+        let unit: String
+        switch engine {
+        case .consensus:
+            unit = ""
+        case .cloudModel where options.useWebSearch && options.provider.supportsWebSearch:
+            // A pass without search first; a second, searching one only when
+            // the first is not sure.
+            unit = ", one or two requests each"
+        default:
+            unit = ", one request each"
+        }
         return "\(count) track\(count == 1 ? "" : "s") will be verified\(unit). \(estimate)"
     }
 
