@@ -480,6 +480,11 @@ struct AITagVerificationSheet: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            if let timing = run.timingSummary {
+                Text(timing)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
 
             // Every run is recorded locally — settings, each track's verdicts,
             // cost, and what was applied — so it can be looked at after the app
@@ -597,6 +602,17 @@ struct AITagVerificationSheet: View {
                     Text(result.engineName)
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
+                    if let timings = result.timings {
+                        Text(String(format: "· %.1f s", timings.lookupSeconds + timings.modelSeconds))
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .help(String(
+                                format: "%.1f s looking up, %.1f s in the model%@",
+                                timings.lookupSeconds,
+                                timings.modelSeconds,
+                                timings.toolCalls > 0 ? ", \(timings.toolCalls) extra search(es) by the model" : ""
+                            ))
+                    }
                     if result.neededSearchPass {
                         Text("· needed search")
                             .font(.caption2)

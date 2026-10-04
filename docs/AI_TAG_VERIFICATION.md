@@ -199,6 +199,15 @@ embedded art gets looked at on phones and controllers.
 Artwork is applied from the **review sheet only** — the bulk button writes text
 fields and nothing else.
 
+The on-device and cloud models offer cover art the same way. They never see
+an image; once a model has answered, the app picks art from the database
+results for the album that answer leaves the track on (the proposed album, a
+filled-in one, or the one already tagged). Two rules are stricter than the
+free tier's: there is no fallback to another release's cover when no result is
+for that album, and no art at all when the model is unsure it found the right
+song (identity confidence below 0.5). The shared step is
+`TagVerificationCoordinator.attachingArtwork`.
+
 ## Stage 2, tier 2 — Apple on-device model
 
 Free, private, and needs no key, but only on macOS 26 with Apple Intelligence

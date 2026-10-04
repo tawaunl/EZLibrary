@@ -370,7 +370,9 @@ private let itunesHit = Data("""
         StubURLProtocol.reset(responses: [(200, search), (200, summary)])
 
         let results = try? await OnlineTrackMetadataLookupService.lookup(
-            query: .init(title: "Neverender \(UUID().uuidString)", artist: "Justice", album: ""),
+            // The random album only defeats the lookup cache. It used to go on
+            // the title, which a Wikipedia page now has to match.
+            query: .init(title: "Neverender", artist: "Justice", album: UUID().uuidString),
             sourceSelection: .wikipedia,
             session: stubbedSession()
         )
@@ -379,4 +381,84 @@ private let itunesHit = Data("""
         #expect(results?.first?.album == "Hyperdrama")
         #expect(results?.first?.year == 2024)
     }
+}
+
+// MARK: - Wikipedia: the right page, and the album without the date
+
+@Test func wikipediaAlbumStopsAtTheReleaseDate() {
+    // Real summary text for "Wake Me Up (Avicii song)". The album came back as
+    // "True on 17 June 2013" before the date stop was added.
+    let extract = "\"Wake Me Up\" is a song by Swedish DJ and record producer Avicii. It was released as "
+        + "the lead single from his debut album True on 17 June 2013, by PRMD Music and Island Records."
+    #expect(OnlineTrackMetadataLookupService.wikipediaAlbum(fromExtract: extract).name == "True")
+
+    let inYear = "It appeared on the band's album Discovery in 2001 and reached number two."
+    #expect(OnlineTrackMetadataLookupService.wikipediaAlbum(fromExtract: inYear).name == "Discovery")
+
+    let inMonth = "It was included on the album Random Access Memories in May 2013."
+    #expect(OnlineTrackMetadataLookupService.wikipediaAlbum(fromExtract: inMonth).name == "Random Access Memories")
+}
+
+@Test func anAlbumNamedAfterAMonthIsNotCutShort() {
+    // "on"/"in" followed by a month is a date; a title that merely contains a
+    // month name, with no "on"/"in" before it, is kept whole.
+    let extract = "The song is from their album Hot Summer Nights (2019)."
+    #expect(OnlineTrackMetadataLookupService.wikipediaAlbum(fromExtract: extract).name == "Hot Summer Nights")
+}
+
+@Test func onlyWikipediaPagesAboutTheSearchedSongCount() {
+    func page(_ title: String) -> WikipediaSearchPage {
+        WikipediaSearchPage(key: nil, title: title, description: "2013 single by Avicii", excerpt: nil)
+    }
+    // What "Levels Avicii" actually returns: both are song pages.
+    #expect(OnlineTrackMetadataLookupService.wikipediaPage(page("Levels (Avicii song)"), isAbout: "Levels"))
+    #expect(!OnlineTrackMetadataLookupService.wikipediaPage(page("Wake Me Up (Avicii song)"), isAbout: "Levels"))
+    // Version wording on the file's title does not stop the match.
+    #expect(OnlineTrackMetadataLookupService.wikipediaPage(page("Levels (Avicii song)"), isAbout: "Levels (Original Mix)"))
+    #expect(OnlineTrackMetadataLookupService.wikipediaPage(page("D.A.N.C.E."), isAbout: "D.A.N.C.E"))
+}
+
+// MARK: - Wikipedia: commas, digits, and EPs
+
+@Test func wikipediaAlbumAfterACommaAndWithACommaInIt() {
+    // Real summary text. All three yielded no album before.
+    let midnightCity = "It was first released in France on 16 August 2011, as the lead single from the group's "
+        + "sixth studio album, Hurry Up, We're Dreaming (2011). The song was written by Anthony Gonzalez."
+    #expect(OnlineTrackMetadataLookupService.wikipediaAlbum(fromExtract: midnightCity).name == "Hurry Up, We're Dreaming")
+
+    let oneMoreTime = "released in November 2000 by Virgin Records as the lead single from their second studio album, Discovery (2001)."
+    #expect(OnlineTrackMetadataLookupService.wikipediaAlbum(fromExtract: oneMoreTime).name == "Discovery")
+
+    let feelSoClose = "released as the second single from his third studio album, 18 Months (2012). In order to have lyrics"
+    #expect(OnlineTrackMetadataLookupService.wikipediaAlbum(fromExtract: feelSoClose).name == "18 Months")
+}
+
+@Test func wikipediaAlbumWithCommasDoesNotSwallowAClause() {
+    let extract = "from the album Discovery, which was reissued (2001)."
+    #expect(OnlineTrackMetadataLookupService.wikipediaAlbum(fromExtract: extract).name == "Discovery")
+}
+
+@Test func wikipediaNamesAnEPWhenThatIsTheSongsHome() {
+    #expect(OnlineTrackMetadataLookupService.wikipediaAlbum(
+        fromExtract: "It was released as the title track of his EP Bangarang (2011).").name == "Bangarang")
+    #expect(OnlineTrackMetadataLookupService.wikipediaAlbum(
+        fromExtract: "the lead single from her debut extended play, Night Drive (2019).").name == "Night Drive")
+    // "Albums Chart" is not an album.
+    #expect(OnlineTrackMetadataLookupService.wikipediaAlbum(
+        fromExtract: "It reached number two on the UK Albums Chart.").name == "")
+}
+
+@Test func wikipediaPrefersTheSongsYearToTheAlbums() {
+    let parsed = OnlineTrackMetadataLookupService.parseWikipediaSummary(
+        description: "2011 single by Calvin Harris",
+        extract: "released as the second single from his third studio album, 18 Months (2012)."
+    )
+    #expect(parsed.album == "18 Months")
+    #expect(parsed.year == 2011)
+    // With no year in the description, the album's year is used.
+    let noDescription = OnlineTrackMetadataLookupService.parseWikipediaSummary(
+        description: "Song by Calvin Harris",
+        extract: "released as the second single from his third studio album, 18 Months (2012)."
+    )
+    #expect(noDescription.year == 2012)
 }

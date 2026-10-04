@@ -220,3 +220,54 @@ private func records(in log: TagVerificationRunLog) throws -> [[String: Any]] {
     #expect(directory.lastPathComponent == "Verification Runs")
     #expect(directory.deletingLastPathComponent().lastPathComponent == "EZLibrary")
 }
+
+// MARK: - Timings
+
+@Test func timingsAreLoggedWithEachTrack() throws {
+    let directory = temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let log = try #require(TagVerificationRunLog.start(
+        engine: .onDevice, cloudOptions: nil, trackCount: 2, selectionCount: 2, in: directory
+    ))
+    let timed = verification(for: track("A.mp3"), neededSearchPass: false)
+        .with(timings: TagVerificationTimings(lookupSeconds: 1.25, modelSeconds: 4.5, toolCalls: 2))
+    log.record(timed, preselected: [])
+    log.record(verification(for: track("B.mp3"), neededSearchPass: false), preselected: [])
+
+    let lines = try records(in: log)
+    let timings = try #require(lines[1]["timings"] as? [String: Any])
+    #expect(timings["lookupSeconds"] as? Double == 1.25)
+    #expect(timings["modelSeconds"] as? Double == 4.5)
+    #expect(timings["toolCalls"] as? Int == 2)
+    // An engine that measures nothing simply has no timings.
+    #expect(lines[2]["timings"] == nil)
+}
+
+@Test func attachingTimingsKeepsEverythingElse() {
+    let original = verification(for: track("A.mp3"), neededSearchPass: true)
+    let timed = original.with(timings: TagVerificationTimings(lookupSeconds: 1, modelSeconds: 2))
+    #expect(timed.fields == original.fields)
+    #expect(timed.usage == original.usage)
+    #expect(timed.neededSearchPass)
+    #expect(timed.webSearchCount == original.webSearchCount)
+    #expect(timed.timings?.toolCalls == 0)
+}
+
+@Test func timingsSurviveTheEmptyFieldFill() {
+    let empty = track("A.mp3", genre: "")
+    let result = TrackTagVerification(
+        track: empty, engineName: "test", identityConfidence: 0.9, identitySummary: "", fields: []
+    ).with(timings: TagVerificationTimings(lookupSeconds: 3, modelSeconds: 7))
+    let candidate = OnlineTrackMetadataCandidate(
+        source: .itunes, title: "Neverender", artist: "Justice", album: "Hyperdrama",
+        genre: "Electronic", year: 2024, bpm: nil
+    )
+    let filled = TagVerificationCoordinator.completingEmptyFields(in: result, candidates: [candidate, candidate])
+    #expect(filled.timings == TagVerificationTimings(lookupSeconds: 3, modelSeconds: 7))
+}
+
+@Test func durationsConvertToFractionalSeconds() {
+    #expect(Duration.milliseconds(1_500).seconds == 1.5)
+    #expect(Duration.seconds(12).seconds == 12)
+}

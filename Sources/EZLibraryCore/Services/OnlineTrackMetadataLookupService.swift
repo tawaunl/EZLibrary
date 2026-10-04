@@ -1513,10 +1513,17 @@ public enum OnlineTrackMetadataLookupService {
             throw LookupError.sourceRequestFailed(.wikipedia, "Received an unexpected response format from Wikipedia.")
         }
 
-        // Prefer pages that read like a song or single; only if none do is it
-        // worth spending a summary request on the rest.
-        let songPages = decoded.pages.filter(isLikelySongPage)
-        let pages = Array((songPages.isEmpty ? decoded.pages : songPages).prefix(maxWikipediaSummaries))
+        // Only pages about *this* song. Every candidate below is labelled with
+        // the searched title, so a page about another song is not merely
+        // noise — its facts get reported as this song's. Measured: "Avicii
+        // Levels" returns "Wake Me Up (Avicii song)" too, and its album, True,
+        // came back as the album of "Levels". Song pages are preferred; a
+        // title-matching page of another kind is next; anything else — the
+        // artist's page, a discography — names albums that are not this
+        // song's, so with nothing matching, Wikipedia contributes nothing.
+        let matching = decoded.pages.filter { wikipediaPage($0, isAbout: query.title) }
+        let songPages = matching.filter(isLikelySongPage)
+        let pages = Array((songPages.isEmpty ? matching : songPages).prefix(maxWikipediaSummaries))
         guard !pages.isEmpty else { return [] }
 
         let summaries = await withTaskGroup(
@@ -1585,6 +1592,15 @@ public enum OnlineTrackMetadataLookupService {
         return try? JSONDecoder().decode(WikipediaSummary.self, from: data)
     }
 
+    /// True when the page's title names the searched song. Wikipedia titles
+    /// carry a disambiguator — "Levels (Avicii song)" — which the comparison
+    /// ignores, as it does version wording on the searched title.
+    static func wikipediaPage(_ page: WikipediaSearchPage, isAbout title: String) -> Bool {
+        let song = TagIntegrityAudit.normalize(searchableTerm(title))
+        guard !song.isEmpty else { return true }
+        return TagIntegrityAudit.normalize(page.title) == song
+    }
+
     /// True when a search result's one-line description marks it as a song or
     /// single rather than an artist, album, or disambiguation page.
     static func isLikelySongPage(_ page: WikipediaSearchPage) -> Bool {
@@ -1600,7 +1616,14 @@ public enum OnlineTrackMetadataLookupService {
         extract: String
     ) -> (album: String, year: Int?, genre: String) {
         let album = wikipediaAlbum(fromExtract: extract)
-        let year = album.year ?? wikipediaReleaseYear(description: description, extract: extract)
+        // The song's own year ("2011 single by …") before the album's: a lead
+        // single often comes out the year before its album ("Feel So Close"
+        // 2011, 18 Months 2012), and the song's year is what the databases
+        // report too.
+        let songYear = description.flatMap { text in
+            text.range(of: #"^\s*((?:19|20)\d{2})\b"#, options: .regularExpression).flatMap { Int(text[$0].filter(\.isNumber)) }
+        }
+        let year = songYear ?? album.year ?? wikipediaReleaseYear(description: description, extract: extract)
         let genre = inferGenre(fromText: [description ?? "", extract].joined(separator: " "))
         return (album: album.name, year: year, genre: genre)
     }
@@ -1611,21 +1634,54 @@ public enum OnlineTrackMetadataLookupService {
     /// Bounded on purpose. Wikipedia leads phrase this as "…from their fourth
     /// studio album Hyperdrama (2024)." or "…, released in 2024." The capture
     /// stops at the parenthesised year, at punctuation, or at a word that
-    /// clearly continues the sentence ("released", "which", "was"), and a
+    /// clearly continues the sentence ("released", "which", "was"), at a date
+    /// ("…album True on 17 June 2013", "…in 2013"), and a
     /// result longer than a plausible album title is discarded as an
     /// over-capture rather than written into a tag.
+    ///
+    /// Most leads put a comma after the word — "…sixth studio album, Hurry
+    /// Up, We're Dreaming (2011)." — and some titles carry their own comma or
+    /// start with a digit ("18 Months"). A name followed by its "(YYYY)" is
+    /// therefore read first, commas allowed, since the year marks exactly
+    /// where the title ends. Measured: without this, the summaries for
+    /// "Midnight City", "One More Time" and "Feel So Close" all yielded no
+    /// album.
+    ///
+    /// An EP is read the same way ("…from his EP Bangarang (2011)"): for
+    /// much dance music the EP is the original release, and Wikipedia saying
+    /// so is the strongest evidence there is that it is.
     static func wikipediaAlbum(fromExtract extract: String) -> (name: String, year: Int?) {
-        let pattern = #"\balbums?\s+(?:titled\s+|called\s+|named\s+)?([A-Z][^.,;:\n(]*?)(?=\s*\((?:19|20)\d{2}\)|\s*[.,;:)\n]|\s+(?:released|which|featuring|feat\.?|was|is|has|had|peaked|reached|became|debuted|spent)\b|$)"#
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return ("", nil) }
-        let range = NSRange(extract.startIndex..., in: extract)
-        guard let match = regex.firstMatch(in: extract, options: [], range: range),
-              let nameRange = Range(match.range(at: 1), in: extract) else {
-            return ("", nil)
+        let release = #"\b(?:albums?|EPs?|extended plays?),?\s+(?:titled\s+|called\s+|named\s+)?"#
+        let sentenceWords = #"released|which|featuring|feat\.?|was|is|has|had|peaked|reached|became|debuted|spent"#
+        let datedPattern = release + #"([A-Z0-9][^.;:\n()]*?)\s*\((?:19|20)\d{2}\)"#
+        let plainPattern = release + #"([A-Z0-9][^.,;:\n(]*?)(?=\s*\((?:19|20)\d{2}\)|\s*[.,;:)\n]|\s+(?:"# + sentenceWords + #")\b|\s+(?:on|in)\s+(?:\d{1,2}\s+)?(?:January|February|March|April|May|June|July|August|September|October|November|December)\b|\s+(?:on|in)\s+(?:19|20)\d{2}\b|$)"#
+
+        func firstName(_ pattern: String) -> Range<String.Index>? {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+            let range = NSRange(extract.startIndex..., in: extract)
+            guard let match = regex.firstMatch(in: extract, options: [], range: range) else { return nil }
+            return Range(match.range(at: 1), in: extract)
+        }
+        // Real album titles are short; anything longer is a captured sentence.
+        func plausible(_ range: Range<String.Index>, allowingCommas: Bool) -> Bool {
+            let name = extract[range]
+            guard !name.trimmingCharacters(in: .whitespaces).isEmpty,
+                  name.split(separator: " ").count <= 8 else { return false }
+            // With commas allowed, a clause can sneak in before the year:
+            // "Discovery, which was reissued (2001)".
+            guard allowingCommas else { return true }
+            return name.range(of: #"\b(?:"# + sentenceWords + #")\b"#, options: .regularExpression) == nil
         }
 
+        let nameRange: Range<String.Index>
+        if let dated = firstName(datedPattern), plausible(dated, allowingCommas: true) {
+            nameRange = dated
+        } else if let plain = firstName(plainPattern), plausible(plain, allowingCommas: false) {
+            nameRange = plain
+        } else {
+            return ("", nil)
+        }
         let name = String(extract[nameRange]).trimmingCharacters(in: .whitespacesAndNewlines)
-        // Real album titles are short; anything longer is a captured sentence.
-        guard !name.isEmpty, name.split(separator: " ").count <= 8 else { return ("", nil) }
 
         // A "(YYYY)" immediately after the album is that album's year.
         var year: Int?

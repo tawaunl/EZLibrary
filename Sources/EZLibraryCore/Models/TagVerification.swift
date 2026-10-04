@@ -122,11 +122,15 @@ public struct TagVerificationTimings: Sendable, Equatable {
     /// up-front lookup. Each one is another lookup *and* another round of
     /// model output.
     public let toolCalls: Int
+    /// How many times the model was asked. More than one means the first
+    /// attempt failed and was retried in a smaller form.
+    public let attempts: Int
 
-    public init(lookupSeconds: Double, modelSeconds: Double, toolCalls: Int = 0) {
+    public init(lookupSeconds: Double, modelSeconds: Double, toolCalls: Int = 0, attempts: Int = 1) {
         self.lookupSeconds = lookupSeconds
         self.modelSeconds = modelSeconds
         self.toolCalls = toolCalls
+        self.attempts = attempts
     }
 }
 
@@ -256,6 +260,23 @@ public struct TrackTagVerification: Sendable, Identifiable {
     /// The same result with timings attached. Engines measure from outside
     /// the code that builds the result, so they add it afterwards.
     public func with(timings: TagVerificationTimings) -> TrackTagVerification {
+        TrackTagVerification(
+            track: track,
+            engineName: engineName,
+            identityConfidence: identityConfidence,
+            identitySummary: identitySummary,
+            fields: fields,
+            sourceURLs: sourceURLs,
+            webSearchCount: webSearchCount,
+            usage: usage,
+            artwork: artwork,
+            neededSearchPass: neededSearchPass,
+            timings: timings
+        )
+    }
+
+    /// The same result with cover art on offer.
+    public func with(artwork: ArtworkProposal?) -> TrackTagVerification {
         TrackTagVerification(
             track: track,
             engineName: engineName,

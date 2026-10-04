@@ -205,6 +205,57 @@ public enum TagVerificationCoordinator {
         )
     }
 
+    /// Below this identity confidence an AI engine is not sure it found the
+    /// right song, and cover art for the wrong song is worse than none. The
+    /// on-device model's "low" (0.4) falls below it; "medium" (0.7) clears it.
+    public static let artworkIdentityFloor = 0.5
+
+    /// Offers cover art for the release an AI engine settled on, the way the
+    /// free engine does for its own answer.
+    ///
+    /// The models judge text and never see an image, so the art comes from the
+    /// database results they were shown — and only from a result for the
+    /// album the engine settled on (its proposed album, or the one already
+    /// tagged). The free engine falls back to any result's art; an AI answer
+    /// is often an album no database result carries, and the fallback would
+    /// then be the cover of whatever single or compilation came up first.
+    /// "Levels - EP" and "Levels" compare equal, so a song released only as a
+    /// single still gets that single's cover.
+    public static func attachingArtwork(
+        to verification: TrackTagVerification,
+        candidates: [OnlineTrackMetadataCandidate],
+        fileHasArtwork: Bool
+    ) -> TrackTagVerification {
+        guard verification.artwork == nil,
+              verification.identityConfidence >= artworkIdentityFloor else { return verification }
+        let album = TagConsensusService.agreedAlbum(in: verification.fields, track: verification.track)
+        let key = SmallModelEvidence.baseName(album)
+        guard !key.isEmpty else { return verification }
+
+        let onAlbum = candidates.filter { SmallModelEvidence.baseName($0.album) == key }
+        guard let proposal = TagConsensusService.artworkProposal(
+            from: onAlbum,
+            matchingAlbum: album,
+            fileHasArtwork: fileHasArtwork
+        ) else { return verification }
+        return verification.with(artwork: proposal)
+    }
+
+    /// The shared last step for both AI engines: fill what the model left
+    /// blank, then offer cover art for the album that leaves the track on.
+    /// Art comes second so it matches a filled-in album too.
+    public static func finishing(
+        _ verification: TrackTagVerification,
+        candidates: [OnlineTrackMetadataCandidate],
+        fileHasArtwork: Bool
+    ) -> TrackTagVerification {
+        attachingArtwork(
+            to: completingEmptyFields(in: verification, candidates: candidates),
+            candidates: candidates,
+            fileHasArtwork: fileHasArtwork
+        )
+    }
+
     public static func availability(of kind: TagVerificationEngineKind) -> Availability {
         switch kind {
         case .consensus:

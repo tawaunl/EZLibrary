@@ -106,6 +106,11 @@ public enum OnDeviceTagVerificationService {
         let sourceSelection: OnlineTrackMetadataLookupService.SourceSelection
         /// Counts the searches the model asks for, for the run's timings.
         let calls = CallCounter()
+        /// Measured: told to search only when nothing matched, the model
+        /// searched three to five times a track anyway, and the piled-up
+        /// results overflowed its context. So the cap is enforced here, not
+        /// requested in the prompt.
+        let maxCalls = 1
 
         @Generable
         struct Arguments {
@@ -117,6 +122,9 @@ public enum OnDeviceTagVerificationService {
 
         func call(arguments: Arguments) async throws -> String {
             calls.increment()
+            guard calls.value <= maxCalls else {
+                return "Search limit reached. Decide from the results you already have."
+            }
             let query = OnlineTrackMetadataLookupService.Query(
                 title: arguments.title,
                 artist: arguments.artist,
@@ -132,7 +140,9 @@ public enum OnDeviceTagVerificationService {
             guard !candidates.isEmpty else {
                 return "No database returned a match for that search."
             }
-            return OnDeviceTagVerificationService.formattedCandidates(candidates)
+            return OnDeviceTagVerificationService.formattedCandidates(
+                SmallModelEvidence.curated(candidates, fileTitle: arguments.title, fileDuration: nil)
+            )
         }
     }
 
@@ -316,51 +326,130 @@ public enum OnDeviceTagVerificationService {
 
         // Pre-fetch the database candidates the app would search for anyway and
         // hand them to the model, rather than trusting a small model to search
-        // well. The tool stays registered for a follow-up search when none of
-        // the pre-fetched candidates fit.
-        let candidates = (try? await OnlineTrackMetadataLookupService.lookup(
+        // well — trimmed first to what it can judge well.
+        let found = (try? await OnlineTrackMetadataLookupService.lookup(
             query: TagConsensusService.searchQuery(for: track, fileTags: fileTags),
             sourceSelection: sourceSelection,
             maxResultsPerSource: 5,
             session: session,
             deduplicate: false
         )) ?? []
+        let candidates = SmallModelEvidence.curated(
+            found,
+            fileTitle: fileTags.title ?? track.title,
+            fileDuration: track.duration,
+            fileAlbum: fileTags.album ?? track.album
+        )
 
+        let fileHasArtwork = ArtworkFetchService.fileHasEmbeddedArtwork(at: track.fileURL)
         let lookupSeconds = (clock.now - lookupStart).seconds
 
+        // The search tool only when the up-front lookup found nothing. With
+        // results in hand it searched anyway — three to five times a track —
+        // which was most of the model's time and the cause of its context
+        // overflows. Its searches happen inside the response, so they count
+        // towards the model's time; the tool counts them too.
         let tool = MusicDatabaseSearchTool(session: session, sourceSelection: sourceSelection)
-        let modelSession = LanguageModelSession(tools: [tool], instructions: instructions)
-
-        // Includes any searches the model makes through the tool — they happen
-        // inside the response — which is why the tool calls are counted too.
         let modelStart = clock.now
-        let response = try await modelSession.respond(
-            to: prompt(for: track, fileTags: fileTags, candidates: candidates),
-            generating: TrackVerdict.self
-        )
+        var attempts = 1
+        let verdict: TrackVerdict
+        do {
+            verdict = try await ask(
+                about: track,
+                fileTags: fileTags,
+                candidates: candidates,
+                tool: candidates.isEmpty ? tool : nil
+            )
+        } catch {
+            if error is CancellationError || Task.isCancelled { throw error }
+            // One retry, smaller: no tool and fewer results. Both observed
+            // failures — an overflowing context and output that would not
+            // decode — are what a shorter, simpler request avoids, and they
+            // come and go between runs of the same track.
+            attempts = 2
+            verdict = try await ask(
+                about: track,
+                fileTags: fileTags,
+                candidates: Array(candidates.prefix(4)),
+                tool: nil
+            )
+        }
         let modelSeconds = (clock.now - modelStart).seconds
 
-        let result = verification(from: response.content, for: track)
-        // Completing empty fields is a priority: fill any the model left blank
-        // from the same candidates it was shown.
-        return TagVerificationCoordinator.completingEmptyFields(in: result, candidates: candidates)
+        let result = verification(from: verdict, for: track)
+        // Every field filled is the goal: whatever the model left blank is
+        // filled from the same results it was shown, where they agree. Cover
+        // art is looked for in everything the lookup found, not just the few
+        // results the model was shown — it must still match the album.
+        let filled = TagVerificationCoordinator.completingEmptyFields(in: result, candidates: candidates)
+        return TagVerificationCoordinator.attachingArtwork(to: filled, candidates: found, fileHasArtwork: fileHasArtwork)
             .with(timings: TagVerificationTimings(
                 lookupSeconds: lookupSeconds,
                 modelSeconds: modelSeconds,
-                toolCalls: tool.calls.value
+                toolCalls: tool.calls.value,
+                attempts: attempts
             ))
     }
 
-    static let instructions = """
-    You check whether a DJ's music file has the right tags. Work in this order:
+    /// One fresh session, one question. A new session each time keeps one
+    /// track's transcript from eating into the next one's context.
+    private static func ask(
+        about track: Track,
+        fileTags: AudioFileTagReader.Tags,
+        candidates: [OnlineTrackMetadataCandidate],
+        tool: MusicDatabaseSearchTool?
+    ) async throws -> TrackVerdict {
+        let modelSession = LanguageModelSession(
+            tools: tool.map { [$0] } ?? [],
+            instructions: instructions(searchAvailable: tool != nil)
+        )
+        let response = try await modelSession.respond(
+            to: prompt(for: track, fileTags: fileTags, candidates: candidates, searchAvailable: tool != nil),
+            generating: TrackVerdict.self,
+            options: generationOptions
+        )
+        return response.content
+    }
 
-    1. Read the database results provided below the tags. They were already searched for you. \
-    Only if none of them is this recording — or none were found — call search_music_databases, \
-    with just the title, then the artist and the most distinctive word of the title.
+    /// Greedy: the single most likely answer every time, not a random draw.
+    ///
+    /// The default samples, so the same track could come back with a
+    /// different album or year on each run — measured: "Get Lucky" got 2023
+    /// once and 2013 twice from identical input. A tag checker should give one
+    /// answer for one input; nothing here benefits from variety.
+    static var generationOptions: GenerationOptions {
+        GenerationOptions(samplingMode: .greedy)
+    }
+
+    /// The instructions, with step 1 matching what the model actually has: a
+    /// search tool it may use once, or only the results it was given. Telling
+    /// a small model about a tool it does not have invites it to pretend.
+    static func instructions(searchAvailable: Bool) -> String {
+        let firstStep = searchAvailable
+            ? """
+            1. No database results were found for this file. Call search_music_databases once, \
+            with the song title and the artist. You get one search; then decide from what it returns.
+            """
+            : """
+            1. Read the database results provided below the tags. They were already searched for \
+            you and they are all you have — there is no search tool.
+            """
+        return """
+        You check whether a DJ's music file has the right tags, and fill in the ones that are \
+        missing. The goal is a file with all five fields filled: title, artist, album, genre, year. \
+        Work in this order:
+
+        \(firstStep)
+        \(instructionsBody)
+        """
+    }
+
+    static let instructionsBody = """
     2. Pick the matching version. Among the results, choose the one whose length is closest to \
     the file's. A result minutes longer or shorter is a different version, and its album and \
     year do not apply to this file.
-    3. Judge each of the five fields against that matched result.
+    3. Judge each of the five fields against that matched result, and fill every empty one \
+    a result has a value for.
 
     You know nothing about releases from memory and must never guess one. Every value you \
     propose has to come from a search result you actually saw.
@@ -398,7 +487,8 @@ public enum OnDeviceTagVerificationService {
     static func prompt(
         for track: Track,
         fileTags: AudioFileTagReader.Tags,
-        candidates: [OnlineTrackMetadataCandidate] = []
+        candidates: [OnlineTrackMetadataCandidate] = [],
+        searchAvailable: Bool = false
     ) -> String {
         // Prefer the file's own ID3 tag over the library's stored copy for
         // every field, so the model searches and judges from the file, not the
@@ -431,10 +521,30 @@ public enum OnDeviceTagVerificationService {
 
         lines.append("")
         if candidates.isEmpty {
-            lines.append("No database results were found for these tags. Call search_music_databases with a simpler query, or mark fields unverified.")
+            lines.append(searchAvailable
+                ? "No database results were found for these tags. Search once with search_music_databases."
+                : "No database results were found for these tags. Mark fields unverified unless the possible year applies.")
         } else {
-            lines.append("Database results already found for this file (judge against these; only call search_music_databases if none of them is this recording):")
+            lines.append("Database results found for this file, best match first (judge against these):")
             lines.append(formattedCandidates(candidates))
+        }
+
+        // Named outright: a small model told in general that completing
+        // fields matters still leaves them blank, but rarely skips one it was
+        // pointed at by name.
+        let current: [(String, String)] = [
+            ("title", preferred(fileTags.title, track.title)),
+            ("artist", preferred(fileTags.artist, track.artist)),
+            ("album", preferred(fileTags.album, track.album)),
+            ("genre", preferred(fileTags.genre, track.genre)),
+            ("year", effectiveYear)
+        ]
+        let empty = current.filter { $0.1.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.map(\.0)
+        if !empty.isEmpty {
+            lines.append("")
+            lines.append("EMPTY FIELDS TO FILL: \(empty.joined(separator: ", ")). For each one, propose the value "
+                + "from the best matching result above (verdict incorrect). Leave one unverified only if no "
+                + "result has a value for it.")
         }
         lines.append("")
         lines.append("Give a verdict for each of the five fields.")

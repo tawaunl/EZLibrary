@@ -56,6 +56,11 @@ final class TagVerificationRunModel: ObservableObject {
     /// Cloud tracks the pass without search did not settle. Against
     /// `checkedCount`, this is how often the cheap pass is enough.
     @Published private(set) var searchPassCount = 0
+    /// Summed timings of the tracks that reported them, for the averages.
+    @Published private(set) var timedTracks = 0
+    @Published private(set) var lookupSeconds = 0.0
+    @Published private(set) var modelSeconds = 0.0
+    @Published private(set) var toolCalls = 0
     private var searchPassPossible = false
     private var pricing: ModelPricing?
 
@@ -112,6 +117,10 @@ final class TagVerificationRunModel: ObservableObject {
         usage = .zero
         webSearches = 0
         searchPassCount = 0
+        timedTracks = 0
+        lookupSeconds = 0
+        modelSeconds = 0
+        toolCalls = 0
         // Only the cloud tier bills; the other two are free, and showing them a
         // running total of $0.00 would just be noise. A cloud model is priced
         // only when its rates are known; another provider's bill is its own.
@@ -201,6 +210,10 @@ final class TagVerificationRunModel: ObservableObject {
         usage = .zero
         webSearches = 0
         searchPassCount = 0
+        timedTracks = 0
+        lookupSeconds = 0
+        modelSeconds = 0
+        toolCalls = 0
         searchPassPossible = false
         pricing = nil
         log = nil
@@ -219,6 +232,12 @@ final class TagVerificationRunModel: ObservableObject {
             }
             if result.neededSearchPass {
                 searchPassCount += 1
+            }
+            if let timings = result.timings {
+                timedTracks += 1
+                lookupSeconds += timings.lookupSeconds
+                modelSeconds += timings.modelSeconds
+                toolCalls += timings.toolCalls
             }
             webSearches += result.webSearchCount
             results.append(result)
@@ -277,6 +296,24 @@ final class TagVerificationRunModel: ObservableObject {
             parts.append("\(Int((share * 100).rounded()))% of input from cache")
         }
         return parts.joined(separator: ", ")
+    }
+
+    /// Average time a track takes, split into lookup and model, or nil when
+    /// no track has reported timings. Shown for every engine — on the free
+    /// ones speed is the only cost there is.
+    var timingSummary: String? {
+        guard timedTracks > 0 else { return nil }
+        let count = Double(timedTracks)
+        var text = String(
+            format: "%.1f s a track on average — %.1f s looking up, %.1f s in the model",
+            (lookupSeconds + modelSeconds) / count,
+            lookupSeconds / count,
+            modelSeconds / count
+        )
+        if toolCalls > 0 {
+            text += ", \(toolCalls) extra search\(toolCalls == 1 ? "" : "es") by the model"
+        }
+        return text
     }
 
     /// Share of all input tokens served from the prompt cache, or nil before

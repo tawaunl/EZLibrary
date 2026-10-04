@@ -140,7 +140,8 @@ public final class TagVerificationRunLog: @unchecked Sendable {
                 TimingsRecord(
                     lookupSeconds: timings.lookupSeconds,
                     modelSeconds: timings.modelSeconds,
-                    toolCalls: timings.toolCalls
+                    toolCalls: timings.toolCalls,
+                    attempts: timings.attempts
                 )
             },
             fields: result.fields.map { field in
@@ -348,6 +349,7 @@ public final class TagVerificationRunLog: @unchecked Sendable {
         let lookupSeconds: Double
         let modelSeconds: Double
         let toolCalls: Int
+        let attempts: Int
     }
 
     private struct FieldRecord: Encodable {

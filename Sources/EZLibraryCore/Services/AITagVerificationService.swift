@@ -336,10 +336,15 @@ public enum AITagVerificationService {
         let clock = ContinuousClock()
         let lookupStart = clock.now
         let (evidence, candidates) = await gatherEvidence(for: track, options: options)
+        let fileHasArtwork = ArtworkFetchService.fileHasEmbeddedArtwork(at: track.fileURL)
         let lookupSeconds = (clock.now - lookupStart).seconds
         let modelStart = clock.now
         func timed(_ result: TrackVerification) -> TrackVerification {
-            result.with(timings: TagVerificationTimings(
+            TagVerificationCoordinator.finishing(
+                result,
+                candidates: candidates,
+                fileHasArtwork: fileHasArtwork
+            ).with(timings: TagVerificationTimings(
                 lookupSeconds: lookupSeconds,
                 modelSeconds: (clock.now - modelStart).seconds
             ))
@@ -363,7 +368,7 @@ public enum AITagVerificationService {
             let unsettled = unsettledFields(in: firstPass)
             let identityUnsure = firstPass.identityConfidence <= searchEscalationConfidence
             guard options.useWebSearch, identityUnsure || !unsettled.isEmpty else {
-                return timed(TagVerificationCoordinator.completingEmptyFields(in: firstPass, candidates: candidates))
+                return timed(firstPass)
             }
 
             let searchPass = try await askClaude(
@@ -375,7 +380,7 @@ public enum AITagVerificationService {
                 session: session,
                 earlierUsage: firstPass.usage
             )
-            return timed(TagVerificationCoordinator.completingEmptyFields(in: searchPass, candidates: candidates))
+            return timed(searchPass)
 
         case .openAICompatible:
             guard let configuration = OpenAICompatibleClient.configuration() else {
@@ -387,13 +392,10 @@ public enum AITagVerificationService {
                 configuration: configuration,
                 session: session
             )
-            return try timed(TagVerificationCoordinator.completingEmptyFields(
-                in: parse(
-                    text: response.text,
-                    for: track,
-                    provenance: Provenance(engineLabel: configuration.model, usage: response.usage)
-                ),
-                candidates: candidates
+            return try timed(parse(
+                text: response.text,
+                for: track,
+                provenance: Provenance(engineLabel: configuration.model, usage: response.usage)
             ))
         }
     }
