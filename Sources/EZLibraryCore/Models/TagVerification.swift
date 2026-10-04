@@ -100,6 +100,10 @@ public struct TagVerificationUsage: Sendable, Equatable {
         )
     }
 
+    public static func += (lhs: inout TagVerificationUsage, rhs: TagVerificationUsage) {
+        lhs = lhs + rhs
+    }
+
     /// What these tokens cost on `model`, in USD. Web search fees are billed
     /// separately and are not included.
     public func tokenCost(on model: ClaudeModel) -> Double {

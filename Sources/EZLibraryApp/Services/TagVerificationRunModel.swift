@@ -228,7 +228,7 @@ final class TagVerificationRunModel: ObservableObject {
             completedCount += 1
             checkedCount += 1
             if let resultUsage = result.usage {
-                usage = usage + resultUsage
+                usage += resultUsage
             }
             if result.neededSearchPass {
                 searchPassCount += 1

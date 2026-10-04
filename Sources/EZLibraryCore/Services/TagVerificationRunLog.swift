@@ -120,7 +120,7 @@ public final class TagVerificationRunLog: @unchecked Sendable {
         totals.verified += 1
         totals.webSearches += result.webSearchCount
         if result.neededSearchPass { totals.searchPasses += 1 }
-        if let usage = result.usage { totals.usage = totals.usage + usage }
+        if let usage = result.usage { totals.usage += usage }
         if let cost { totals.cost += cost }
         lock.unlock()
 
