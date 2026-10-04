@@ -231,8 +231,19 @@ track's database lookup overlapping another's model time; beyond two, extra
 sessions only add load. A model server on this Mac (Ollama, LM Studio) is held
 to two for the same reason.
 
-Hosted cloud models run five tracks at once, and within each track the
-database search runs alongside the audio fingerprint instead of after it. Both
+Claude runs twelve tracks at once; a hosted OpenAI-compatible service runs
+five, because its account limits are unknown and a new account's are low.
+Within each track the database search runs alongside the audio fingerprint
+instead of after it.
+
+Twelve only pays off because a cloud run does not queue for iTunes. iTunes
+sustains about 20 searches a minute, which at ~15s a track would cap the whole
+run at about five tracks at once. So the AI search uses
+`Pacing.concurrent(maxWait: 4)`: iTunes is held to its bulk spacing, but a
+track whose turn is more than 4 seconds away searches without it (Deezer,
+Wikipedia and MusicBrainz cover most of the same releases) and gives up its
+place, so it never delays the tracks behind it. A skipped lookup is not
+cached, so a later run can still get iTunes results for that track. Both
 the Claude and the OpenAI-compatible clients wait out a rate-limit reply and
 retry (up to four attempts, honouring `retry-after`) rather than failing the
 track.

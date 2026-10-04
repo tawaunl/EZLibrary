@@ -108,9 +108,15 @@ public enum AITagVerificationService {
         /// time waiting on the network — the databases, then the model — so
         /// several in flight finish a run sooner. Bounded because providers
         /// rate limit per key; both clients wait out a rate-limit reply and
-        /// retry rather than failing the track. A model server on this Mac
-        /// gets `localModelConcurrentTracks` instead (see
-        /// `withCompatibleSettings`).
+        /// retry rather than failing the track.
+        ///
+        /// Twelve suits Anthropic: at ~15s and ~14k input tokens a track it
+        /// is ~50 tracks a minute, a small share of a paid key's limits.
+        /// That only pays off because iTunes is skipped rather than queued
+        /// for (`databaseMaxWait`) — held to its ~20 a minute, it would cap
+        /// the run at about five at once. An OpenAI-compatible service gets
+        /// `compatibleConcurrentTracks`, and a model server on this Mac
+        /// `localModelConcurrentTracks` (see `withCompatibleSettings`).
         public var maxConcurrentTracks: Int
         public var effort: String?
         /// The model name for an OpenAI-compatible run, for display and the
@@ -127,7 +133,7 @@ public enum AITagVerificationService {
             useFingerprint: Bool = true,
             useOnlineCandidates: Bool = true,
             minimumConfidence: Double = 0.75,
-            maxConcurrentTracks: Int = 5,
+            maxConcurrentTracks: Int = 12,
             effort: String? = "high"
         ) {
             self.provider = provider
@@ -150,9 +156,10 @@ public enum AITagVerificationService {
             var copy = self
             copy.compatibleModelName = endpoint.model
             copy.compatiblePricing = OpenAICompatibleClient.pricing(baseURL: endpoint.baseURL, model: endpoint.model)
-            if OpenAICompatibleClient.isLocalEndpoint(endpoint.baseURL) {
-                copy.maxConcurrentTracks = min(copy.maxConcurrentTracks, Self.localModelConcurrentTracks)
-            }
+            let cap = OpenAICompatibleClient.isLocalEndpoint(endpoint.baseURL)
+                ? Self.localModelConcurrentTracks
+                : Self.compatibleConcurrentTracks
+            copy.maxConcurrentTracks = min(copy.maxConcurrentTracks, cap)
             return copy
         }
 
@@ -161,6 +168,17 @@ public enum AITagVerificationService {
         /// beyond two tracks at once — two overlaps one track's database
         /// lookup with another's model time, and more only adds load.
         public static let localModelConcurrentTracks = 2
+
+        /// A hosted OpenAI-compatible service. Its limits depend on an
+        /// account tier this app cannot see, and a new account's are low,
+        /// so it keeps the earlier, safer five.
+        public static let compatibleConcurrentTracks = 5
+
+        /// The longest a track waits for its turn at iTunes before searching
+        /// without it. Deezer and Wikipedia cover most of the same releases,
+        /// and the search overlaps the fingerprint, so a short wait costs
+        /// little while a long one would set the pace of the whole run.
+        public static let databaseMaxWait: TimeInterval = 4
 
         /// The rates this run is billed at, or nil when they are not known.
         public var pricing: ModelPricing? {
@@ -547,7 +565,8 @@ public enum AITagVerificationService {
             return (try? await OnlineTrackMetadataLookupService.lookup(
                 query: query,
                 maxResultsPerSource: 6,
-                deduplicate: false
+                deduplicate: false,
+                pacing: .concurrent(maxWait: Options.databaseMaxWait)
             )) ?? []
         }
         async let databaseResults = searchDatabases()

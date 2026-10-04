@@ -206,6 +206,15 @@ actor RequestPacer {
         return slot.timeIntervalSince(now) * Self.delayScale
     }
 
+    /// Like `reserveSlot`, but only takes a slot that comes up within
+    /// `maxWait` seconds; otherwise it leaves the queue untouched and returns
+    /// nil. A skipped caller holds no slot, so it never delays the callers
+    /// behind it.
+    func reserveSlotIfSoon(minimumInterval: TimeInterval = 0, maxWait: TimeInterval) -> TimeInterval? {
+        guard nextSlot.timeIntervalSinceNow <= maxWait else { return nil }
+        return reserveSlot(minimumInterval: minimumInterval)
+    }
+
     func recordThrottled(retryAfter: TimeInterval?) {
         interval = min(ceiling, max(interval * 2, floor))
         // Honor Retry-After when the source sends one, but never let a stray
@@ -344,17 +353,39 @@ public enum OnlineTrackMetadataLookupService {
         /// actually sustain, so a long run neither trips the throttle nor
         /// drops tracks to it.
         case bulk
+        /// One of many searches running at the same time that would rather go
+        /// without a rate-limited source than queue for it. Held to the bulk
+        /// rate, but a request whose turn is more than `maxWait` seconds away
+        /// is skipped (`LookupError.busy`) and the search answers from the
+        /// other sources.
+        ///
+        /// AI verification uses this: with a dozen tracks in flight, the
+        /// iTunes queue would otherwise set the pace of the whole run at
+        /// about 20 tracks a minute, however fast the model is.
+        case concurrent(maxWait: TimeInterval)
 
         /// The spacing to hold after each request to `source`.
         func minimumInterval(for source: OnlineMetadataSource) -> TimeInterval {
-            guard self == .bulk else { return 0 }
-            switch source {
-            // Apple documents the Search API at roughly 20 calls a minute.
-            case .itunes:
-                return 3.0
-            default:
+            switch self {
+            case .interactive:
                 return 0
+            case .bulk, .concurrent:
+                switch source {
+                // Apple documents the Search API at roughly 20 calls a minute.
+                case .itunes:
+                    return 3.0
+                default:
+                    return 0
+                }
             }
+        }
+
+        /// The longest a request to `source` may wait for its turn, or nil to
+        /// wait as long as it takes. Only sources held to a bulk spacing ever
+        /// queue for long, so only those are skipped.
+        func maxWait(for source: OnlineMetadataSource) -> TimeInterval? {
+            guard case let .concurrent(maxWait) = self, minimumInterval(for: source) > 0 else { return nil }
+            return maxWait
         }
     }
 
@@ -376,6 +407,9 @@ public enum OnlineTrackMetadataLookupService {
         case missingYouTubeKey
         case sourceRequestFailed(OnlineMetadataSource, String)
         case rateLimited(OnlineMetadataSource)
+        /// Skipped because the source's queue was too long (see
+        /// `Pacing.concurrent`). Nothing was sent.
+        case busy(OnlineMetadataSource)
 
         public var errorDescription: String? {
             switch self {
@@ -389,6 +423,8 @@ public enum OnlineTrackMetadataLookupService {
                 return "\(source.displayName) lookup failed: \(message)"
             case let .rateLimited(source):
                 return "\(source.displayName) is rate limiting requests right now. Wait a minute and try again, or look up fewer tracks at a time."
+            case let .busy(source):
+                return "\(source.displayName) was busy with other lookups, so this search skipped it."
             }
         }
 
@@ -432,7 +468,16 @@ public enum OnlineTrackMetadataLookupService {
         var lastThrottle: LookupError?
 
         for attempt in 1...maxAttempts {
-            let delay = await pacer.reserveSlot(minimumInterval: pacing.minimumInterval(for: source))
+            let minimumInterval = pacing.minimumInterval(for: source)
+            let delay: TimeInterval
+            if let maxWait = pacing.maxWait(for: source) {
+                guard let soon = await pacer.reserveSlotIfSoon(minimumInterval: minimumInterval, maxWait: maxWait) else {
+                    throw lastThrottle ?? LookupError.busy(source)
+                }
+                delay = soon
+            } else {
+                delay = await pacer.reserveSlot(minimumInterval: minimumInterval)
+            }
             if delay > 0 {
                 try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             }

@@ -297,6 +297,60 @@ private let itunesHit = Data("""
         #expect(abs(secondInteractive - 0.25) < 0.1)
     }
 
+    /// With many tracks in flight, a search skips iTunes rather than queue
+    /// behind the others for it. Skipping takes no slot, so the queue stays
+    /// as it was for whoever comes next.
+    @Test func concurrentPacingSkipsAQueueLongerThanItsLimit() async {
+        RequestPacer.delayScale = 1
+        defer { RequestPacer.delayScale = 0 }
+
+        let pacing = OnlineTrackMetadataLookupService.Pacing.concurrent(maxWait: 4)
+        #expect(pacing.minimumInterval(for: .itunes) == 3)
+        #expect(pacing.maxWait(for: .itunes) == 4)
+        // Sources with no bulk spacing never queue long, so they always wait.
+        #expect(pacing.maxWait(for: .deezer) == nil)
+        #expect(OnlineTrackMetadataLookupService.Pacing.bulk.maxWait(for: .itunes) == nil)
+
+        let pacer = RequestPacer(floor: 0.25)
+        #expect(await pacer.reserveSlotIfSoon(minimumInterval: 3, maxWait: 4) == 0)
+        let second = await pacer.reserveSlotIfSoon(minimumInterval: 3, maxWait: 4)
+        #expect(second.map { abs($0 - 3) < 0.1 } == true)
+        // Third would wait ~6s: skipped, and the queue is unchanged.
+        #expect(await pacer.reserveSlotIfSoon(minimumInterval: 3, maxWait: 4) == nil)
+        let afterSkip = await pacer.reserveSlot(minimumInterval: 3)
+        #expect(abs(afterSkip - 6) < 0.1)
+    }
+
+    /// A skipped source reports `busy` rather than a rate limit: nothing was
+    /// sent, and there is nothing for the user to wait out.
+    @Test func aSearchThatSkipsITunesSendsNothingToIt() async {
+        RequestPacer.delayScale = 1
+        defer { RequestPacer.delayScale = 0 }
+        // Book the next twelve seconds of the iTunes queue.
+        for _ in 0..<4 { _ = await RequestPacer.itunes.reserveSlot(minimumInterval: 3) }
+        StubURLProtocol.reset(responses: [(200, itunesHit)])
+
+        do {
+            _ = try await OnlineTrackMetadataLookupService.lookup(
+                query: .init(title: "Skip Me", artist: "Calvin Harris", album: ""),
+                sourceSelection: .itunes,
+                session: stubbedSession(),
+                pacing: .concurrent(maxWait: 4)
+            )
+            Issue.record("expected iTunes to be skipped")
+        } catch let error as OnlineTrackMetadataLookupService.LookupError {
+            guard case .busy(.itunes) = error else {
+                Issue.record("unexpected error: \(error)")
+                return
+            }
+            #expect(!error.isRateLimit)
+        } catch {
+            Issue.record("unexpected error: \(error)")
+        }
+        #expect(StubURLProtocol.totalRequests == 0)
+        await RequestPacer.itunes.resetForTesting()
+    }
+
     /// A throttled request is retried rather than given up on after one attempt.
     @Test func throttledRequestIsRetriedBeforeFailing() async {
         StubURLProtocol.reset(responses: [(429, Data()), (429, Data()), (200, itunesHit)])
