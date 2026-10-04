@@ -140,7 +140,7 @@ FEATURES: list[Feature] = [
             ("Cross-source consensus (free)", "Asks iTunes, MusicBrainz, Deezer, Discogs and Wikipedia independently and proposes a change only where they agree. No account, no key, works on every Mac."),
             ("Wikipedia for the original album", "Wikipedia is the most reliable source for the record a song <em>first</em> appeared on, where the catalog APIs return the single or a later hits compilation. It gets the final say on the album."),
             ("Apple on-device AI (free, private)", "On macOS 26 with Apple Intelligence, the on-device model reads the same database results and judges which one matches the file. Nothing about your library leaves the Mac."),
-            ("Cloud AI (your own key)", "A cloud model that can also search the web, for the bootlegs, edits and white labels the databases do not carry. Billed to your own account."),
+            ("Cloud AI — Claude, OpenAI, or your own local model", "Claude can also search the web, for the bootlegs, edits and white labels the databases don't carry. Prefer OpenAI, OpenRouter, Groq, Mistral, DeepSeek, or a model you're already running locally under Ollama or LM Studio? Point it at any of those instead — billed to your own account, or free if it's running on your Mac."),
             ("Fills a missing year from the file name", "When the ID3 tag has no year but the file is named “… (2019)”, the year is offered instead of left blank — a database year still wins when one is found."),
             ("Keeps the artist out of the title", "“Justice - D.A.N.C.E.” becomes “D.A.N.C.E.”, while DJ version markers like (Extended Mix) and (Clean) are kept."),
             ("Knows an edit from a mix", "Candidates whose length cannot match the file are discarded before anything is counted, so a mix's album and year are never written onto a radio edit."),
@@ -153,8 +153,9 @@ FEATURES: list[Feature] = [
             ("Apply", "Selected changes are written to the audio files and Serato together, read-back verified, with a snapshot taken first. Serato has to be closed."),
         ),
         note="The cross-source consensus is free and works everywhere. The on-device tier needs "
-             "macOS 26 with Apple Intelligence; the cloud tier needs your own API key and is billed "
-             "to your account.",
+             "macOS 26 with Apple Intelligence; the cloud tier needs your own API key for Claude or "
+             "an OpenAI-compatible provider — or a local model, which is free — and is billed to "
+             "whichever account you use.",
         related=("tracks-and-tags", "duplicates", "rename"),
     ),
     Feature(
@@ -711,7 +712,7 @@ def cta_band() -> str:
         Download for macOS
       </a>
     </div>
-        <p class="meta-line">v<span data-latest-version>1.0.7</span> · <span data-latest-size>9.1 MB</span> · macOS 13+ · Apple Silicon &amp; Intel</p>
+        <p class="meta-line">v<span data-latest-version>1.0.8</span> · <span data-latest-size>9.1 MB</span> · macOS 13+ · Apple Silicon &amp; Intel</p>
   </div>
 </section>"""
 

@@ -9,6 +9,62 @@ version (`CFBundleShortVersionString.CFBundleVersion`) and are used verbatim by
 > the highest priority — see [SECURITY.md](../SECURITY.md). This changelog is kept
 > up to date so you can see exactly what changed and when.
 
+## 1.0.8
+
+### API keys now live in the macOS Keychain
+- Your Claude and OpenAI-compatible API keys move out of plain preferences and
+  into the macOS Keychain, encrypted by the OS instead of sitting in a plist
+  file. Existing keys are migrated automatically the first time you launch
+  this version — nothing to re-enter.
+
+### Downloads are checked before they're trusted
+- When EZLibrary checks for and installs an app update, it now verifies the
+  installer package's signature and source before you're asked to run it.
+- Audio pulled in from YouTube is checksum-verified right after downloading,
+  so a corrupted or incomplete rip is caught instead of landing in your library.
+
+### Verify tags with OpenAI too, not just Claude
+- The cloud tier of AI Tag Verification now talks to anything that speaks
+  OpenAI's chat API — OpenAI itself, OpenRouter, Groq, Mistral, DeepSeek, or a
+  model you're already running locally under Ollama or LM Studio.
+- OpenAI's own endpoint gets the same three-tier pricing and cost tracking
+  Claude has (cheapest / balanced / most accurate); other providers still
+  run, just without a cost estimate on file.
+- Only Claude can search the web mid-run — providers on the OpenAI-compatible
+  path still get the full evidence bundle, they just can't go look anything
+  else up with it.
+
+### AI Tag Verification gets more accurate without costing more
+- A track is now searched online a second time only when the first,
+  search-free pass wasn't confident — so accuracy goes up without spending a
+  web search on every single track.
+- If iTunes was too busy to answer during a run and the result came back
+  unsure, that track now gets checked against iTunes again in the background
+  afterward, and the earlier result is upgraded automatically if the retry is
+  better — as long as you haven't already applied or dismissed it.
+- Verified tracks can now pick up cover art automatically from the matched
+  release once the match is confident enough.
+- Claude now checks twelve tracks at once (up from five) and OpenAI-compatible
+  providers ten (up from five); both wait out a rate-limited reply and retry
+  it instead of failing the track.
+- Every run is now recorded end to end — settings, per-track results, timing,
+  and cost — viewable afterward via **Show Run Log in Finder**.
+
+### Bulk apply lets you choose the engine
+- Applying AI Tag Verification to a whole selection now asks which engine
+  should do it — Apple's on-device model or your configured cloud model —
+  with a cost and time estimate for each, instead of silently picking one.
+
+### Lookup ID3 Online is smoother to work through
+- The online search now starts on its own as soon as a track has enough
+  metadata to search with, instead of waiting for you to press the button.
+- Preview the artwork a match found before you apply it.
+- Clicking Next or Previous now autosaves any edits instead of stopping to
+  ask "save changes?" every time.
+- Genre spelling is canonicalized consistently in lookup results and
+  everywhere else tags get written — always "Hip Hop," never "Hip-Hop" or
+  "HipHop."
+
 ## 1.0.7
 
 ### Resizable and collapsible side panels
