@@ -31,10 +31,10 @@ private func body(
     )
 }
 
-@Test func opus5RequestCarriesTheModernParameters() {
-    let payload = body(for: .opus5)
+@Test func opus55RequestCarriesTheModernParameters() {
+    let payload = body(for: .opus55)
 
-    #expect(payload["model"] as? String == "claude-opus-5")
+    #expect(payload["model"] as? String == "claude-opus-5-5")
     // Adaptive thinking replaced the removed `budget_tokens` form; sending the
     // old shape to this model is a 400.
     #expect((payload["thinking"] as? [String: Any])?["type"] as? String == "adaptive")
@@ -61,20 +61,20 @@ private func body(
     #expect((payload["tools"] as? [[String: Any]])?.first?["type"] as? String == "web_search_20250305")
 }
 
-@Test func sonnetRequestKeepsEffortButNotFallbacks() {
-    let payload = body(for: .sonnet5)
+@Test func sonnetRequestCarriesEffortAndFallbacks() {
+    let payload = body(for: .sonnet55)
 
     #expect((payload["thinking"] as? [String: Any])?["type"] as? String == "adaptive")
     #expect((payload["output_config"] as? [String: Any])?["effort"] as? String == "high")
-    #expect(payload["fallbacks"] == nil)
+    #expect(payload["fallbacks"] as? String == "default")
 }
 
 @Test func disablingWebSearchRemovesTheToolBlock() {
-    #expect(body(for: .opus5, webSearch: false)["tools"] == nil)
+    #expect(body(for: .opus55, webSearch: false)["tools"] == nil)
 }
 
 @Test func omittingTheSchemaLeavesOnlyEffortInOutputConfig() {
-    let payload = body(for: .opus5, schema: nil)
+    let payload = body(for: .opus55, schema: nil)
     let outputConfig = payload["output_config"] as? [String: Any]
     #expect(outputConfig?["format"] == nil)
     #expect(outputConfig?["effort"] as? String == "high")
@@ -153,9 +153,9 @@ private func body(
 @Test func selectedModelFallsBackToOpusForUnknownValues() {
     let defaults = TestDefaults.inMemory()
 
-    #expect(ClaudeAPIClient.selectedModel(userDefaults: defaults) == .opus5)
+    #expect(ClaudeAPIClient.selectedModel(userDefaults: defaults) == .opus55)
     defaults.set("claude-haiku-4-5", forKey: ClaudeAPIClient.modelDefaultsKey)
     #expect(ClaudeAPIClient.selectedModel(userDefaults: defaults) == .haiku45)
     defaults.set("gpt-nonsense", forKey: ClaudeAPIClient.modelDefaultsKey)
-    #expect(ClaudeAPIClient.selectedModel(userDefaults: defaults) == .opus5)
+    #expect(ClaudeAPIClient.selectedModel(userDefaults: defaults) == .opus55)
 }

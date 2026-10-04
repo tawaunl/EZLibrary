@@ -1065,7 +1065,7 @@ private struct AppSettingsSheet: View {
     @State private var acoustIDKeyInput = ""
     @State private var anthropicKeyInput = ""
     @State private var validatingAnthropicKey = false
-    @AppStorage(ClaudeAPIClient.modelDefaultsKey) private var anthropicModel = ClaudeModel.opus5.rawValue
+    @AppStorage(ClaudeAPIClient.modelDefaultsKey) private var anthropicModel = ClaudeModel.opus55.rawValue
     @State private var statusMessage: String?
     @State private var validatingAcoustIDKey = false
     @State private var showHelp = false

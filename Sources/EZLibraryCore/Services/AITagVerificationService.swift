@@ -111,7 +111,7 @@ public enum AITagVerificationService {
 
         public init(
             provider: Provider = .anthropic,
-            model: ClaudeModel = .opus5,
+            model: ClaudeModel = .opus55,
             useWebSearch: Bool = true,
             useFingerprint: Bool = true,
             useOnlineCandidates: Bool = true,

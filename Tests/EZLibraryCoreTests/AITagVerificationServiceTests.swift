@@ -199,7 +199,7 @@ private let fullVerdictJSON = """
 }
 
 @Test func costEstimatesScaleWithTrackCountAndModel() {
-    let opus = AITagVerificationService.Options(model: .opus5)
+    let opus = AITagVerificationService.Options(model: .opus55)
     let haiku = AITagVerificationService.Options(model: .haiku45)
 
     let opusTen = AITagVerificationService.estimatedCost(trackCount: 10, options: opus)

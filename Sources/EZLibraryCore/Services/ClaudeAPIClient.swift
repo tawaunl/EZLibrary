@@ -19,16 +19,16 @@ import Foundation
 /// here — rather than at the call site — keeps a model switch in Settings from
 /// turning into a 400 the user has no way to interpret.
 public enum ClaudeModel: String, CaseIterable, Sendable {
-    case opus5 = "claude-opus-5"
-    case sonnet5 = "claude-sonnet-5"
+    case opus55 = "claude-opus-5-5"
+    case sonnet55 = "claude-sonnet-5-5"
     case haiku45 = "claude-haiku-4-5"
 
     public var displayName: String {
         switch self {
-        case .opus5:
-            return "Claude Opus 5 (most accurate)"
-        case .sonnet5:
-            return "Claude Sonnet 5 (balanced)"
+        case .opus55:
+            return "Claude Opus 5.5 (most accurate)"
+        case .sonnet55:
+            return "Claude Sonnet 5.5 (balanced)"
         case .haiku45:
             return "Claude Haiku 4.5 (cheapest)"
         }
@@ -38,7 +38,7 @@ public enum ClaudeModel: String, CaseIterable, Sendable {
     /// `budget_tokens` form. Models older than the 4.6 generation reject it.
     var supportsAdaptiveThinking: Bool {
         switch self {
-        case .opus5, .sonnet5:
+        case .opus55, .sonnet55:
             return true
         case .haiku45:
             return false
@@ -48,7 +48,7 @@ public enum ClaudeModel: String, CaseIterable, Sendable {
     /// `output_config.effort`. Haiku 4.5 errors on it.
     var supportsEffort: Bool {
         switch self {
-        case .opus5, .sonnet5:
+        case .opus55, .sonnet55:
             return true
         case .haiku45:
             return false
@@ -56,13 +56,14 @@ public enum ClaudeModel: String, CaseIterable, Sendable {
     }
 
     /// Server-side refusal fallbacks — the API silently re-runs a refused
-    /// request on another model inside the same call. Documented for the
-    /// Opus 5 / Fable 5 tier only, so it is not sent for anything else.
+    /// request on another model inside the same call. Documented for Opus 5.5
+    /// and Sonnet 5.5 (which falls back to Sonnet 5 on `cyber` and
+    /// `frontier_llm` declines only); Haiku 4.5 rejects it.
     var supportsServerSideFallback: Bool {
         switch self {
-        case .opus5:
+        case .opus55, .sonnet55:
             return true
-        case .sonnet5, .haiku45:
+        case .haiku45:
             return false
         }
     }
@@ -73,7 +74,7 @@ public enum ClaudeModel: String, CaseIterable, Sendable {
     /// original tool.
     var webSearchToolType: String {
         switch self {
-        case .opus5, .sonnet5:
+        case .opus55, .sonnet55:
             return "web_search_20260209"
         case .haiku45:
             return "web_search_20250305"
@@ -85,10 +86,10 @@ public enum ClaudeModel: String, CaseIterable, Sendable {
     /// promotional ones, so an estimate is never lower than the real bill.
     public var inputCostPerMillionTokens: Double {
         switch self {
-        case .opus5:
-            return 5.00
-        case .sonnet5:
-            return 3.00
+        case .opus55:
+            return 4.00
+        case .sonnet55:
+            return 2.00
         case .haiku45:
             return 1.00
         }
@@ -96,10 +97,10 @@ public enum ClaudeModel: String, CaseIterable, Sendable {
 
     public var outputCostPerMillionTokens: Double {
         switch self {
-        case .opus5:
-            return 25.00
-        case .sonnet5:
-            return 15.00
+        case .opus55:
+            return 20.00
+        case .sonnet55:
+            return 10.00
         case .haiku45:
             return 5.00
         }
@@ -145,7 +146,8 @@ public enum ClaudeAPIClient {
         public var maxWebSearches: Int
         public var maxTokens: Int
         /// One of `low`, `medium`, `high`, `xhigh`, `max`. Ignored for models
-        /// that do not support effort.
+        /// that do not support effort. Always sent explicitly: Opus 5.5 drops
+        /// to `medium` when it is omitted, where Opus 5 defaulted to `high`.
         public var effort: String?
 
         public init(
@@ -314,11 +316,11 @@ public enum ClaudeAPIClient {
         apiKey(environment: environment, userDefaults: userDefaults, credentials: credentials) != nil
     }
 
-    /// The model chosen in Settings, defaulting to Opus 5.
+    /// The model chosen in Settings, defaulting to Opus 5.5.
     public static func selectedModel(userDefaults: UserDefaults = .standard) -> ClaudeModel {
         guard let raw = userDefaults.string(forKey: modelDefaultsKey),
               let model = ClaudeModel(rawValue: raw) else {
-            return .opus5
+            return .opus55
         }
         return model
     }

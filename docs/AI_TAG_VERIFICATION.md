@@ -249,7 +249,7 @@ Two providers:
 
 - **Anthropic (Claude)**, natively. The only one offering a *server-side web
   search*, which is the whole reason to reach for a cloud model over the free
-  tiers. Model selectable; Opus 5 by default.
+  tiers. Model selectable; Opus 5.5 by default.
 - **Anything speaking OpenAI's `/chat/completions` shape** — OpenAI, OpenRouter,
   Groq, Mistral, DeepSeek, and locally-run models under **Ollama** or **LM
   Studio**. A base URL and a model name reach all of them. A local model needs
@@ -273,8 +273,20 @@ Measured over ten tracks on Opus 5, August 2026 — not estimated:
 | **Cost / track** | **$0.203** | **$0.044** |
 | Time / track | 17.4s | 3.6s |
 
-So roughly **$20 per hundred tracks** with search, or **$4.35** without. Sonnet 5
-is about a third less, Haiku 4.5 about a quarter of Opus.
+Repriced for the current models from those same token counts (not re-measured;
+Opus 5.5 shares Opus 5's tokenizer, but how much it thinks at `high` effort may
+differ):
+
+| Model | $ / MTok in / out | Cost / track, with search | Without |
+| --- | --- | --- | --- |
+| Opus 5.5 | $4 / $20 | $0.166 | $0.035 |
+| Sonnet 5.5 | $2 / $10 | $0.091 | $0.017 |
+| Haiku 4.5 | $1 / $5 | $0.054 | $0.009 |
+
+So roughly **$17 per hundred tracks** with search on Opus 5.5, or **$3.50**
+without. Sonnet 5.5 is a little over half that, Haiku 4.5 about a third. The
+$0.017 per track in search fees is the same on every model, so it is a growing
+share of the bill on the cheaper ones.
 
 Web search is the whole story: it multiplies input tokens by **eleven**, and
 searches are billed on top of tokens at $10 per 1,000. The first version of this
@@ -301,11 +313,11 @@ intact and the fallback never fired.** The two compose.
 The Messages API surface is not uniform across models, and a model switch must
 not turn into an HTTP 400 the user cannot interpret. `ClaudeModel` encodes it:
 
-| | Opus 5 | Sonnet 5 | Haiku 4.5 |
+| | Opus 5.5 | Sonnet 5.5 | Haiku 4.5 |
 | --- | --- | --- | --- |
 | `thinking: {type: "adaptive"}` | yes | yes | rejected — omitted |
 | `output_config.effort` | yes | yes | rejected — omitted |
-| Server-side refusal `fallbacks` | yes | omitted | omitted |
+| Server-side refusal `fallbacks` | yes | yes (retries on Sonnet 5) | omitted |
 | Web search tool | `web_search_20260209` | `web_search_20260209` | `web_search_20250305` |
 
 `ClaudeAPIClient` also handles two behaviours that are easy to get wrong:

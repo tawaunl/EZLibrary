@@ -38,7 +38,7 @@ struct AITagVerificationSheet: View {
 
     @Environment(\.dismiss) private var dismiss
 
-    @AppStorage(ClaudeAPIClient.modelDefaultsKey) private var modelRawValue = ClaudeModel.opus5.rawValue
+    @AppStorage(ClaudeAPIClient.modelDefaultsKey) private var modelRawValue = ClaudeModel.opus55.rawValue
     @AppStorage(TagVerificationCoordinator.engineDefaultsKey)
     private var engineRawValue = TagVerificationEngineKind.consensus.rawValue
 
@@ -82,7 +82,7 @@ struct AITagVerificationSheet: View {
     private var selectedArtworkIDs: Set<UUID> { run.selectedArtworkIDs }
 
     private var model: ClaudeModel {
-        ClaudeModel(rawValue: modelRawValue) ?? .opus5
+        ClaudeModel(rawValue: modelRawValue) ?? .opus55
     }
 
     private var engine: TagVerificationEngineKind {
