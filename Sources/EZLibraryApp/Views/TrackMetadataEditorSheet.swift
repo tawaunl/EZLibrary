@@ -63,6 +63,7 @@ struct TrackMetadataEditorSheet: View {
     @State private var pendingArtwork: ID3Artwork?
     @State private var isFetchingArtwork = false
     @State private var artworkStatusMessage: String?
+    @State private var showArtworkPreview = false
 
     init(track: Track, onSave: @escaping (SeratoTrackMetadataUpdate) throws -> Void) {
         self.track = track
@@ -355,6 +356,26 @@ struct TrackMetadataEditorSheet: View {
         }
     }
 
+    private func artworkPreview(_ image: NSImage) -> some View {
+        // Never upscale past the image's own pixels: a blurry enlargement
+        // would hide exactly the detail this preview is for.
+        let pixels = image.representations.first.map { CGSize(width: $0.pixelsWide, height: $0.pixelsHigh) }
+            ?? image.size
+        let side = min(420, max(pixels.width, pixels.height))
+        return VStack(spacing: 8) {
+            Image(nsImage: image)
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+                .frame(maxWidth: side, maxHeight: side)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+            Text("\(Int(pixels.width)) × \(Int(pixels.height)) px")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(12)
+    }
+
     private var artworkRow: some View {
         HStack(spacing: 10) {
             Text("Cover Art")
@@ -362,12 +383,23 @@ struct TrackMetadataEditorSheet: View {
                 .foregroundStyle(.secondary)
 
             if let pendingArtwork, let image = NSImage(data: pendingArtwork.imageData) {
-                Image(nsImage: image)
-                    .resizable()
-                    .interpolation(.medium)
-                    .frame(width: 44, height: 44)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.3), lineWidth: 1))
+                // At 44pt a cover is hard to tell apart from the wrong pressing
+                // of the same album, so a click opens it at full size.
+                Button {
+                    showArtworkPreview = true
+                } label: {
+                    Image(nsImage: image)
+                        .resizable()
+                        .interpolation(.medium)
+                        .frame(width: 44, height: 44)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.3), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .help("Click to view the cover art at full size.")
+                .popover(isPresented: $showArtworkPreview, arrowEdge: .trailing) {
+                    artworkPreview(image)
+                }
             } else {
                 RoundedRectangle(cornerRadius: 6)
                     .fill(Color.secondary.opacity(0.12))
