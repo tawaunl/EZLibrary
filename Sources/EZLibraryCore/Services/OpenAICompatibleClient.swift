@@ -103,9 +103,41 @@ public enum OpenAICompatibleClient {
         }
     }
 
+    /// Keychain account holding the OpenAI-compatible key.
+    public static let apiKeyCredentialAccount = "openai-compatible-api-key"
+
+    /// The saved key only (no environment fallback), for showing in Settings.
+    public static func savedAPIKey(
+        userDefaults: UserDefaults = .standard,
+        credentials: any SecureCredentialStore = AppCredentials.keychain
+    ) -> String? {
+        AppCredentials.value(
+            account: apiKeyCredentialAccount,
+            legacyDefaultsKey: apiKeyDefaultsKey,
+            store: credentials,
+            userDefaults: userDefaults
+        )
+    }
+
+    /// Saves (or clears, when `nil`/blank) the OpenAI-compatible key.
+    public static func setAPIKey(
+        _ value: String?,
+        userDefaults: UserDefaults = .standard,
+        credentials: any SecureCredentialStore = AppCredentials.keychain
+    ) {
+        AppCredentials.store(
+            value,
+            account: apiKeyCredentialAccount,
+            legacyDefaultsKey: apiKeyDefaultsKey,
+            store: credentials,
+            userDefaults: userDefaults
+        )
+    }
+
     public static func configuration(
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        userDefaults: UserDefaults = .standard
+        userDefaults: UserDefaults = .standard,
+        credentials: any SecureCredentialStore = AppCredentials.keychain
     ) -> Configuration? {
         let baseURL = (userDefaults.string(forKey: baseURLDefaultsKey)?
             .trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }
@@ -115,8 +147,12 @@ public enum OpenAICompatibleClient {
             return nil
         }
 
-        let key = (userDefaults.string(forKey: apiKeyDefaultsKey)?
-            .trimmingCharacters(in: .whitespacesAndNewlines))
+        let key = AppCredentials.value(
+            account: apiKeyCredentialAccount,
+            legacyDefaultsKey: apiKeyDefaultsKey,
+            store: credentials,
+            userDefaults: userDefaults
+        )
             ?? environment[apiKeyEnvironmentKey]?.trimmingCharacters(in: .whitespacesAndNewlines)
             ?? ""
 

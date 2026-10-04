@@ -253,7 +253,7 @@ private let fullVerdictJSON = """
 
     // Only exercised when the environment has no key either; skip rather than
     // fail on a machine that exports one.
-    guard ClaudeAPIClient.apiKey(userDefaults: defaults) == nil else { return }
+    guard ClaudeAPIClient.apiKey(userDefaults: defaults, credentials: InMemoryCredentialStore()) == nil else { return }
 
     var messages: [String] = []
     for await event in AITagVerificationService.verify(tracks: [sampleTrack()]) {

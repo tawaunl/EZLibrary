@@ -117,6 +117,13 @@ export async function unseal(token) {
   return JSON.parse(decoder.decode(plain));
 }
 
+/* How long a sealed session stays usable. The blob is handed to the browser
+   and stored there, so without a deadline a copy taken once (a shared machine,
+   a stale backup, an XSS on the page) would keep working against these
+   functions forever — the seal proves it came from us, not that it is current.
+   Signing in again mints a fresh one. */
+export const SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
 /* Pull and verify the session from the Authorization header. Returns the
    decrypted payload ({ token, login, at }) or null. */
 export async function sessionFrom(request) {
@@ -126,6 +133,8 @@ export async function sessionFrom(request) {
   try {
     const payload = await unseal(match[1]);
     if (!payload || !payload.token) return null;
+    if (typeof payload.at !== "number") return null;
+    if (Date.now() - payload.at > SESSION_MAX_AGE_MS) return null;
     return payload;
   } catch (error) {
     return null;

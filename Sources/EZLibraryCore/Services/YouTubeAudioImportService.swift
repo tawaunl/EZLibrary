@@ -8,6 +8,7 @@
 // any later version. It is distributed WITHOUT ANY WARRANTY; see the GNU
 // General Public License (LICENSE) for more details.
 
+import CryptoKit
 import Foundation
 
 public enum YouTubeAudioImportService {
@@ -550,14 +551,27 @@ public enum YouTubeAudioImportService {
         return DownloadResult(outputFileURL: outputURL, title: title)
     }
 
-    private static func ffmpegMetadataArguments(_ metadata: SeratoTrackMetadataUpdate) -> String {
+    /// Quotes one value for `--postprocessor-args`, which yt-dlp splits with
+    /// POSIX `shlex` rules before handing the pieces to ffmpeg as argv.
+    ///
+    /// Inside single quotes shlex treats every character literally, so the only
+    /// case needing care is an embedded single quote: close the run, emit an
+    /// escaped quote, reopen. Double quotes are *not* safe here — shlex unescapes
+    /// `\\` inside them, so a value containing `\"` ends the quoted run early and
+    /// every word after it becomes a new ffmpeg argument. Track metadata reaches
+    /// this from remote lookups and YouTube titles, so a crafted title could
+    /// append `-y /some/path` and have ffmpeg overwrite an arbitrary file.
+    static func shellQuotedForPostprocessor(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    static func ffmpegMetadataArguments(_ metadata: SeratoTrackMetadataUpdate) -> String {
         var args: [String] = []
 
         func append(_ key: String, _ value: String) {
             let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { return }
-            let escaped = trimmed.replacingOccurrences(of: "\"", with: "\\\"")
-            args.append("-metadata \(key)=\"\(escaped)\"")
+            args.append("-metadata " + shellQuotedForPostprocessor("\(key)=\(trimmed)"))
         }
 
         append("title", metadata.title)
@@ -674,12 +688,78 @@ public enum YouTubeAudioImportService {
         clearQuarantine(at: managedURL)
     }
 
+    /// Fetches a URL synchronously with a timeout. `Data(contentsOf:)` has no
+    /// timeout at all, so a stalled connection would pin the calling task for
+    /// as long as the socket stayed open.
+    private static func fetch(_ url: URL, timeout: TimeInterval = 60) throws -> Data {
+        var request = URLRequest(url: url)
+        request.timeoutInterval = timeout
+        request.setValue("EZLibrary", forHTTPHeaderField: "User-Agent")
+
+        // The completion handler runs on a URLSession queue, so the result
+        // crosses a concurrency boundary — it lands in a box rather than in
+        // captured vars, the same way ProcessRunner drains its pipes.
+        final class Box: @unchecked Sendable {
+            var payload: Data?
+            var failure: Error?
+        }
+        let box = Box()
+        let semaphore = DispatchSemaphore(value: 0)
+
+        URLSession.shared.dataTask(with: request) { data, _, error in
+            box.payload = data
+            box.failure = error
+            semaphore.signal()
+        }.resume()
+
+        guard semaphore.wait(timeout: .now() + timeout + 5) == .success else {
+            throw ImportError.commandFailed("The download timed out.")
+        }
+        if let failure = box.failure { throw failure }
+        guard let payload = box.payload else {
+            throw ImportError.commandFailed("The download returned no data.")
+        }
+        return payload
+    }
+
+    /// The checksum manifest published alongside every yt-dlp release.
+    private static let ytDLPChecksumsURL = URL(string: "https://github.com/yt-dlp/yt-dlp/releases/latest/download/SHA2-256SUMS")!
+
+    /// Pulls the expected SHA-256 for `yt-dlp_macos` out of the release's
+    /// `SHA2-256SUMS` manifest, whose lines read `<hex>  <filename>`.
+    static func expectedYTDLPDigest(fromChecksumManifest manifest: String, filename: String = "yt-dlp_macos") -> String? {
+        for line in manifest.split(separator: "\n") {
+            let fields = line.split(separator: " ", omittingEmptySubsequences: true)
+            guard fields.count >= 2, String(fields[fields.count - 1]) == filename else { continue }
+            let digest = String(fields[0]).lowercased()
+            guard digest.count == 64, digest.allSatisfy({ $0.isHexDigit }) else { return nil }
+            return digest
+        }
+        return nil
+    }
+
     private static func downloadLatestYTDLP(to destination: URL) throws {
-        let data = try Data(contentsOf: ytDLPMacOSDownloadURL)
+        let data = try fetch(ytDLPMacOSDownloadURL)
         // The real binary is several MB; a tiny payload means an error page.
         guard data.count > 1_000_000 else {
             throw ImportError.commandFailed("Downloaded yt-dlp was unexpectedly small.")
         }
+
+        // This binary is about to be marked executable, have its quarantine
+        // flag cleared, and be run. Check it against the digest yt-dlp
+        // publishes with the release rather than trusting whatever arrived —
+        // the size check above only catches an error page, not a substitution.
+        if let manifest = try? fetch(ytDLPChecksumsURL),
+           let manifestText = String(data: manifest, encoding: .utf8),
+           let expected = expectedYTDLPDigest(fromChecksumManifest: manifestText) {
+            let actual = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+            guard actual == expected else {
+                throw ImportError.commandFailed(
+                    "The downloaded yt-dlp didn't match the checksum published with the release, so it wasn't installed."
+                )
+            }
+        }
+
         let fileManager = FileManager.default
         if fileManager.fileExists(atPath: destination.path) {
             try fileManager.removeItem(at: destination)

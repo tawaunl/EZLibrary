@@ -255,12 +255,33 @@ public enum ClaudeAPIClient {
 
     // MARK: - Credentials
 
+    /// Keychain account holding the Anthropic key.
+    public static let apiKeyCredentialAccount = "anthropic-api-key"
+
+    /// The saved key only (no environment fallback), for showing in Settings.
+    public static func savedAPIKey(
+        userDefaults: UserDefaults = .standard,
+        credentials: any SecureCredentialStore = AppCredentials.keychain
+    ) -> String? {
+        AppCredentials.value(
+            account: apiKeyCredentialAccount,
+            legacyDefaultsKey: apiKeyDefaultsKey,
+            store: credentials,
+            userDefaults: userDefaults
+        )
+    }
+
     public static func apiKey(
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        userDefaults: UserDefaults = .standard
+        userDefaults: UserDefaults = .standard,
+        credentials: any SecureCredentialStore = AppCredentials.keychain
     ) -> String? {
-        if let value = userDefaults.string(forKey: apiKeyDefaultsKey)?
-            .trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty {
+        if let value = AppCredentials.value(
+            account: apiKeyCredentialAccount,
+            legacyDefaultsKey: apiKeyDefaultsKey,
+            store: credentials,
+            userDefaults: userDefaults
+        ) {
             return value
         }
         if let value = environment[apiKeyEnvironmentKey]?
@@ -270,11 +291,27 @@ public enum ClaudeAPIClient {
         return nil
     }
 
+    /// Saves (or clears, when `nil`/blank) the Anthropic key.
+    public static func setAPIKey(
+        _ value: String?,
+        userDefaults: UserDefaults = .standard,
+        credentials: any SecureCredentialStore = AppCredentials.keychain
+    ) {
+        AppCredentials.store(
+            value,
+            account: apiKeyCredentialAccount,
+            legacyDefaultsKey: apiKeyDefaultsKey,
+            store: credentials,
+            userDefaults: userDefaults
+        )
+    }
+
     public static func hasAPIKey(
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        userDefaults: UserDefaults = .standard
+        userDefaults: UserDefaults = .standard,
+        credentials: any SecureCredentialStore = AppCredentials.keychain
     ) -> Bool {
-        apiKey(environment: environment, userDefaults: userDefaults) != nil
+        apiKey(environment: environment, userDefaults: userDefaults, credentials: credentials) != nil
     }
 
     /// The model chosen in Settings, defaulting to Opus 5.

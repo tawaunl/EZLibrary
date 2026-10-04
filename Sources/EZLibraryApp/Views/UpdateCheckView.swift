@@ -97,6 +97,15 @@ final class UpdateCheckViewModel: ObservableObject {
             NSWorkspace.shared.open(release.releasePageURL)
             return
         }
+        // The downloaded package is installed as root, so refuse anything that
+        // isn't being served over HTTPS from GitHub before a byte is fetched.
+        do {
+            try InstallerPackageVerifier.validateDownloadURL(url)
+        } catch {
+            let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            installPhase = .failed(message)
+            return
+        }
         installPhase = .downloading(0)
         Task { await performInstall(from: url) }
     }
@@ -123,6 +132,9 @@ final class UpdateCheckViewModel: ObservableObject {
     /// relaunches EZLibrary automatically once the install finishes.
     func installAndRelaunch(pkgURL: URL) {
         do {
+            // `installer` accepts unsigned packages, so this is the only thing
+            // standing between a tampered download and a root install.
+            try InstallerPackageVerifier.verifySignature(ofPackageAt: pkgURL)
             try AppUpdateInstaller.installAndRelaunch(pkgURL: pkgURL)
         } catch {
             let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
@@ -148,6 +160,13 @@ final class UpdateCheckViewModel: ObservableObject {
 
     /// Opens the downloaded installer in the standard macOS Installer (no auto-relaunch).
     func openInstallerManually(pkgURL: URL) {
+        do {
+            try InstallerPackageVerifier.verifySignature(ofPackageAt: pkgURL)
+        } catch {
+            let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            installPhase = .failed(message)
+            return
+        }
         NSWorkspace.shared.open(pkgURL)
     }
 }
@@ -161,7 +180,12 @@ enum AppUpdateInstaller {
         let pid = ProcessInfo.processInfo.processIdentifier
 
         // $PKG / $APP / $PID are shell variables (not Swift interpolation).
-        // The doubled backslashes escape the quotes for the osascript argument.
+        //
+        // The package path is handed to osascript through the environment and
+        // re-quoted with AppleScript's `quoted form of`, never interpolated
+        // into the script text. This command runs as root, so a path holding a
+        // quote must not be able to close the string and append a second
+        // command — `quoted form of` is what guarantees it can't.
         //
         // The worker logs every step to ~/Library/Logs/EZLibrary-Update.log and
         // redirects its own stdio there (`exec`) so it never inherits — and then
@@ -188,7 +212,8 @@ enum AppUpdateInstaller {
         done
         echo "App is no longer running; starting install."
 
-        if /usr/bin/osascript -e "do shell script \\"/usr/sbin/installer -pkg '$PKG' -target /\\" with administrator privileges"; then
+        export EZ_UPDATE_PKG="$PKG"
+        if /usr/bin/osascript -e 'do shell script "/usr/sbin/installer -pkg " & quoted form of (system attribute "EZ_UPDATE_PKG") & " -target /" with administrator privileges'; then
           echo "Scripted install succeeded."
         else
           echo "Scripted install failed or was cancelled; opening the installer UI as a fallback."

@@ -21,6 +21,11 @@ final class EZLibraryAppDelegate: NSObject, NSApplicationDelegate {
         // so a key saved by one build is invisible to another until adopted.
         LegacyDefaultsMigration.migrateIfNeeded()
 
+        // Then move any API keys still sitting in cleartext in the preferences
+        // plist into the keychain. Done once here rather than as a side effect
+        // of reading a key, so a read stays a read.
+        AppCredentials.migrateLegacyCredentials()
+
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
 

@@ -1352,17 +1352,64 @@ public enum OnlineTrackMetadataLookupService {
         return nil
     }
 
-    private static func discogsToken(
+    /// Keychain account holding the Discogs token.
+    public static let discogsTokenCredentialAccount = "discogs-token"
+
+    /// The saved token only (no environment fallback), for showing in Settings.
+    public static func savedDiscogsToken(
+        userDefaults: UserDefaults = .standard,
+        credentials: any SecureCredentialStore = AppCredentials.keychain
+    ) -> String? {
+        AppCredentials.value(
+            account: discogsTokenCredentialAccount,
+            legacyDefaultsKey: discogsTokenDefaultsKey,
+            store: credentials,
+            userDefaults: userDefaults
+        )
+    }
+
+    /// The saved key only (no environment fallback), for showing in Settings.
+    public static func savedYouTubeAPIKey(
+        userDefaults: UserDefaults = .standard,
+        credentials: any SecureCredentialStore = AppCredentials.keychain
+    ) -> String? {
+        AppCredentials.value(
+            account: youTubeAPIKeyCredentialAccount,
+            legacyDefaultsKey: youTubeAPIKeyDefaultsKey,
+            store: credentials,
+            userDefaults: userDefaults
+        )
+    }
+
+    /// Saves (or clears, when `nil`/blank) the Discogs token.
+    public static func setDiscogsToken(
+        _ value: String?,
+        userDefaults: UserDefaults = .standard,
+        credentials: any SecureCredentialStore = AppCredentials.keychain
+    ) {
+        AppCredentials.store(
+            value,
+            account: discogsTokenCredentialAccount,
+            legacyDefaultsKey: discogsTokenDefaultsKey,
+            store: credentials,
+            userDefaults: userDefaults
+        )
+    }
+
+    static func discogsToken(
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        userDefaults: UserDefaults = .standard
+        userDefaults: UserDefaults = .standard,
+        credentials: any SecureCredentialStore = AppCredentials.keychain
     ) -> String? {
         if let token = (environment[discogsTokenEnvironmentKey] ?? environment[legacyDiscogsTokenEnvironmentKey])?.trimmingCharacters(in: .whitespacesAndNewlines), !token.isEmpty {
             return token
         }
-        if let token = userDefaults.string(forKey: discogsTokenDefaultsKey)?.trimmingCharacters(in: .whitespacesAndNewlines), !token.isEmpty {
-            return token
-        }
-        return nil
+        return AppCredentials.value(
+            account: discogsTokenCredentialAccount,
+            legacyDefaultsKey: discogsTokenDefaultsKey,
+            store: credentials,
+            userDefaults: userDefaults
+        )
     }
 
     private static func splitDiscogsTitle(_ rawTitle: String?) -> (artist: String?, album: String?) {
@@ -1634,19 +1681,39 @@ public enum OnlineTrackMetadataLookupService {
         }
     }
 
+    /// Keychain account holding the YouTube Data API key.
+    public static let youTubeAPIKeyCredentialAccount = "youtube-api-key"
+
+    /// Saves (or clears, when `nil`/blank) the YouTube Data API key.
+    public static func setYouTubeAPIKey(
+        _ value: String?,
+        userDefaults: UserDefaults = .standard,
+        credentials: any SecureCredentialStore = AppCredentials.keychain
+    ) {
+        AppCredentials.store(
+            value,
+            account: youTubeAPIKeyCredentialAccount,
+            legacyDefaultsKey: youTubeAPIKeyDefaultsKey,
+            store: credentials,
+            userDefaults: userDefaults
+        )
+    }
+
     static func youTubeAPIKey(
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        userDefaults: UserDefaults = .standard
+        userDefaults: UserDefaults = .standard,
+        credentials: any SecureCredentialStore = AppCredentials.keychain
     ) -> String? {
         if let key = (environment[youTubeAPIKeyEnvironmentKey] ?? environment[legacyYouTubeAPIKeyEnvironmentKey])?
             .trimmingCharacters(in: .whitespacesAndNewlines), !key.isEmpty {
             return key
         }
-        if let key = userDefaults.string(forKey: youTubeAPIKeyDefaultsKey)?
-            .trimmingCharacters(in: .whitespacesAndNewlines), !key.isEmpty {
-            return key
-        }
-        return nil
+        return AppCredentials.value(
+            account: youTubeAPIKeyCredentialAccount,
+            legacyDefaultsKey: youTubeAPIKeyDefaultsKey,
+            store: credentials,
+            userDefaults: userDefaults
+        )
     }
 
     // MARK: - Genre inference from free text

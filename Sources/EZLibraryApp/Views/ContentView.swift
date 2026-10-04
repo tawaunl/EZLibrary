@@ -1206,11 +1206,11 @@ private struct AppSettingsSheet: View {
 
             HStack {
                 Button("Clear") {
-                    UserDefaults.standard.removeObject(forKey: OnlineTrackMetadataLookupService.discogsTokenDefaultsKey)
-                    UserDefaults.standard.removeObject(forKey: OnlineTrackMetadataLookupService.youTubeAPIKeyDefaultsKey)
-                    UserDefaults.standard.removeObject(forKey: AudioFingerprintService.tokenDefaultsKey)
-                    UserDefaults.standard.removeObject(forKey: ClaudeAPIClient.apiKeyDefaultsKey)
-                    UserDefaults.standard.removeObject(forKey: OpenAICompatibleClient.apiKeyDefaultsKey)
+                    OnlineTrackMetadataLookupService.setDiscogsToken(nil)
+                    OnlineTrackMetadataLookupService.setYouTubeAPIKey(nil)
+                    AudioFingerprintService.setToken(nil)
+                    ClaudeAPIClient.setAPIKey(nil)
+                    OpenAICompatibleClient.setAPIKey(nil)
                     discogsTokenInput = ""
                     youTubeKeyInput = ""
                     acoustIDKeyInput = ""
@@ -1231,30 +1231,12 @@ private struct AppSettingsSheet: View {
                     let acoustIDTrimmed = acoustIDKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
                     let anthropicTrimmed = anthropicKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
 
-                    if discogsTrimmed.isEmpty {
-                        UserDefaults.standard.removeObject(forKey: OnlineTrackMetadataLookupService.discogsTokenDefaultsKey)
-                    } else {
-                        UserDefaults.standard.set(discogsTrimmed, forKey: OnlineTrackMetadataLookupService.discogsTokenDefaultsKey)
-                    }
+                    OnlineTrackMetadataLookupService.setDiscogsToken(discogsTrimmed)
 
                     let youTubeTrimmed = youTubeKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if youTubeTrimmed.isEmpty {
-                        UserDefaults.standard.removeObject(forKey: OnlineTrackMetadataLookupService.youTubeAPIKeyDefaultsKey)
-                    } else {
-                        UserDefaults.standard.set(youTubeTrimmed, forKey: OnlineTrackMetadataLookupService.youTubeAPIKeyDefaultsKey)
-                    }
-
-                    if acoustIDTrimmed.isEmpty {
-                        UserDefaults.standard.removeObject(forKey: AudioFingerprintService.tokenDefaultsKey)
-                    } else {
-                        UserDefaults.standard.set(acoustIDTrimmed, forKey: AudioFingerprintService.tokenDefaultsKey)
-                    }
-
-                    if anthropicTrimmed.isEmpty {
-                        UserDefaults.standard.removeObject(forKey: ClaudeAPIClient.apiKeyDefaultsKey)
-                    } else {
-                        UserDefaults.standard.set(anthropicTrimmed, forKey: ClaudeAPIClient.apiKeyDefaultsKey)
-                    }
+                    OnlineTrackMetadataLookupService.setYouTubeAPIKey(youTubeTrimmed)
+                    AudioFingerprintService.setToken(acoustIDTrimmed)
+                    ClaudeAPIClient.setAPIKey(anthropicTrimmed)
 
                     statusMessage = "API tokens saved."
                 }
@@ -1266,10 +1248,12 @@ private struct AppSettingsSheet: View {
         .frame(width: 560, height: 520)
         .onAppear {
             initializeFeatureDefaultsIfNeeded()
-            discogsTokenInput = UserDefaults.standard.string(forKey: OnlineTrackMetadataLookupService.discogsTokenDefaultsKey) ?? ""
-            youTubeKeyInput = UserDefaults.standard.string(forKey: OnlineTrackMetadataLookupService.youTubeAPIKeyDefaultsKey) ?? ""
-            acoustIDKeyInput = UserDefaults.standard.string(forKey: AudioFingerprintService.tokenDefaultsKey) ?? ""
-            anthropicKeyInput = UserDefaults.standard.string(forKey: ClaudeAPIClient.apiKeyDefaultsKey) ?? ""
+            // Reads the keychain, falling back to a not-yet-migrated plist
+            // value. Launch does the migration; this is only a read.
+            discogsTokenInput = OnlineTrackMetadataLookupService.savedDiscogsToken() ?? ""
+            youTubeKeyInput = OnlineTrackMetadataLookupService.savedYouTubeAPIKey() ?? ""
+            acoustIDKeyInput = AudioFingerprintService.savedToken() ?? ""
+            anthropicKeyInput = ClaudeAPIClient.savedAPIKey() ?? ""
         }
     }
 
@@ -1363,8 +1347,7 @@ private struct CloudModelProviderSection: View {
             }
         }
         .onAppear {
-            compatibleKeyInput = UserDefaults.standard
-                .string(forKey: OpenAICompatibleClient.apiKeyDefaultsKey) ?? ""
+            compatibleKeyInput = OpenAICompatibleClient.savedAPIKey() ?? ""
         }
     }
 
@@ -1470,11 +1453,7 @@ private struct CloudModelProviderSection: View {
 
     private func saveAndValidateCompatible() {
         let trimmedKey = compatibleKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmedKey.isEmpty {
-            UserDefaults.standard.removeObject(forKey: OpenAICompatibleClient.apiKeyDefaultsKey)
-        } else {
-            UserDefaults.standard.set(trimmedKey, forKey: OpenAICompatibleClient.apiKeyDefaultsKey)
-        }
+        OpenAICompatibleClient.setAPIKey(trimmedKey)
 
         guard let configuration = OpenAICompatibleClient.configuration() else {
             statusMessage = "Enter a model name, and an API key unless the model runs on this Mac."

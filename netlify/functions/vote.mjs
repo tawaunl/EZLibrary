@@ -47,7 +47,13 @@ export default async (request) => {
     return json({ voted: true, reactionId: reaction.id }, 200, origin);
   }
 
-  let reactionId = payload.reactionId;
+  /* Coerce to a positive integer before it reaches the API path. The browser
+     supplies this value, and an unchecked string would let it steer the DELETE
+     at some other GitHub endpoint via path traversal. */
+  let reactionId = Number.isInteger(payload.reactionId)
+    ? payload.reactionId
+    : parseInt(payload.reactionId, 10);
+  if (!Number.isFinite(reactionId) || reactionId <= 0) reactionId = null;
   if (!reactionId) {
     const listResponse = await gh(
       "/repos/" + REPO + "/issues/" + number + "/reactions?content=%2B1&per_page=100",

@@ -246,11 +246,48 @@ public enum AudioFingerprintService {
         return Int(releaseDate.prefix(4))
     }
 
-    private static func tokenWithSource(
+    /// Keychain account holding the AcoustID key.
+    public static let tokenCredentialAccount = "acoustid-api-key"
+
+    /// The saved key only (no environment fallback), for showing in Settings.
+    public static func savedToken(
+        userDefaults: UserDefaults = .standard,
+        credentials: any SecureCredentialStore = AppCredentials.keychain
+    ) -> String? {
+        AppCredentials.value(
+            account: tokenCredentialAccount,
+            legacyDefaultsKey: tokenDefaultsKey,
+            store: credentials,
+            userDefaults: userDefaults
+        )
+    }
+
+    /// Saves (or clears, when `nil`/blank) the AcoustID key.
+    public static func setToken(
+        _ value: String?,
+        userDefaults: UserDefaults = .standard,
+        credentials: any SecureCredentialStore = AppCredentials.keychain
+    ) {
+        AppCredentials.store(
+            value,
+            account: tokenCredentialAccount,
+            legacyDefaultsKey: tokenDefaultsKey,
+            store: credentials,
+            userDefaults: userDefaults
+        )
+    }
+
+    static func tokenWithSource(
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        userDefaults: UserDefaults = .standard
+        userDefaults: UserDefaults = .standard,
+        credentials: any SecureCredentialStore = AppCredentials.keychain
     ) -> (value: String, source: String)? {
-        if let value = userDefaults.string(forKey: tokenDefaultsKey)?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty {
+        if let value = AppCredentials.value(
+            account: tokenCredentialAccount,
+            legacyDefaultsKey: tokenDefaultsKey,
+            store: credentials,
+            userDefaults: userDefaults
+        ) {
             return (value, "saved key")
         }
         if let value = (environment[tokenEnvironmentKey] ?? environment[legacyTokenEnvironmentKey])?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty {

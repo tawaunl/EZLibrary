@@ -16,6 +16,10 @@ private func makeDefaults() -> (UserDefaults, String) {
     (TestDefaults.inMemory(), "")
 }
 
+/// Saved keys live in the keychain now, so tests supply their own store —
+/// the default one is the real login keychain.
+private func makeCredentials() -> InMemoryCredentialStore { InMemoryCredentialStore() }
+
 @Test func baseURLsAreNormalisedIntoACompletionsEndpoint() throws {
     #expect(try OpenAICompatibleClient.completionsURL(from: "https://api.openai.com/v1").absoluteString
             == "https://api.openai.com/v1/chat/completions")
@@ -50,7 +54,7 @@ private func makeDefaults() -> (UserDefaults, String) {
     defaults.set("http://localhost:11434/v1", forKey: OpenAICompatibleClient.baseURLDefaultsKey)
     defaults.set("llama3.1", forKey: OpenAICompatibleClient.modelDefaultsKey)
 
-    let configuration = OpenAICompatibleClient.configuration(environment: [:], userDefaults: defaults)
+    let configuration = OpenAICompatibleClient.configuration(environment: [:], userDefaults: defaults, credentials: makeCredentials())
     #expect(configuration?.model == "llama3.1")
     #expect(configuration?.apiKey.isEmpty == true)
 }
@@ -61,16 +65,17 @@ private func makeDefaults() -> (UserDefaults, String) {
     defaults.set("https://api.openai.com/v1", forKey: OpenAICompatibleClient.baseURLDefaultsKey)
     defaults.set("gpt-5", forKey: OpenAICompatibleClient.modelDefaultsKey)
 
-    #expect(OpenAICompatibleClient.configuration(environment: [:], userDefaults: defaults) == nil)
+    #expect(OpenAICompatibleClient.configuration(environment: [:], userDefaults: defaults, credentials: makeCredentials()) == nil)
 }
 
 @Test func aMissingModelNameMeansNotConfigured() {
     let (defaults, _) = makeDefaults()
 
+    let store = makeCredentials()
     defaults.set("https://api.openai.com/v1", forKey: OpenAICompatibleClient.baseURLDefaultsKey)
-    defaults.set("sk-test", forKey: OpenAICompatibleClient.apiKeyDefaultsKey)
+    OpenAICompatibleClient.setAPIKey("sk-test", userDefaults: defaults, credentials: store)
 
-    #expect(OpenAICompatibleClient.configuration(environment: [:], userDefaults: defaults) == nil)
+    #expect(OpenAICompatibleClient.configuration(environment: [:], userDefaults: defaults, credentials: makeCredentials()) == nil)
 }
 
 @Test func theEnvironmentSuppliesTheKeyWhenNoneIsSaved() {
@@ -81,7 +86,8 @@ private func makeDefaults() -> (UserDefaults, String) {
 
     let configuration = OpenAICompatibleClient.configuration(
         environment: [OpenAICompatibleClient.apiKeyEnvironmentKey: "sk-env"],
-        userDefaults: defaults
+        userDefaults: defaults,
+        credentials: makeCredentials()
     )
     #expect(configuration?.apiKey == "sk-env")
 }

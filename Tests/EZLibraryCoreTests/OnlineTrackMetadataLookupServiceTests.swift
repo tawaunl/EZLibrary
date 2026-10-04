@@ -135,24 +135,27 @@ import Testing
         WikipediaSearchPage(key: "X", title: "X", description: nil, excerpt: nil)) == false)
 }
 
-@Test func youTubeAPIKeyResolvesFromEnvironmentThenDefaults() {
-    let defaults = UserDefaults(suiteName: "youtube-key-\(UUID().uuidString)")!
+@Test func youTubeAPIKeyResolvesFromEnvironmentThenSavedKey() {
+    // In-memory defaults and an in-memory credential store: a named suite
+    // leaves a plist behind, and the default store is the real keychain.
+    let defaults = TestDefaults.inMemory()
+    let store = InMemoryCredentialStore()
 
     // The environment wins when set.
     #expect(OnlineTrackMetadataLookupService.youTubeAPIKey(
         environment: [OnlineTrackMetadataLookupService.youTubeAPIKeyEnvironmentKey: "env-key"],
-        userDefaults: defaults
+        userDefaults: defaults,
+        credentials: store
     ) == "env-key")
 
     // Falls back to a value saved in settings.
-    defaults.set("saved-key", forKey: OnlineTrackMetadataLookupService.youTubeAPIKeyDefaultsKey)
+    OnlineTrackMetadataLookupService.setYouTubeAPIKey("saved-key", userDefaults: defaults, credentials: store)
     #expect(OnlineTrackMetadataLookupService.youTubeAPIKey(
-        environment: [:], userDefaults: defaults) == "saved-key")
+        environment: [:], userDefaults: defaults, credentials: store) == "saved-key")
 
     // Nothing configured means no YouTube lookups.
-    let empty = UserDefaults(suiteName: "youtube-empty-\(UUID().uuidString)")!
     #expect(OnlineTrackMetadataLookupService.youTubeAPIKey(
-        environment: [:], userDefaults: empty) == nil)
+        environment: [:], userDefaults: TestDefaults.inMemory(), credentials: InMemoryCredentialStore()) == nil)
 }
 
 @Test func inferReleaseYearReadsAYearFromText() {

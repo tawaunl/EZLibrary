@@ -137,14 +137,17 @@ private func body(
 
 @Test func apiKeyPrefersSavedValueThenEnvironment() {
     let defaults = TestDefaults.inMemory()
+    // Saved keys live in the keychain now, so tests supply their own store —
+    // the default one is the real login keychain.
+    let store = InMemoryCredentialStore()
 
-    #expect(ClaudeAPIClient.apiKey(environment: [:], userDefaults: defaults) == nil)
+    #expect(ClaudeAPIClient.apiKey(environment: [:], userDefaults: defaults, credentials: store) == nil)
 
     let environment = [ClaudeAPIClient.apiKeyEnvironmentKey: "sk-env"]
-    #expect(ClaudeAPIClient.apiKey(environment: environment, userDefaults: defaults) == "sk-env")
+    #expect(ClaudeAPIClient.apiKey(environment: environment, userDefaults: defaults, credentials: store) == "sk-env")
 
-    defaults.set("  sk-saved  ", forKey: ClaudeAPIClient.apiKeyDefaultsKey)
-    #expect(ClaudeAPIClient.apiKey(environment: environment, userDefaults: defaults) == "sk-saved")
+    ClaudeAPIClient.setAPIKey("  sk-saved  ", userDefaults: defaults, credentials: store)
+    #expect(ClaudeAPIClient.apiKey(environment: environment, userDefaults: defaults, credentials: store) == "sk-saved")
 }
 
 @Test func selectedModelFallsBackToOpusForUnknownValues() {
