@@ -110,6 +110,20 @@ public enum YouTubeAudioImportService {
         public let webpageURL: URL?
         public let uploadDate: String
         public let description: String
+
+        /// The year the video was uploaded, from yt-dlp's `YYYYMMDD` upload
+        /// date, or nil when it has none. This is the year a YouTube
+        /// download is tagged with: a database match's year belongs to that
+        /// match's release, which is often not the upload that was ripped.
+        public var uploadYear: Int? {
+            Self.year(fromUploadDate: uploadDate)
+        }
+
+        static func year(fromUploadDate uploadDate: String) -> Int? {
+            let digits = uploadDate.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard digits.count >= 4, let year = Int(digits.prefix(4)), (1900...2100).contains(year) else { return nil }
+            return year
+        }
     }
 
     public struct SearchResult: Identifiable, Sendable, Hashable {

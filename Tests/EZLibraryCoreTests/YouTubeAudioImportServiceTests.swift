@@ -26,3 +26,17 @@ import Testing
     #expect(!YouTubeAudioImportService.isLikelyMusicVideo(title: "Artist - Song (Someone Remix)"))
     #expect(!YouTubeAudioImportService.isLikelyMusicVideo(title: "Artist - Song (Lyric Video)"))
 }
+
+// MARK: - Upload year
+
+/// A YouTube download is tagged with the year it was uploaded, read from
+/// yt-dlp's `YYYYMMDD` upload date.
+@Test func theUploadYearIsReadFromYTDLPsUploadDate() {
+    typealias Info = YouTubeAudioImportService.VideoInfo
+    #expect(Info.year(fromUploadDate: "20190314") == 2019)
+    #expect(Info.year(fromUploadDate: " 20240101\n") == 2024)
+    // yt-dlp prints "NA" when there is no date; that is no year, not year 0.
+    #expect(Info.year(fromUploadDate: "NA") == nil)
+    #expect(Info.year(fromUploadDate: "") == nil)
+    #expect(Info.year(fromUploadDate: "0000") == nil)
+}

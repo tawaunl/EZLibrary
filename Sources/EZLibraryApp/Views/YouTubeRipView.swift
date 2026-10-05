@@ -749,7 +749,8 @@ struct YouTubeRipView: View {
                                             applyLookupCandidate(candidate)
                                         }
                                         .controlSize(.small)
-                                        .help("Apply all ID3 fields from this match to the download.")
+                                        .help("Apply all ID3 fields from this match to the download. "
+                                            + "The year stays the video's upload year when it has one.")
                                     }
 
                                     HStack(spacing: 6) {
@@ -950,11 +951,7 @@ struct YouTubeRipView: View {
                     id3Artist = parsed.artist
                     id3Album = ""
                     id3Comment = ""
-                    if info.uploadDate.count >= 4 {
-                        id3Year = String(info.uploadDate.prefix(4))
-                    } else {
-                        id3Year = ""
-                    }
+                    id3Year = info.uploadYear.map(String.init) ?? ""
                     lookupResults = []
                     lookupErrorMessage = nil
                     errorMessage = nil
@@ -1271,7 +1268,11 @@ struct YouTubeRipView: View {
         if !candidate.genre.isEmpty {
             id3Genre = candidate.genre
         }
-        if let year = candidate.year {
+        // The upload year wins over the match's: the match's year is its own
+        // release's, and the file being tagged is this upload. A match's year
+        // is used only when the video has no upload date; its "Year" button
+        // still applies it on purpose.
+        if let year = loadedInfo?.uploadYear ?? candidate.year {
             id3Year = String(year)
         }
         if let bpm = candidate.bpm {
