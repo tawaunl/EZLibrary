@@ -9,6 +9,23 @@ version (`CFBundleShortVersionString.CFBundleVersion`) and are used verbatim by
 > the highest priority — see [SECURITY.md](../SECURITY.md). This changelog is kept
 > up to date so you can see exactly what changed and when.
 
+## 1.0.9
+
+### Record-pool files import with clean tags
+- Some pools write the whole filename into the title tag
+  (`Time - Edit - Main - Hot Since 82, Kuuda - 124 - 10A`). EZLibrary now
+  recognises that pattern and imports the real title, keeping cuts like
+  Extended as `(Extended)`.
+- Pool names left in tags — "ID By Rivoli", "BPM Supreme", "DJcity", "Beat
+  Junkies", "MyMP3Pool" and others — are removed from the album, from the end of
+  the title, and from comments (promo lines such as "Downloaded from …").
+- BPM and key stored in the file's own tags are now read on import instead of
+  being guessed from the filename.
+
+### Smaller changes
+- Release year is picked up from a YouTube video's upload date when importing.
+- The Crates tab list is tighter, matching the Tracks & Tags tab.
+
 ## 1.0.8
 
 ### API keys now live in the macOS Keychain
