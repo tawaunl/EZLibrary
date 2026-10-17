@@ -320,9 +320,9 @@ public enum LibraryFolderSyncService {
             artist: nonEmpty(tags.artist) ?? guessed.artist,
             album: nonEmpty(tags.album) ?? guessed.album,
             genre: nonEmpty(tags.genre) ?? guessed.genre,
-            comment: "",
-            key: guessed.key,
-            bpm: guessed.bpm,
+            comment: nonEmpty(tags.comment) ?? "",
+            key: nonEmpty(tags.key) ?? guessed.key,
+            bpm: tags.bpm ?? guessed.bpm,
             year: tags.year ?? guessed.year
         )
 

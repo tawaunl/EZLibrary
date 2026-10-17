@@ -22,9 +22,13 @@ public enum AudioFileTagReader {
         public let album: String?
         public let genre: String?
         public let year: Int?
+        public let bpm: Double?
+        public let key: String?
+        public let comment: String?
 
         public var isEmpty: Bool {
             title == nil && artist == nil && album == nil && genre == nil && year == nil
+                && bpm == nil && key == nil && comment == nil
         }
 
         public init(
@@ -32,13 +36,19 @@ public enum AudioFileTagReader {
             artist: String?,
             album: String? = nil,
             genre: String? = nil,
-            year: Int? = nil
+            year: Int? = nil,
+            bpm: Double? = nil,
+            key: String? = nil,
+            comment: String? = nil
         ) {
             self.title = title
             self.artist = artist
             self.album = album
             self.genre = genre
             self.year = year
+            self.bpm = bpm
+            self.key = key
+            self.comment = comment
         }
     }
 
@@ -50,12 +60,29 @@ public enum AudioFileTagReader {
             // container — an ID3 `TDRC`/`TYER` frame surfaces only in the
             // format-specific list — so that is loaded separately.
             let formatSpecific = (try? await asset.load(.metadata)) ?? []
+            let artist = await stringValue(for: .commonKeyArtist, in: items)
+            // Some record pools write the whole filename into the title tag;
+            // repair it here so every caller sees the real title.
+            let title = await stringValue(for: .commonKeyTitle, in: items)
+                .map { PoolTitleCleaner.clean(title: $0, artist: artist) }
+                .map { PoolPlaceholderFilter.strippingTrailingPoolTag(from: $0) }
+            let bpm = await formatSpecificString(.id3MetadataBeatsPerMinute, in: formatSpecific)
+            let key = await formatSpecificString(.id3MetadataInitialKey, in: formatSpecific)
+            var comment = await formatSpecificString(.id3MetadataComments, in: formatSpecific)
+            if comment == nil {
+                comment = await formatSpecificString(.iTunesMetadataUserComment, in: formatSpecific)
+            }
             return Tags(
-                title: await stringValue(for: .commonKeyTitle, in: items),
-                artist: await stringValue(for: .commonKeyArtist, in: items),
-                album: await stringValue(for: .commonKeyAlbumName, in: items),
+                title: title,
+                artist: artist,
+                album: PoolPlaceholderFilter.cleanedTag(
+                    await stringValue(for: .commonKeyAlbumName, in: items)
+                ),
                 genre: await stringValue(for: .commonKeyType, in: items),
-                year: await yearValue(common: items, formatSpecific: formatSpecific)
+                year: await yearValue(common: items, formatSpecific: formatSpecific),
+                bpm: bpm.flatMap { Double($0) }.flatMap { $0 > 0 ? $0 : nil },
+                key: key,
+                comment: PoolPlaceholderFilter.cleanedComment(comment)
             )
         } catch {
             return Tags(title: nil, artist: nil)
@@ -97,6 +124,16 @@ public enum AudioFileTagReader {
         guard let raw, let match = raw.range(of: #"\d{4}"#, options: .regularExpression) else { return nil }
         guard let year = Int(raw[match]), (1000...9999).contains(year) else { return nil }
         return year
+    }
+
+    private static func formatSpecificString(
+        _ identifier: AVMetadataIdentifier,
+        in items: [AVMetadataItem]
+    ) async -> String? {
+        guard let item = AVMetadataItem.metadataItems(from: items, filteredByIdentifier: identifier).first,
+              let value = try? await item.load(.stringValue) else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     private static func stringValue(for key: AVMetadataKey, in items: [AVMetadataItem]) async -> String? {

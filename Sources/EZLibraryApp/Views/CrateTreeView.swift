@@ -312,8 +312,10 @@ struct CrateTreeView: View {
             }
             Spacer(minLength: 0)
         }
-            .padding(.vertical, 5)
-            .padding(.horizontal, 6)
+            // Just enough for the drop highlight to read; more than this made
+            // the list far looser than the Tracks & Tags tab's.
+            .padding(.vertical, 1)
+            .padding(.horizontal, 3)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 5)
