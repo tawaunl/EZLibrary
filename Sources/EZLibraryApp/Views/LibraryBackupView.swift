@@ -16,9 +16,14 @@ struct LibraryBackupView: View {
     @EnvironmentObject private var libraryService: LibraryService
     @EnvironmentObject private var backupJob: BackgroundBackupModel
 
-    @State private var destinationPath = ""
-    @State private var selectedMode: LibraryBackupService.BackupMode = .full
+    // Remembered across tab switches and launches; empty means "not chosen yet"
+    // and falls back to the home folder.
+    @AppStorage("LibraryBackupDestinationPath") private var destinationPath = ""
+    @AppStorage("LibraryBackupMode") private var selectedMode: LibraryBackupService.BackupMode = .full
     @State private var selectedCrateID: UUID?
+    // Crate IDs are regenerated on every library load, so the choice is
+    // remembered by the crate's file path (or name) instead.
+    @AppStorage("LibraryBackupCrateKey") private var savedCrateKey = ""
     @State private var preview: LibraryBackupPreview?
     @State private var previewTask: Task<Void, Never>?
     @State private var previewErrorMessage: String?
@@ -59,15 +64,11 @@ struct LibraryBackupView: View {
             if destinationPath.isEmpty {
                 destinationPath = FileManager.default.homeDirectoryForCurrentUser.path
             }
-            if selectedCrateID == nil {
-                selectedCrateID = availableCrates.first?.id
-            }
+            restoreCrateSelection()
             refreshPreview()
         }
         .onChange(of: availableCrates.count) {
-            if selectedCrateID == nil {
-                selectedCrateID = availableCrates.first?.id
-            }
+            restoreCrateSelection()
             refreshPreview()
         }
         // Reconfiguring the backup retires the last run's banner. This is done
@@ -83,8 +84,11 @@ struct LibraryBackupView: View {
             backupJob.clearResult()
             refreshPreview()
         }
-        .onChange(of: selectedCrateID) { old, _ in
+        .onChange(of: selectedCrateID) { old, new in
             if old != nil { backupJob.clearResult() }
+            if let crate = availableCrates.first(where: { $0.id == new }) {
+                savedCrateKey = Self.crateKey(crate)
+            }
             refreshPreview()
         }
         .onDisappear {
@@ -315,6 +319,20 @@ struct LibraryBackupView: View {
             return availableCrates.isEmpty || selectedCrateID == nil
         }
         return libraryService.tracks.isEmpty
+    }
+
+    private static func crateKey(_ crate: Crate) -> String {
+        crate.fileURL?.path ?? crate.name
+    }
+
+    /// Picks the remembered crate when it still exists, otherwise the first.
+    /// Leaves a valid current selection alone.
+    private func restoreCrateSelection() {
+        if let current = selectedCrateID, availableCrates.contains(where: { $0.id == current }) {
+            return
+        }
+        selectedCrateID = availableCrates.first { Self.crateKey($0) == savedCrateKey }?.id
+            ?? availableCrates.first?.id
     }
 
     private func refreshPreview() {
