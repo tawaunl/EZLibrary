@@ -79,6 +79,8 @@ struct EZLibraryApp: App {
     // Owned at the app level so an audio download batch keeps running (and
     // stays visible) when the user leaves the Download Audio view.
     @StateObject private var audioDownloadJobs = BackgroundAudioDownloadModel()
+    // Same for a library backup: leaving the Backup view must not lose it.
+    @StateObject private var backupJob = BackgroundBackupModel()
     @ObservedObject private var themeController = ThemeController.shared
 
     init() {
@@ -117,6 +119,7 @@ struct EZLibraryApp: App {
                 .environmentObject(backgroundTagJobs)
                 .environmentObject(tagVerificationRun)
                 .environmentObject(audioDownloadJobs)
+                .environmentObject(backupJob)
                 .sheet(isPresented: $updateChecker.isPresented) {
                     UpdateCheckView(viewModel: updateChecker)
                         .textSelection(.enabled)

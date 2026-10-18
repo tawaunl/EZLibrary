@@ -66,6 +66,7 @@ struct ContentView: View {
     @EnvironmentObject private var backgroundTagJobs: BackgroundTagJobsModel
     @EnvironmentObject private var tagVerificationRun: TagVerificationRunModel
     @EnvironmentObject private var audioDownloadJobs: BackgroundAudioDownloadModel
+    @EnvironmentObject private var backupJob: BackgroundBackupModel
     @ObservedObject var crateHierarchy: CrateHierarchyViewModel
     @ObservedObject var smartCrateHierarchy: CrateHierarchyViewModel
 
@@ -168,7 +169,7 @@ struct ContentView: View {
         }
     }
 
-    private func backgroundJobBar(text: String, showSection: SidebarSection = .tracks, onStop: @escaping () -> Void) -> some View {
+    private func backgroundJobBar(text: String, showSection: SidebarSection = .tracks, onStop: (() -> Void)?) -> some View {
         HStack(spacing: 8) {
             ProgressView().controlSize(.small)
             Text(text).font(.caption)
@@ -177,8 +178,10 @@ struct ContentView: View {
                 Button("Show") { selectedSection = showSection }
                     .controlSize(.small)
             }
-            Button("Stop", action: onStop)
-                .controlSize(.small)
+            if let onStop {
+                Button("Stop", action: onStop)
+                    .controlSize(.small)
+            }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
@@ -194,6 +197,16 @@ struct ContentView: View {
             backgroundJobBar(text: backgroundDownloadText, showSection: .youtubeRip) {
                 audioDownloadJobs.cancel()
             }
+        }
+    }
+
+    /// A backup keeps running when the user leaves the Backup view. It can't be
+    /// stopped part-way without leaving a half-copied folder, so there is no
+    /// Stop — just a way back.
+    @ViewBuilder
+    private var backgroundBackupBanner: some View {
+        if backupJob.isRunning, selectedSection != .backup {
+            backgroundJobBar(text: "Backing up your library in the background", showSection: .backup, onStop: nil)
         }
     }
 
@@ -218,6 +231,7 @@ struct ContentView: View {
             DependencyReadinessBanner(model: dependencyReadiness)
             backgroundTagJobsBanner
             backgroundDownloadBanner
+            backgroundBackupBanner
             HSplitView {
                 sidebar
                 middleContent

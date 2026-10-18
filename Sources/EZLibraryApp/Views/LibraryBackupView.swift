@@ -14,15 +14,19 @@ import EZLibraryCore
 
 struct LibraryBackupView: View {
     @EnvironmentObject private var libraryService: LibraryService
+    @EnvironmentObject private var backupJob: BackgroundBackupModel
 
     @State private var destinationPath = ""
     @State private var selectedMode: LibraryBackupService.BackupMode = .full
     @State private var selectedCrateID: UUID?
     @State private var preview: LibraryBackupPreview?
     @State private var previewTask: Task<Void, Never>?
-    @State private var isRunning = false
-    @State private var errorMessage: String?
-    @State private var successMessage: String?
+    @State private var previewErrorMessage: String?
+
+    // The backup job lives above this view so it survives a tab switch.
+    private var isRunning: Bool { backupJob.isRunning }
+    private var successMessage: String? { backupJob.successMessage }
+    private var errorMessage: String? { backupJob.errorMessage ?? previewErrorMessage }
 
     private var availableCrates: [Crate] {
         libraryService.crates + libraryService.smartCrates
@@ -66,13 +70,21 @@ struct LibraryBackupView: View {
             }
             refreshPreview()
         }
-        .onChange(of: destinationPath) {
+        // Reconfiguring the backup retires the last run's banner. This is done
+        // here rather than in refreshPreview, which also runs on appearance and
+        // would wipe a result that finished while the user was on another tab.
+        // The empty/nil -> default transitions are the view re-applying its
+        // defaults on appearance, not the user reconfiguring, so they keep it.
+        .onChange(of: destinationPath) { old, _ in
+            if !old.isEmpty { backupJob.clearResult() }
             refreshPreview()
         }
         .onChange(of: selectedMode) {
+            backupJob.clearResult()
             refreshPreview()
         }
-        .onChange(of: selectedCrateID) {
+        .onChange(of: selectedCrateID) { old, _ in
+            if old != nil { backupJob.clearResult() }
             refreshPreview()
         }
         .onDisappear {
@@ -91,7 +103,7 @@ struct LibraryBackupView: View {
 
             if let successMessage {
                 SuccessBanner(message: successMessage) {
-                    self.successMessage = nil
+                    backupJob.clearResult()
                 }
             }
 
@@ -308,12 +320,7 @@ struct LibraryBackupView: View {
     private func refreshPreview() {
         previewTask?.cancel()
 
-        // Clear any stale success/error banner from a previous run whenever the
-        // user reconfigures the backup (destination, mode, or crate). This is only
-        // triggered by input changes and view appearance — never after a completed
-        // backup — so it will not wipe a fresh success confirmation.
-        successMessage = nil
-        errorMessage = nil
+        previewErrorMessage = nil
 
         let destination = destinationURL
         let mode = selectedMode
@@ -345,51 +352,23 @@ struct LibraryBackupView: View {
                 guard !Task.isCancelled else { return }
                 await MainActor.run {
                     preview = nil
-                    errorMessage = error.localizedDescription
+                    previewErrorMessage = error.localizedDescription
                 }
             }
         }
     }
 
     private func runBackup() {
-        isRunning = true
-        errorMessage = nil
-        successMessage = nil
-
-        let destination = destinationURL
-        let mode = selectedMode
-        let crateSelection = selectedCrateID
-        let tracks = libraryService.tracks
-        let crates = availableCrates
-        let libraryDirectory = libraryService.libraryDirectory
-        let rootDirectory = libraryService.rootDirectory
-
-        Task {
-            do {
-                let result = try await Task.detached(priority: .userInitiated) {
-                    try LibraryBackupService.backup(
-                        destinationFolderURL: destination,
-                        mode: mode,
-                        tracks: tracks,
-                        crates: crates,
-                        selectedCrateID: crateSelection,
-                        libraryDirectory: libraryDirectory,
-                        rootDirectory: rootDirectory
-                    )
-                }.value
-
-                await MainActor.run {
-                    isRunning = false
-                    let note = result.note.map { " \($0)" } ?? ""
-                    successMessage = "Backup created at \(result.backupRootURL.path).\(note)"
-                }
-            } catch {
-                await MainActor.run {
-                    isRunning = false
-                    errorMessage = error.localizedDescription
-                }
-            }
-        }
+        previewErrorMessage = nil
+        backupJob.start(BackgroundBackupModel.Request(
+            destinationFolderURL: destinationURL,
+            mode: selectedMode,
+            tracks: libraryService.tracks,
+            crates: availableCrates,
+            selectedCrateID: selectedCrateID,
+            libraryDirectory: libraryService.libraryDirectory,
+            rootDirectory: libraryService.rootDirectory
+        ))
     }
 
     private func formatBytes(_ bytes: Int64) -> String {
