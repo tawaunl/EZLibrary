@@ -127,6 +127,7 @@ public enum CDJExportError: LocalizedError {
     case stickChanged
     case verificationFailed(String)
     case foreignLibrary
+    case exportInProgress
 
     public var errorDescription: String? {
         switch self {
@@ -149,6 +150,8 @@ public enum CDJExportError: LocalizedError {
         case .foreignLibrary:
             return "This stick already has a library that wasn't written by this app, "
                 + "such as one exported from rekordbox. Exporting would replace its playlists."
+        case .exportInProgress:
+            return "Another export to this stick is already running."
         }
     }
 
@@ -162,6 +165,7 @@ public enum CDJExportError: LocalizedError {
         case .stickChanged: return "Close anything else using the stick and export again."
         case .verificationFailed: return "Try again. If it keeps failing, report the message above."
         case .foreignLibrary: return "Choose \"Replace the library on this stick\" if that's what you want, or use another stick."
+        case .exportInProgress: return "Wait for it to finish, then export again."
         }
     }
 }
@@ -173,6 +177,9 @@ struct CDJExportEnvironment: Sendable {
     var freeBytes: @Sendable (URL) -> Int = {
         (try? $0.resourceValues(forKeys: [.volumeAvailableCapacityKey]).volumeAvailableCapacity) ?? Int.max
     }
+
+    /// Reads the cover image embedded in a track's file.
+    var artworkReader: @Sendable (URL) async -> Data? = { await CDJArtwork.embeddedImage(in: $0) }
 
     static let live = CDJExportEnvironment()
 }
@@ -316,7 +323,7 @@ public enum CDJSeratoExport {
             let converted = candidate.conversion != nil
             // A converted file is a different size, rate and bitrate from the original.
             let copySize = converted
-                ? CDJAudioConversion.estimatedSize(durationSeconds: candidate.probe?.durationSeconds ?? duration)
+                ? (candidate.conversion ?? .wav).estimatedBytes(durationSeconds: candidate.probe?.durationSeconds ?? duration)
                 : candidate.size
             items.append(CDJExportPlan.Item(
                 key: key, source: track.fileURL, sourceModified: candidate.modified,
@@ -326,13 +333,13 @@ public enum CDJSeratoExport {
                     artist: track.artist, album: track.album, genre: track.genre,
                     label: track.label, comment: track.comment, year: track.year ?? 0,
                     durationSeconds: Int(duration), bpm: track.bpm ?? 0,
-                    bitrate: converted ? CDJAudioConversion.bitrateKbps
-                        : Int(track.bitrate?.filter(\.isNumber) ?? "") ?? 0,
+                    bitrate: candidate.conversion?.bitrateKbps
+                        ?? Int(track.bitrate?.filter(\.isNumber) ?? "") ?? 0,
                     sampleRate: converted ? CDJAudioConversion.sampleRate
                         : Int(track.sampleRate?.filter(\.isNumber) ?? "") ?? Int(candidate.probe?.sampleRate ?? 44_100),
                     fileSize: copySize, trackNumber: track.trackNumber ?? 0, fileType: candidate.type,
                     stickPath: stickPath, dateAdded: dateString(track.dateAdded),
-                    analyzePath: analyzePath)))
+                    analyzePath: analyzePath, key: CDJMusicalKey.classicName(from: track.key) ?? "")))
             records.append(CDJExportManifest.TrackRecord(
                 key: key, id: id, stickPath: stickPath, analyzePath: analyzePath,
                 sourceSize: candidate.size, sourceModified: candidate.modified, copySize: copySize,
@@ -425,6 +432,8 @@ public enum CDJSeratoExport {
         let format = environment.detectFormat(volume)
         if let problem = format.blockingProblem { throw CDJExportError.unusableFormat(problem) }
 
+        let lock = try CDJExportLock(volume: volume)
+        defer { withExtendedLifetime(lock) {} }
         let publication = CDJExportPublication(volume: volume)
         let recovered = try publication.recoverInterruptedPublication()
 
@@ -481,7 +490,8 @@ public enum CDJSeratoExport {
                     let staged = publication.stagedURL(audioRelative)
                     try fileManager.createDirectory(at: staged.deletingLastPathComponent(), withIntermediateDirectories: true)
                     if let conversion = item.conversion {
-                        try CDJAudioConverter.convert(from: item.source, to: staged, as: conversion)
+                        try CDJAudioConverter.convert(
+                            from: item.source, to: staged, as: conversion, encoder: plan.options.mp3Encoder)
                     } else {
                         try fileManager.copyItem(at: item.source, to: staged)
                     }
@@ -503,6 +513,32 @@ public enum CDJSeratoExport {
                     if hadSeratoData { analysed += 1 } else { withoutAnalysis += 1 }
                 }
                 progress?(index + 1, plan.items.count)
+            }
+
+            // Cover art: one set of files per distinct image, numbered in track order.
+            let artwork = await CDJArtwork.collect(
+                for: plan.items.sorted { $0.export.id < $1.export.id }.map { ($0.export.id, $0.source) }, root: plan.root,
+                reader: environment.artworkReader)
+            for index in exports.indices {
+                guard let image = artwork.byTrack[exports[index].id] else { continue }
+                exports[index].artworkID = image.id
+                exports[index].artworkPath = image.path
+            }
+            var artworkFiles: [String] = []
+            for image in artwork.images {
+                for (relative, data) in image.files {
+                    artworkFiles.append(relative)
+                    // Cover files already on the stick with the same bytes needn't be rewritten.
+                    if let onStick = try? Data(contentsOf: volume.appendingPathComponent(relative)), onStick == data { continue }
+                    try writeStaged(data, relative: relative, in: publication)
+                    placements.append(relative)
+                }
+            }
+            manifest.artwork = artworkFiles
+            let deviceSettingsRelative = "\(plan.root)/\(CDJDeviceSettingsFile.fileName)"
+            if !fileManager.fileExists(atPath: volume.appendingPathComponent(deviceSettingsRelative).path) {
+                try writeStaged(CDJDeviceSettingsFile.data(), relative: deviceSettingsRelative, in: publication)
+                placements.append(deviceSettingsRelative)
             }
 
             let database = RekordboxPDBWriter.build(
@@ -530,6 +566,8 @@ public enum CDJSeratoExport {
             try writeStaged(try manifest.encoded(), relative: manifestRelative, in: publication)
 
             var removalPaths = removalRelativePaths(plan.removals)
+            // Cover files a previous export wrote that this one doesn't need.
+            removalPaths.formUnion(Set(plan.previous?.artwork ?? []).subtracting(artworkFiles))
             // A journal left beside a rebuilt database would carry stale pages.
             for leftover in ["-wal", "-shm"] where fileManager.fileExists(atPath: volume.appendingPathComponent(oneLibraryRelative + leftover).path) {
                 removalPaths.insert(oneLibraryRelative + leftover)

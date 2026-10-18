@@ -32,6 +32,11 @@ public struct CDJExportTrack: Sendable, Equatable {
     public var dateAdded: String
     /// `/PIONEER/USBANLZ/…/ANLZ0000.DAT` for this track, or empty when it has no analysis files.
     public var analyzePath: String
+    /// The classic key name (`Am`, `Db`…), or empty when the track has no known key.
+    public var key: String
+    /// The cover image's id in the artwork table, or 0 for none, and the path of its small file.
+    public var artworkID: UInt32
+    public var artworkPath: String
 
     public init(
         id: UInt32, title: String, artist: String = "", album: String = "",
@@ -39,7 +44,8 @@ public struct CDJExportTrack: Sendable, Equatable {
         year: Int = 0, durationSeconds: Int = 0, bpm: Double = 0,
         bitrate: Int = 0, sampleRate: Int = 44_100, fileSize: Int = 0,
         trackNumber: Int = 0, fileType: CDJFileType = .mp3,
-        stickPath: String, dateAdded: String = "", analyzePath: String = ""
+        stickPath: String, dateAdded: String = "", analyzePath: String = "",
+        key: String = "", artworkID: UInt32 = 0, artworkPath: String = ""
     ) {
         self.id = id
         self.title = title
@@ -59,6 +65,9 @@ public struct CDJExportTrack: Sendable, Equatable {
         self.stickPath = stickPath
         self.dateAdded = dateAdded
         self.analyzePath = analyzePath
+        self.key = key
+        self.artworkID = artworkID
+        self.artworkPath = artworkPath
     }
 
     public var fileName: String {
@@ -138,6 +147,7 @@ public enum RekordboxPDBWriter {
         static let colors: UInt32 = 6
         static let playlistTree: UInt32 = 7
         static let playlistEntries: UInt32 = 8
+        static let artwork: UInt32 = 13
         static let columns: UInt32 = 16
         static let categorySettings: UInt32 = 17
         static let sortSettings: UInt32 = 18
@@ -164,15 +174,20 @@ public enum RekordboxPDBWriter {
             let albumID = names.albumID(track.album, artistID: artistID)
             let genreID = names.genreID(track.genre)
             let labelID = names.labelID(track.label)
+            let keyID = names.keyID(track.key)
             trackRows.append(trackRow(
                 track, artistID: artistID, albumID: albumID, genreID: genreID,
-                labelID: labelID, libraryID: libraryID))
+                labelID: labelID, keyID: keyID, libraryID: libraryID))
         }
 
         var tableRows: [UInt32: [Data]] = [:]
         tableRows[TableType.tracks] = trackRows
         tableRows[TableType.genres] = names.genres.map { idNameRow(id: $0.id, name: $0.name) }
         tableRows[TableType.labels] = names.labels.map { idNameRow(id: $0.id, name: $0.name) }
+        tableRows[TableType.keys] = names.keys.map { keyRow(id: $0.id, name: $0.name) }
+        var artwork: [UInt32: String] = [:]
+        for track in tracks where track.artworkID != 0 { artwork[track.artworkID] = track.artworkPath }
+        tableRows[TableType.artwork] = artwork.sorted { $0.key < $1.key }.map { artworkRow(id: $0.key, path: $0.value) }
         tableRows[TableType.artists] = names.artists.map { artistRow(id: $0.id, name: $0.name) }
         tableRows[TableType.albums] = names.albums.map {
             albumRow(id: $0.id, artistID: $0.artistID, name: $0.name)
@@ -394,7 +409,7 @@ public enum RekordboxPDBWriter {
 
     private static func trackRow(
         _ track: CDJExportTrack, artistID: UInt32, albumID: UInt32, genreID: UInt32,
-        labelID: UInt32, libraryID: UInt32
+        labelID: UInt32, keyID: UInt32, libraryID: UInt32
     ) -> Data {
         let fixed = 0x5E
         var row = Data(count: fixed + 21 * 2)
@@ -405,6 +420,8 @@ public enum RekordboxPDBWriter {
         row.writeLE(UInt32(clamping: track.fileSize), at: 0x10)
         row.writeLE(track.id, at: 0x14)  // master content id
         row.writeLE(libraryID, at: 0x18)  // master db id
+        row.writeLE(track.artworkID, at: 0x1c)
+        row.writeLE(keyID, at: 0x20)
         row.writeLE(labelID, at: 0x28)
         row.writeLE(UInt32(track.bitrate), at: 0x30)
         row.writeLE(UInt32(track.trackNumber), at: 0x34)
@@ -453,6 +470,22 @@ public enum RekordboxPDBWriter {
         row.writeLE(id, at: 0x0c)
         row[0x14] = 0x03
         row[0x15] = UInt8(DeviceSQLString.push(name, onto: &row))
+        return row
+    }
+
+    /// Keys write their id twice before the name.
+    private static func keyRow(id: UInt32, name: String) -> Data {
+        var row = Data()
+        row.appendLE(id)
+        row.appendLE(id)
+        row.append(DeviceSQLString.encode(name))
+        return row
+    }
+
+    private static func artworkRow(id: UInt32, path: String) -> Data {
+        var row = Data()
+        row.appendLE(id)
+        row.append(DeviceSQLString.encode(path))
         return row
     }
 
@@ -513,11 +546,13 @@ public enum RekordboxPDBWriter {
         var artists: [Named] = []
         var genres: [Named] = []
         var labels: [Named] = []
+        var keys: [Named] = []
         var albums: [Album] = []
 
         mutating func artistID(_ name: String) -> UInt32 { Self.id(for: name, in: &artists) }
         mutating func genreID(_ name: String) -> UInt32 { Self.id(for: name, in: &genres) }
         mutating func labelID(_ name: String) -> UInt32 { Self.id(for: name, in: &labels) }
+        mutating func keyID(_ name: String) -> UInt32 { Self.id(for: name, in: &keys) }
 
         mutating func albumID(_ name: String, artistID: UInt32) -> UInt32 {
             guard !name.isEmpty else { return 0 }

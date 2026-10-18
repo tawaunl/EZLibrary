@@ -25,13 +25,44 @@ enum CDJAudioConverter {
         }
     }
 
+    /// 320 kbps 44.1 kHz stereo MP3 through ffmpeg, keeping the tags and cover. A
+    /// cover ffmpeg can't carry over isn't worth losing the track for, so that is retried without it.
+    static func encodeMP3(from source: URL, to destination: URL, with ffmpeg: URL) throws {
+        let name = source.lastPathComponent
+        func arguments(withCover: Bool) -> [String] {
+            ["-nostdin", "-y", "-v", "error", "-i", source.path, "-map", "0:a:0"]
+                + (withCover ? ["-map", "0:v:0?", "-c:v", "copy"] : ["-vn"])
+                + ["-c:a", "libmp3lame", "-b:a", "\(CDJAudioConversion.mp3BitrateKbps)k",
+                   "-ar", "\(CDJAudioConversion.sampleRate)", "-ac", "2",
+                   "-map_metadata", "0", "-id3v2_version", "3", "-f", "mp3", destination.path]
+        }
+        for withCover in [true, false] {
+            try? FileManager.default.removeItem(at: destination)
+            guard let result = try? ProcessRunner.run(
+                executableURL: ffmpeg, arguments: arguments(withCover: withCover), standardOutput: .discard) else {
+                throw ConversionError.cannotConvert(name)
+            }
+            let size = (try? destination.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+            if result.didSucceed, size > 0 { return }
+        }
+        try? FileManager.default.removeItem(at: destination)
+        throw ConversionError.cannotConvert(name)
+    }
+
     private static let chunkFrames: AVAudioFrameCount = 32_768
 
     /// Streams `source` through a converter into `destination`, so memory stays
     /// flat however long the track is. Mono is spread to both channels, and
     /// the sample rate is converted at the highest quality.
-    static func convert(from source: URL, to destination: URL, as target: CDJAudioConversion) throws {
+    static func convert(
+        from source: URL, to destination: URL, as target: CDJAudioConversion, encoder: URL? = nil
+    ) throws {
         let name = source.lastPathComponent
+        if target == .mp3 {
+            guard let encoder else { throw ConversionError.cannotConvert(name) }
+            try encodeMP3(from: source, to: destination, with: encoder)
+            return
+        }
         let input: AVAudioFile
         do {
             input = try AVAudioFile(forReading: URL(fileURLWithPath: source.path))

@@ -21,25 +21,50 @@ public struct CDJExportOptions: Sendable, Equatable {
     /// one exported from rekordbox). Off by default, because its playlists would be lost.
     public var replaceForeignLibrary = false
 
-    public init(maximumCompatibility: Bool = true, replaceForeignLibrary: Bool = false) {
+    /// An `ffmpeg` that can encode MP3. When set, tracks that need converting become
+    /// 320 kbps MP3 files, far smaller than WAV/AIFF but lossy; when nil they become
+    /// lossless WAV/AIFF, which macOS can write without any extra software.
+    public var mp3Encoder: URL?
+
+    public init(
+        maximumCompatibility: Bool = true, replaceForeignLibrary: Bool = false, mp3Encoder: URL? = nil
+    ) {
         self.maximumCompatibility = maximumCompatibility
         self.replaceForeignLibrary = replaceForeignLibrary
+        self.mp3Encoder = mp3Encoder
     }
 }
 
-/// The format a track is converted to. Only PCM: macOS can't encode MP3, and
-/// PCM is what every CDJ generation plays.
+/// The format a track is converted to. PCM (WAV/AIFF) is written by macOS itself
+/// and is what every CDJ generation plays; MP3 needs an ffmpeg and is lossy.
 public enum CDJAudioConversion: String, Codable, Sendable, Equatable {
     case wav
     case aiff
+    case mp3
 
-    var pathExtension: String { rawValue == "aiff" ? "aiff" : "wav" }
-    var fileType: CDJFileType { self == .wav ? .wav : .aiff }
+    var pathExtension: String { rawValue }
+    var fileType: CDJFileType {
+        switch self {
+        case .wav: return .wav
+        case .aiff: return .aiff
+        case .mp3: return .mp3
+        }
+    }
     /// Recorded in the manifest so changing the recipe invalidates old copies.
-    var profile: String { "pcm16-44100-stereo-\(rawValue)" }
+    var profile: String { self == .mp3 ? "mp3-320-44100-stereo" : "pcm16-44100-stereo-\(rawValue)" }
 
     static let sampleRate = 44_100
     static let bitrateKbps = 1_411
+    static let mp3BitrateKbps = 320
+
+    var bitrateKbps: Int { self == .mp3 ? Self.mp3BitrateKbps : Self.bitrateKbps }
+
+    /// Bytes a converted file of this kind takes, close enough to plan space with.
+    func estimatedBytes(durationSeconds: Double) -> Int {
+        self == .mp3
+            ? Int(durationSeconds * Double(Self.mp3BitrateKbps) * 125) + 4_096
+            : Self.estimatedSize(durationSeconds: durationSeconds)
+    }
 
     /// Bytes a converted file takes, close enough to plan space with.
     static func estimatedSize(durationSeconds: Double) -> Int {
@@ -94,9 +119,9 @@ enum CDJAudioCompatibility {
         }
         guard options.maximumCompatibility else { return .copy }
 
-        let target: CDJAudioConversion = type == .aiff ? .aiff : .wav
+        let target: CDJAudioConversion = options.mp3Encoder != nil ? .mp3 : (type == .aiff ? .aiff : .wav)
         let converted: CDJAudioDecision
-        if let probe, probe.durationSeconds > 0,
+        if target != .mp3, let probe, probe.durationSeconds > 0,
            CDJAudioConversion.estimatedSize(durationSeconds: probe.durationSeconds) > CDJAudioConversion.maximumFileSize {
             converted = .refuse("It is too long to convert to a WAV or AIFF file.")
         } else {

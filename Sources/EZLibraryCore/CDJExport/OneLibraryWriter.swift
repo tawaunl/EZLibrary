@@ -104,7 +104,8 @@ enum OneLibraryWriter {
                 let albumID = names.albumID(track.album, artistID: artistID)
                 let genreID = names.genreID(track.genre)
                 let labelID = names.labelID(track.label)
-                try insert(track, artist: artistID, album: albumID, genre: genreID, label: labelID,
+                let keyID = names.keyID(track.key)
+                try insert(track, artist: artistID, album: albumID, genre: genreID, label: labelID, key: keyID,
                            libraryID: libraryID, into: database)
                 try insertCues(for: track, analysis: analyses[track.id], into: database)
             }
@@ -121,6 +122,14 @@ enum OneLibraryWriter {
             }
             for label in names.labels {
                 try database.run("INSERT INTO label (label_id, name) VALUES (?, ?)", [.int(label.id), .text(label.name)])
+            }
+            for key in names.keys {
+                try database.run("INSERT INTO key (key_id, name) VALUES (?, ?)", [.int(key.id), .text(key.name)])
+            }
+            var images: [UInt32: String] = [:]
+            for track in tracks where track.artworkID != 0 { images[track.artworkID] = track.artworkPath }
+            for (id, path) in images.sorted(by: { $0.key < $1.key }) {
+                try database.run("INSERT INTO image (image_id, path) VALUES (?, ?)", [.int(id), .text(path)])
             }
             try insertPlaylists(playlists, into: database)
             try database.run(
@@ -167,7 +176,7 @@ enum OneLibraryWriter {
     }
 
     private static func insert(
-        _ track: CDJExportTrack, artist: UInt32, album: UInt32, genre: UInt32, label: UInt32,
+        _ track: CDJExportTrack, artist: UInt32, album: UInt32, genre: UInt32, label: UInt32, key: UInt32,
         libraryID: UInt32, into database: CDJSQLiteDatabase
     ) throws {
         func lookup(_ id: UInt32) -> CDJSQLValue { id == 0 ? .int(0) : .int(id) }
@@ -175,15 +184,16 @@ enum OneLibraryWriter {
             """
             INSERT INTO content
                 (content_id, title, titleForSearch, bpmx100, length, trackNo, discNo, artist_id_artist, album_id,
-                 genre_id, label_id, key_id, color_id, djComment, rating, releaseYear, releaseDate, dateCreated,
+                 genre_id, label_id, key_id, color_id, image_id, djComment, rating, releaseYear, releaseDate, dateCreated,
                  dateAdded, path, fileName, fileSize, fileType, bitrate, bitDepth, samplingRate, isrc, djPlayCount,
                  isHotCueAutoLoadOn, masterDbId, masterContentId, analysisDataFilePath, analysedBits, hasModified)
-            VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, 0, 0, ?, 0, ?, '', ?, ?, ?, ?, ?, ?, ?, 16, ?, '', 0, ?, ?, ?, ?, ?, 0)
+            VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, 0, ?, ?, 0, ?, '', ?, ?, ?, ?, ?, ?, ?, 16, ?, '', 0, ?, ?, ?, ?, ?, 0)
             """,
             [
                 .int(track.id), .text(track.title), .text(track.title),
                 .int(Int((track.bpm * 100).rounded())), .int(track.durationSeconds), .int(track.trackNumber),
-                lookup(artist), lookup(album), lookup(genre), lookup(label),
+                lookup(artist), lookup(album), lookup(genre), lookup(label), lookup(key),
+                track.artworkID == 0 ? .null : .int(track.artworkID),
                 .text(track.comment), .int(track.year), .text(track.dateAdded), .text(track.dateAdded),
                 .text(track.stickPath), .text(track.fileName), .int(track.fileSize),
                 .int(Int(track.fileType.rawValue)), .int(track.bitrate), .int(track.sampleRate),

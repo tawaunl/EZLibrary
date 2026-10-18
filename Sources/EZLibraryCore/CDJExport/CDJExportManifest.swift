@@ -43,6 +43,9 @@ public struct CDJExportManifest: Codable, Equatable, Sendable {
     public var nextPlaylistID: UInt32
     public var tracks: [TrackRecord]
     public var playlists: [PlaylistRecord]
+    /// Every artwork file this app put on the stick, relative to the volume, so a
+    /// later export can remove the ones it no longer needs. Absent in older manifests.
+    public var artwork: [String]?
 
     static func relativePath(root: String) -> String { "\(root)/CDJSeratoExport/manifest.json" }
 

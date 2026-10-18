@@ -19,6 +19,8 @@ struct CDJSeratoExportView: View {
     @State private var volumes: [URL] = []
     @State private var selectedVolume: URL?
     @State private var maximumCompatibility = true
+    @State private var smallFiles = false
+    @State private var ffmpegURL: URL?
     @State private var foreignLibrary = false
     @State private var replaceForeignLibrary = false
     @State private var plan: CDJExportPlan?
@@ -83,6 +85,13 @@ struct CDJSeratoExportView: View {
                             ? "FLAC, M4A, hi-res and unusual-rate audio is converted to 16-bit 44.1 kHz WAV/AIFF so any CDJ can play it."
                             : "Every file is copied exactly as it is. Older players may not play FLAC, M4A or hi-res files.")
                             .font(.caption).foregroundStyle(.secondary)
+                        if maximumCompatibility, ffmpegURL != nil {
+                            Toggle("Convert to MP3 instead (smaller files)", isOn: $smallFiles)
+                            Text(smallFiles
+                                ? "Converted tracks become 320 kbps MP3s, a fraction of the size of WAV but not lossless."
+                                : "Converted tracks stay lossless, which makes them several times larger.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
                         if foreignLibrary {
                             Label(
                                 "This stick already has a library that wasn't made by this app, such as one exported from rekordbox. "
@@ -107,10 +116,14 @@ struct CDJSeratoExportView: View {
             }
             .padding(16)
         }
-        .task { refreshVolumes() }
+        .task {
+            ffmpegURL = YouTubeAudioImportService.dependencyStatus().ffmpegPath.map { URL(fileURLWithPath: $0) }
+            refreshVolumes()
+        }
         .onChange(of: selectedCrateIDs) { _, _ in refreshPlan() }
         .onChange(of: selectedVolume) { _, _ in refreshPlan() }
         .onChange(of: maximumCompatibility) { _, _ in refreshPlan() }
+        .onChange(of: smallFiles) { _, _ in refreshPlan() }
         .onChange(of: replaceForeignLibrary) { _, _ in refreshPlan() }
     }
 
@@ -174,7 +187,8 @@ struct CDJSeratoExportView: View {
         let tracks = libraryService.tracks
         let volume = selectedVolume
         let options = CDJExportOptions(
-            maximumCompatibility: maximumCompatibility, replaceForeignLibrary: replaceForeignLibrary)
+            maximumCompatibility: maximumCompatibility, replaceForeignLibrary: replaceForeignLibrary,
+            mp3Encoder: smallFiles && maximumCompatibility ? ffmpegURL : nil)
         plan = nil
         guard !crates.isEmpty else { return }
         Task {
