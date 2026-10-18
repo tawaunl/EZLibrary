@@ -9,6 +9,30 @@ version (`CFBundleShortVersionString.CFBundleVersion`) and are used verbatim by
 > the highest priority — see [SECURITY.md](../SECURITY.md). This changelog is kept
 > up to date so you can see exactly what changed and when.
 
+## Unreleased
+
+> Rename this heading to the version number when the release is cut. Not to be
+> released until the CDJ export has been tried on a real player.
+
+### Export Serato crates to a USB stick for CDJs (beta)
+- New **CDJ USB Export** screen: pick crates and a USB stick, and EZLibrary writes
+  a library that Pioneer / AlphaTheta CDJs and XDJs can browse, straight from
+  Serato — no rekordbox import needed. Each crate becomes a playlist; nested
+  crates become folders.
+- Hot cues, saved loops and beat grids are carried over from MP3, AIFF, WAV, FLAC
+  and M4A files, with colour waveforms, cover art and musical key.
+- Tracks an older player may not handle (FLAC, M4A, hi-res or unusual sample
+  rates) are converted to 16-bit 44.1 kHz WAV/AIFF. With ffmpeg installed you can
+  choose 320 kbps MP3 instead for far smaller files.
+- Exports are staged, checked and published with a journal, so a cancelled or
+  failed export is undone rather than leaving a half-written stick. Re-exporting
+  only copies what changed, and two exports can't write to the same stick at once.
+- A stick that already holds a library from rekordbox is never overwritten unless
+  you choose to replace it. Your Serato library is only read.
+- The app now bundles SQLCipher, which the newer players' database format needs.
+- Beta: not yet verified on a physical CDJ or XDJ. My Tags, ratings and phrase
+  analysis are not exported.
+
 ## 1.0.8
 
 ### API keys now live in the macOS Keychain

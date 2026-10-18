@@ -478,6 +478,43 @@ FEATURES: list[Feature] = [
         related=("tracks-and-tags", "consolidation", "missing-tracks"),
     ),
     Feature(
+        slug="cdj-export",
+        name="CDJ USB Export",
+        nav="CDJ USB Export",
+        icon="folder-down",
+        tagline="Put your Serato crates on a USB stick that Pioneer and AlphaTheta CDJs and XDJs can browse — cues, loops and beat grids included.",
+        status="Beta",
+        status_class="badge badge-beta",
+        intro=(
+            "Pioneer and AlphaTheta players don't read Serato crates. They read a rekordbox-style "
+            "library on the stick. CDJ USB Export builds that library from the crates you pick, "
+            "straight from Serato, so you don't have to import anything into rekordbox first.",
+            "<strong>This feature is new and has not yet been tested on a real player.</strong> It "
+            "follows the published rekordbox USB layout and checks its own output, but until it has "
+            "been tried on hardware, treat it as a beta and keep a copy of anything the stick "
+            "needs to survive.",
+        ),
+        does=(
+            ("Crates become playlists", "Each crate you tick shows up as a playlist, and nested crates become folders. Track ids stay the same between exports, so a player's cached artwork and waveforms stay valid."),
+            ("Cues, loops and beat grids", "Hot cues, saved loops and the beat grid are read from Serato's tags in MP3, AIFF, WAV, FLAC and M4A files and written where the player looks for them, along with colour waveforms."),
+            ("Covers and keys", "Embedded cover art and each track's musical key are carried across."),
+            ("Plays on older decks", "Tracks an older player may not handle (FLAC, M4A, hi-res or unusual sample rates) are converted to 16-bit 44.1 kHz WAV or AIFF. If ffmpeg is installed you can choose 320 kbps MP3 instead for much smaller files."),
+            ("Safe to interrupt", "Everything is staged on the stick, checked, and only then published with a journal, so a failed or cancelled export is undone instead of leaving a half-written library."),
+            ("Won't overwrite someone else's library", "A stick that already holds a library from rekordbox is left alone unless you explicitly choose to replace it."),
+            ("Fast to repeat", "Re-exporting to the same stick only copies what changed."),
+            ("Your Serato library is never touched", "The export only reads from Serato."),
+        ),
+        steps=(
+            ("Pick your crates", "Open <em>CDJ USB Export</em> and tick the crates you want on the stick."),
+            ("Choose the drive", "Select the USB stick. It needs to be FAT32, exFAT or HFS+, the formats players read."),
+            ("Review the plan", "The summary lists tracks that will be converted, refused or removed from a previous export."),
+            ("Export", "Wait for the check to finish, eject the stick, and plug it into the player."),
+        ),
+        note="Surround files and files over 4 GB can't be played by a CDJ, so they are refused with a "
+             "reason rather than copied. My Tags, ratings and phrase analysis are not exported.",
+        related=("crates", "tracks-and-tags", "backup"),
+    ),
+    Feature(
         slug="cli",
         name="Command Line Tools",
         nav="Command Line",

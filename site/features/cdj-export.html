@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CDJ USB Export — EZLibrary</title>
+<meta name="description" content="Put your Serato crates on a USB stick that Pioneer and AlphaTheta CDJs and XDJs can browse — cues, loops and beat grids included.">
+<link rel="icon" href="../assets/img/icon.png">
+<link rel="canonical" href="https://tawaunl.github.io/EZLibrary/features/cdj-export.html">
+<link rel="stylesheet" href="../assets/css/site.css">
+<meta property="og:type" content="website">
+<meta property="og:title" content="CDJ USB Export — EZLibrary">
+<meta property="og:description" content="Put your Serato crates on a USB stick that Pioneer and AlphaTheta CDJs and XDJs can browse — cues, loops and beat grids included.">
+<meta property="og:image" content="https://tawaunl.github.io/EZLibrary/assets/img/icon.png">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="../"><img src="../assets/img/icon.png" alt=""> EZLibrary</a>
+    <button class="nav-toggle" aria-expanded="false" aria-controls="site-nav">Menu</button>
+    <nav class="nav" id="site-nav" aria-label="Main">
+      <a href="../features/" aria-current="page">Features</a>
+      <a href="../roadmap/">Roadmap</a>
+      <a href="../support/">Support</a>
+      <a href="https://github.com/tawaunl/EZLibrary">GitHub</a>
+      <a class="btn btn-sm btn-primary" href="https://github.com/tawaunl/EZLibrary/releases/latest" data-download>Download</a>
+    </nav>
+  </div>
+</header>
+<main id="main">
+
+<section class="page-hero">
+  <div class="wrap">
+    <p class="crumbs"><a href="../">Home</a><span>/</span><a href="../features/">Features</a><span>/</span>CDJ USB Export</p>
+    <h1>CDJ USB Export <span class="badge badge-beta">Beta</span></h1>
+    <p>Put your Serato crates on a USB stick that Pioneer and AlphaTheta CDJs and XDJs can browse — cues, loops and beat grids included.</p>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap">
+    <div class="two-col">
+      <div class="prose">
+        <p>Pioneer and AlphaTheta players don't read Serato crates. They read a rekordbox-style library on the stick. CDJ USB Export builds that library from the crates you pick, straight from Serato, so you don't have to import anything into rekordbox first.</p>
+        <p><strong>This feature is new and has not yet been tested on a real player.</strong> It follows the published rekordbox USB layout and checks its own output, but until it has been tried on hardware, treat it as a beta and keep a copy of anything the stick needs to survive.</p>
+
+        <h2>What it does</h2>
+        <ul class="ticks">
+          <li><strong>Crates become playlists.</strong> Each crate you tick shows up as a playlist, and nested crates become folders. Track ids stay the same between exports, so a player's cached artwork and waveforms stay valid.</li>
+          <li><strong>Cues, loops and beat grids.</strong> Hot cues, saved loops and the beat grid are read from Serato's tags in MP3, AIFF, WAV, FLAC and M4A files and written where the player looks for them, along with colour waveforms.</li>
+          <li><strong>Covers and keys.</strong> Embedded cover art and each track's musical key are carried across.</li>
+          <li><strong>Plays on older decks.</strong> Tracks an older player may not handle (FLAC, M4A, hi-res or unusual sample rates) are converted to 16-bit 44.1 kHz WAV or AIFF. If ffmpeg is installed you can choose 320 kbps MP3 instead for much smaller files.</li>
+          <li><strong>Safe to interrupt.</strong> Everything is staged on the stick, checked, and only then published with a journal, so a failed or cancelled export is undone instead of leaving a half-written library.</li>
+          <li><strong>Won't overwrite someone else's library.</strong> A stick that already holds a library from rekordbox is left alone unless you explicitly choose to replace it.</li>
+          <li><strong>Fast to repeat.</strong> Re-exporting to the same stick only copies what changed.</li>
+          <li><strong>Your Serato library is never touched.</strong> The export only reads from Serato.</li>
+        </ul>
+
+        <h2>How to use it</h2>
+        <ol class="steps">
+          <li>
+            <h3>Pick your crates</h3>
+            <p>Open <em>CDJ USB Export</em> and tick the crates you want on the stick.</p>
+          </li>
+          <li>
+            <h3>Choose the drive</h3>
+            <p>Select the USB stick. It needs to be FAT32, exFAT or HFS+, the formats players read.</p>
+          </li>
+          <li>
+            <h3>Review the plan</h3>
+            <p>The summary lists tracks that will be converted, refused or removed from a previous export.</p>
+          </li>
+          <li>
+            <h3>Export</h3>
+            <p>Wait for the check to finish, eject the stick, and plug it into the player.</p>
+          </li>
+        </ol>
+
+        <div class="note"><p>Surround files and files over 4 GB can't be played by a CDJ, so they are refused with a reason rather than copied. My Tags, ratings and phrase analysis are not exported.</p></div>
+
+        <h2>Related</h2>
+        <div class="grid grid-2">
+          <a class="card" href="crates.html">
+            <h3>Crates</h3>
+            <p>Your whole crate tree, including smart crates and the hidden ones, with real stats.</p>
+          </a>
+          <a class="card" href="tracks-and-tags.html">
+            <h3>Tracks &amp; Tags</h3>
+            <p>Browse the whole library, fix metadata in place, and fill thousands of empty fields in one pass.</p>
+          </a>
+          <a class="card" href="backup.html">
+            <h3>Backup</h3>
+            <p>Timestamped snapshots of your library, sized before you commit to them.</p>
+          </a>
+        </div>
+      </div>
+      <aside class="aside">
+        <h4>All features</h4>
+        <ul>
+          <li><a href="tracks-and-tags.html">Tracks &amp; Tags</a></li>
+          <li><a href="tag-verification.html">Tag Verification</a></li>
+          <li><a href="audio-editor.html">Audio Editor</a></li>
+          <li><a href="duplicates.html">Find Duplicates</a></li>
+          <li><a href="missing-tracks.html">Missing Tracks</a></li>
+          <li><a href="crates.html">Crates</a></li>
+          <li><a href="playlistmatch.html">PlaylistMatch</a></li>
+          <li><a href="add-music.html">Add Music</a></li>
+          <li><a href="consolidation.html">Consolidation</a></li>
+          <li><a href="backup.html">Backup</a></li>
+          <li><a href="rename.html">Rename From Tags</a></li>
+          <li><a href="cdj-export.html" aria-current="page">CDJ USB Export</a></li>
+          <li><a href="cli.html">Command Line</a></li>
+        </ul>
+        <a class="btn btn-primary btn-sm" style="width:100%" href="https://github.com/tawaunl/EZLibrary/releases/latest" data-download>Download EZLibrary</a>
+      </aside>
+    </div>
+  </div>
+</section>
+
+<section class="cta">
+  <div class="wrap">
+    <h2>Try it on your own library</h2>
+    <p>Free and open source. Takes a backup before it touches anything.</p>
+    <div class="btn-row center" style="margin-top:26px">
+      <a class="btn btn-primary btn-lg" href="https://github.com/tawaunl/EZLibrary/releases/latest" data-download>
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 3v12M7 11l5 5 5-5M4 20h16"/>
+        </svg>
+        Download for macOS
+      </a>
+    </div>
+        <p class="meta-line">v<span data-latest-version>1.0.8</span> · <span data-latest-size>9.1 MB</span> · macOS 13+ · Apple Silicon &amp; Intel</p>
+  </div>
+</section>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <div class="footer-grid">
+      <div class="footer-about">
+        <a class="brand" href="../"><img src="../assets/img/icon.png" alt=""> EZLibrary</a>
+        <p>A free, open source macOS toolkit for DJs who want a cleaner, safer Serato library.</p>
+      </div>
+      <div>
+        <h4>Product</h4>
+        <ul>
+          <li><a href="../features/">Features</a></li>
+          <li><a href="../roadmap/">Roadmap</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/releases/latest" data-download>Download</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/blob/main/docs/CHANGELOG.md">Changelog</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Help</h4>
+        <ul>
+          <li><a href="../support/">Support &amp; FAQ</a></li>
+          <li><a href="../support/#how-to">How-to guides</a></li>
+          <li><a href="../support/#contact">Contact</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/issues/new/choose">Report a bug</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Project</h4>
+        <ul>
+          <li><a href="https://github.com/tawaunl/EZLibrary">Source on GitHub</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/blob/main/CONTRIBUTING.md">Contributing</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/blob/main/SECURITY.md">Security policy</a></li>
+          <li><a href="https://github.com/tawaunl/EZLibrary/blob/main/LICENSE">License (GPLv3)</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p class="disclaimer">
+        EZLibrary is an independent, community-built utility. It is not affiliated with,
+        endorsed by, or sponsored by Serato Audio Research. "Serato" is a trademark of its
+        respective owner.
+      </p>
+      <p>© 2026 Tawaun Lucas · GPLv3</p>
+    </div>
+  </div>
+</footer>
+
+<script src="../assets/js/site.js"></script>
+</body>
+</html>
