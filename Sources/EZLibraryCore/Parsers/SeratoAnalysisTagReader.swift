@@ -169,10 +169,15 @@ public enum SeratoAnalysisTagReader {
     /// version bytes followed by entries of `name\0` + big-endian `UInt32`
     /// length + that many bytes.
     static func decodeMarkers2Entries(_ payload: [UInt8]) -> [String] {
+        decodeMarkers2Records(payload).map(\.name)
+    }
+
+    /// Like `decodeMarkers2Entries`, but keeps each entry's data bytes.
+    static func decodeMarkers2Records(_ payload: [UInt8]) -> [(name: String, data: [UInt8])] {
         guard payload.count > 2 else { return [] }
         guard let blob = decodeBase64Body(Array(payload.dropFirst(2))) else { return [] }
 
-        var names: [String] = []
+        var records: [(name: String, data: [UInt8])] = []
         var index = 2 // skip the decoded blob's own version bytes
 
         while index < blob.count {
@@ -190,11 +195,11 @@ public enum SeratoAnalysisTagReader {
                 | Int(blob[lengthStart + 3])
             guard length >= 0, lengthStart + 4 + length <= blob.count else { break }
 
-            names.append(name)
+            records.append((name, Array(blob[(lengthStart + 4)..<(lengthStart + 4 + length)])))
             index = lengthStart + 4 + length
         }
 
-        return names
+        return records
     }
 
     /// Decodes Serato's base64 body, which is not reliably padded and can carry

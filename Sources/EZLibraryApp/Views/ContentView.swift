@@ -26,6 +26,7 @@ enum SidebarSection: Hashable {
     case crates
     case missingTracks
     case backup
+    case cdjExport
     case libraryConsolidation
 }
 
@@ -57,6 +58,7 @@ struct ContentView: View {
         (.crates, "Crates", "square.stack"),
         (.missingTracks, "Missing Tracks", "exclamationmark.triangle"),
         (.backup, "Backup", "externaldrive.badge.plus"),
+        (.cdjExport, "CDJ USB Export", "opticaldiscdrive"),
         (.libraryConsolidation, "Library Consolidation", "arrow.triangle.merge")
     ]
 
@@ -653,6 +655,8 @@ struct ContentView: View {
             MissingTracksView()
         case .backup:
             LibraryBackupView()
+        case .cdjExport:
+            CDJSeratoExportView()
         case .libraryConsolidation:
             LibraryConsolidationView(onLibraryChanged: reloadLibrary)
         case .crates:
