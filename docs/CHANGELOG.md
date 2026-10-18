@@ -9,6 +9,17 @@ version (`CFBundleShortVersionString.CFBundleVersion`) and are used verbatim by
 > the highest priority — see [SECURITY.md](../SECURITY.md). This changelog is kept
 > up to date so you can see exactly what changed and when.
 
+## 1.0.10
+
+### Backup remembers your settings and your drives
+- Backups keep running when you switch tabs. A banner on the other tabs shows
+  progress, and the result is waiting when you come back.
+- The destination folder, backup mode and selected crate are remembered across
+  tab switches and relaunches.
+- Each external drive you back up to is remembered. Plug in a known drive and
+  the destination switches to it automatically, with a notice. An unknown drive
+  leaves your last-used destination alone.
+
 ## 1.0.9
 
 ### Record-pool files import with clean tags
