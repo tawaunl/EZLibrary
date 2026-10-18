@@ -193,7 +193,7 @@ private func body(of section: (tag: String, header: Int, length: Int, offset: In
         conversion: nil, export: export)
 
     var placements: [String] = []
-    let hadSeratoData = try await CDJSeratoExport.writeAnalysis(for: item, into: stage, placements: &placements)
+    let hadSeratoData = try await CDJSeratoExport.writeAnalysis(for: item, analysis: nil, into: stage, placements: &placements)
     #expect(hadSeratoData == false)
     #expect(placements == [
         "PIONEER/USBANLZ/P03B/0002F797/ANLZ0000.DAT", "PIONEER/USBANLZ/P03B/0002F797/ANLZ0000.EXT",

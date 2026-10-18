@@ -126,6 +126,7 @@ public enum CDJExportError: LocalizedError {
     case conflictingRoots
     case stickChanged
     case verificationFailed(String)
+    case foreignLibrary
 
     public var errorDescription: String? {
         switch self {
@@ -145,6 +146,9 @@ public enum CDJExportError: LocalizedError {
             return "The stick changed while the export was being prepared."
         case .verificationFailed(let detail):
             return "The export didn't verify, so the stick was left as it was. \(detail)"
+        case .foreignLibrary:
+            return "This stick already has a library that wasn't written by this app, "
+                + "such as one exported from rekordbox. Exporting would replace its playlists."
         }
     }
 
@@ -157,6 +161,7 @@ public enum CDJExportError: LocalizedError {
         case .conflictingRoots: return "Remove one of the two folders, then try again."
         case .stickChanged: return "Close anything else using the stick and export again."
         case .verificationFailed: return "Try again. If it keeps failing, report the message above."
+        case .foreignLibrary: return "Choose \"Replace the library on this stick\" if that's what you want, or use another stick."
         }
     }
 }
@@ -184,10 +189,18 @@ public enum CDJSeratoExport {
     static func databasePath(root: String) -> String { "\(root)/rekordbox/export.pdb" }
 
     /// Reads what a previous export left on `volume`, and which root it uses.
-    public static func stickState(at volume: URL) throws -> (root: String, manifest: CDJExportManifest?) {
+    public static func stickState(at volume: URL) throws -> (root: String, manifest: CDJExportManifest?, foreignLibrary: Bool) {
         let format = CDJStickFormat.detect(at: volume)
         let root = try CDJExportRoot.select(on: volume, format: format)
-        return (root, CDJExportManifest.load(from: volume, root: root))
+        let manifest = CDJExportManifest.load(from: volume, root: root)
+        return (root, manifest, manifest == nil && hasLibrary(on: volume, root: root))
+    }
+
+    /// Whether the stick already holds a library, whoever wrote it.
+    static func hasLibrary(on volume: URL, root: String) -> Bool {
+        ["export.pdb", "exportLibrary.db"].contains {
+            FileManager.default.fileExists(atPath: volume.appendingPathComponent("\(root)/rekordbox/\($0)").path)
+        }
     }
 
     /// Works out what an export would do, without touching the stick.
@@ -419,6 +432,10 @@ public enum CDJSeratoExport {
         let root = try CDJExportRoot.select(on: volume, format: format)
         let onStick = CDJExportManifest.load(from: volume, root: root)
         guard root == plan.root, onStick == plan.previous else { throw CDJExportError.stickChanged }
+        // A library someone else wrote (rekordbox, say) would be replaced wholesale, so ask first.
+        if onStick == nil, hasLibrary(on: volume, root: root), !plan.options.replaceForeignLibrary {
+            throw CDJExportError.foreignLibrary
+        }
 
         let fileManager = FileManager.default
         let previousByKey = Dictionary(
@@ -451,6 +468,7 @@ public enum CDJSeratoExport {
         var withoutAnalysis = 0
         // What the stick really holds, which differs from the plan's estimate once audio is converted.
         var exports = plan.items.map(\.export)
+        var analyses: [UInt32: SeratoTrackAnalysis] = [:]
         var manifest = plan.manifest
         do {
             for (index, item) in plan.items.enumerated() {
@@ -476,9 +494,12 @@ public enum CDJSeratoExport {
                     copied += 1
                 }
                 manifest.tracks[index].copySize = exports[index].fileSize
+                // Cues also go into exportLibrary.db, which is rebuilt in full each time.
+                let serato = SeratoAnalysisTagReader.analysis(forFileAt: item.source)
+                if let serato { analyses[item.export.id] = serato }
                 if !analysisIsCurrent(item) {
                     let hadSeratoData = try await writeAnalysis(
-                        for: item, into: publication.stage, placements: &placements)
+                        for: item, analysis: serato, into: publication.stage, placements: &placements)
                     if hadSeratoData { analysed += 1 } else { withoutAnalysis += 1 }
                 }
                 progress?(index + 1, plan.items.count)
@@ -491,9 +512,28 @@ public enum CDJSeratoExport {
             let databaseRelative = databasePath(root: plan.root)
             let manifestRelative = CDJExportManifest.relativePath(root: plan.root)
             try writeStaged(database, relative: databaseRelative, in: publication)
+
+            // exportLibrary.db: the encrypted database newer players read. Built on the Mac, then copied,
+            // so SQLite's journal never touches the stick.
+            let oneLibraryRelative = "\(plan.root)/rekordbox/exportLibrary.db"
+            let oneLibraryTemp = fileManager.temporaryDirectory.appendingPathComponent("cdjlib-\(UUID().uuidString).db")
+            defer { try? fileManager.removeItem(at: oneLibraryTemp) }
+            let settings = OneLibrarySettings.read(from: volume.appendingPathComponent(oneLibraryRelative)) ?? .defaults
+            try OneLibraryWriter.write(
+                to: oneLibraryTemp, tracks: exports, playlists: plan.playlists, analyses: analyses,
+                deviceName: volume.lastPathComponent, createdDate: dateString(Date()),
+                libraryID: plan.manifest.libraryID, settings: settings)
+            try RekordboxExportVerifier.verifyOneLibrary(at: oneLibraryTemp, plan: plan, tracks: exports)
+            let oneLibraryStaged = publication.stagedURL(oneLibraryRelative)
+            try fileManager.createDirectory(at: oneLibraryStaged.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try fileManager.copyItem(at: oneLibraryTemp, to: oneLibraryStaged)
             try writeStaged(try manifest.encoded(), relative: manifestRelative, in: publication)
 
-            let removalPaths = removalRelativePaths(plan.removals)
+            var removalPaths = removalRelativePaths(plan.removals)
+            // A journal left beside a rebuilt database would carry stale pages.
+            for leftover in ["-wal", "-shm"] where fileManager.fileExists(atPath: volume.appendingPathComponent(oneLibraryRelative + leftover).path) {
+                removalPaths.insert(oneLibraryRelative + leftover)
+            }
             try RekordboxExportVerifier.verify(
                 database: database, plan: plan,
                 analysis: { path in
@@ -516,12 +556,14 @@ public enum CDJSeratoExport {
 
             // The databases go last, so a stick never points at files that aren't there yet.
             let journal = CDJExportPublication.Journal(
-                placements: placements + [databaseRelative, manifestRelative],
+                placements: placements + [oneLibraryRelative, databaseRelative, manifestRelative],
                 removals: removalPaths.sorted())
             try publication.commit(journal)
             do {
                 let published = try Data(contentsOf: volume.appendingPathComponent(databaseRelative))
                 _ = try RekordboxPDBFile(published).rowOffsets(inTable: RekordboxPDBWriter.TableType.tracks)
+                try RekordboxExportVerifier.verifyOneLibrary(
+                    at: volume.appendingPathComponent(oneLibraryRelative), plan: plan, tracks: exports)
             } catch {
                 try? publication.abandon(journal)
                 throw CDJExportError.verificationFailed("The published database couldn't be read back.")
@@ -545,9 +587,9 @@ public enum CDJSeratoExport {
     /// Writes the track's ANLZ files into the stage. Returns whether Serato had any
     /// cues, loops or beatgrid for the track.
     static func writeAnalysis(
-        for item: CDJExportPlan.Item, into stage: URL, placements: inout [String]
+        for item: CDJExportPlan.Item, analysis seratoAnalysis: SeratoTrackAnalysis?,
+        into stage: URL, placements: inout [String]
     ) async throws -> Bool {
-        let seratoAnalysis = SeratoAnalysisTagReader.analysis(forFileAt: item.source)
         let durationMs = item.export.durationSeconds * 1000
         // A track we can't decode still gets its cues and beat grid, and silent waveforms.
         let bands = try? CDJBandAnalyzer.analyze(fileAt: item.source)

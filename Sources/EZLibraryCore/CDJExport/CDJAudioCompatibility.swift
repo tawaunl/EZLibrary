@@ -17,8 +17,13 @@ public struct CDJExportOptions: Sendable, Equatable {
     /// WAV/AIFF. Off copies every file exactly as it is, which suits newer players.
     public var maximumCompatibility = true
 
-    public init(maximumCompatibility: Bool = true) {
+    /// Allow replacing a library on the stick that this app didn't write (for example
+    /// one exported from rekordbox). Off by default, because its playlists would be lost.
+    public var replaceForeignLibrary = false
+
+    public init(maximumCompatibility: Bool = true, replaceForeignLibrary: Bool = false) {
         self.maximumCompatibility = maximumCompatibility
+        self.replaceForeignLibrary = replaceForeignLibrary
     }
 }
 

@@ -12,9 +12,14 @@ let package = Package(
         .executable(name: "EZLibraryBench", targets: ["EZLibraryBench"]),
         .library(name: "EZLibraryCore", targets: ["EZLibraryCore"])
     ],
+    dependencies: [
+        // Encrypted SQLite, for the exportLibrary.db that newer CDJ/XDJ players read.
+        .package(url: "https://github.com/sqlcipher/SQLCipher.swift.git", exact: "4.19.0")
+    ],
     targets: [
         .target(
-            name: "EZLibraryCore"
+            name: "EZLibraryCore",
+            dependencies: [.product(name: "SQLCipher", package: "SQLCipher.swift")]
         ),
         .executableTarget(
             name: "EZLibraryCLI",

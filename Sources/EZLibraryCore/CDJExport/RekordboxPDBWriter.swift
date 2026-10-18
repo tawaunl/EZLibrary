@@ -507,7 +507,7 @@ public enum RekordboxPDBWriter {
 
     // MARK: - Deduplicated lookup tables
 
-    private struct NameTables {
+    struct NameTables {
         struct Named { var id: UInt32; var name: String }
         struct Album { var id: UInt32; var artistID: UInt32; var name: String }
         var artists: [Named] = []

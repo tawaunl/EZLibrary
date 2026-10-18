@@ -132,6 +132,21 @@ cp "$ROOT_DIR/Packaging/Info.plist" "$APP_BUNDLE/Contents/Info.plist"
 cp "$CLI_BIN_PATH" "$RESOURCE_BIN_DIR/EZLibraryCLI"
 chmod +x "$RESOURCE_BIN_DIR/EZLibraryCLI"
 
+# SQLCipher (which writes the exportLibrary.db newer CDJs read) ships as a dynamic,
+# already-universal framework. Embed it, then give each executable a way to find it:
+# the app is two levels above Frameworks, the bundled CLI three.
+FRAMEWORK_SOURCE="$(arch_build_path "${BUILD_ARCHS[0]}")/artifacts/sqlcipher.swift/SQLCipher/SQLCipher.xcframework/macos-arm64_x86_64/SQLCipher.framework"
+if [[ ! -d "$FRAMEWORK_SOURCE" ]]; then
+	echo "Error: SQLCipher.framework not found at $FRAMEWORK_SOURCE" >&2
+	exit 1
+fi
+verify_universal_macho "$FRAMEWORK_SOURCE/Versions/A/SQLCipher" "SQLCipher framework"
+mkdir -p "$APP_BUNDLE/Contents/Frameworks"
+# ditto keeps the framework's Versions symlinks intact; cp -R would flatten them.
+ditto "$FRAMEWORK_SOURCE" "$APP_BUNDLE/Contents/Frameworks/SQLCipher.framework"
+install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
+install_name_tool -add_rpath "@executable_path/../../Frameworks" "$RESOURCE_BIN_DIR/EZLibraryCLI"
+
 # App icon (referenced by CFBundleIconFile in Info.plist).
 if [[ -f "$ROOT_DIR/Packaging/AppIcon.icns" ]]; then
 	cp "$ROOT_DIR/Packaging/AppIcon.icns" "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
@@ -229,6 +244,7 @@ else
 		--timestamp
 	)
 
+	codesign "${CODESIGN_ARGS[@]}" "$APP_BUNDLE/Contents/Frameworks/SQLCipher.framework"
 	codesign "${CODESIGN_ARGS[@]}" "$RESOURCE_BIN_DIR/EZLibraryCLI"
 	codesign "${CODESIGN_ARGS[@]}" "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 	codesign "${CODESIGN_ARGS[@]}" "$APP_BUNDLE"

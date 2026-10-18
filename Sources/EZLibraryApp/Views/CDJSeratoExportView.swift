@@ -19,6 +19,8 @@ struct CDJSeratoExportView: View {
     @State private var volumes: [URL] = []
     @State private var selectedVolume: URL?
     @State private var maximumCompatibility = true
+    @State private var foreignLibrary = false
+    @State private var replaceForeignLibrary = false
     @State private var plan: CDJExportPlan?
     @State private var isExporting = false
     @State private var progress: (done: Int, total: Int)?
@@ -81,6 +83,14 @@ struct CDJSeratoExportView: View {
                             ? "FLAC, M4A, hi-res and unusual-rate audio is converted to 16-bit 44.1 kHz WAV/AIFF so any CDJ can play it."
                             : "Every file is copied exactly as it is. Older players may not play FLAC, M4A or hi-res files.")
                             .font(.caption).foregroundStyle(.secondary)
+                        if foreignLibrary {
+                            Label(
+                                "This stick already has a library that wasn't made by this app, such as one exported from rekordbox. "
+                                    + "Exporting replaces its playlists.",
+                                systemImage: "exclamationmark.octagon")
+                                .foregroundStyle(.red)
+                            Toggle("Replace the library on this stick", isOn: $replaceForeignLibrary)
+                        }
                         if let plan { planSummary(plan) }
                         Text("Hot cues, loops, beatgrids and waveforms are carried over for MP3, AIFF, WAV, FLAC and M4A.")
                             .font(.caption).foregroundStyle(.secondary)
@@ -101,11 +111,13 @@ struct CDJSeratoExportView: View {
         .onChange(of: selectedCrateIDs) { _, _ in refreshPlan() }
         .onChange(of: selectedVolume) { _, _ in refreshPlan() }
         .onChange(of: maximumCompatibility) { _, _ in refreshPlan() }
+        .onChange(of: replaceForeignLibrary) { _, _ in refreshPlan() }
     }
 
     private var canExport: Bool {
         !isExporting && selectedVolume != nil && !selectedCrateIDs.isEmpty
             && (format?.blockingProblem == nil) && (plan?.items.isEmpty == false)
+            && (!foreignLibrary || replaceForeignLibrary)
     }
 
     @ViewBuilder
@@ -161,27 +173,32 @@ struct CDJSeratoExportView: View {
         let crates = selectedCrates
         let tracks = libraryService.tracks
         let volume = selectedVolume
-        let options = CDJExportOptions(maximumCompatibility: maximumCompatibility)
+        let options = CDJExportOptions(
+            maximumCompatibility: maximumCompatibility, replaceForeignLibrary: replaceForeignLibrary)
         plan = nil
         guard !crates.isEmpty else { return }
         Task {
             // Planning is tied to the stick: it keeps track ids stable and spots what to remove.
-            let outcome = await Task.detached { () -> (CDJExportPlan?, String?) in
+            let outcome = await Task.detached { () -> (CDJExportPlan?, String?, Bool) in
                 var previous: CDJExportManifest?
                 var root = "PIONEER"
+                var foreign = false
                 if let volume {
                     do {
                         let state = try CDJSeratoExport.stickState(at: volume)
                         root = state.root
                         previous = state.manifest
+                        foreign = state.foreignLibrary
                     } catch {
-                        return (nil, error.localizedDescription)
+                        return (nil, error.localizedDescription, false)
                     }
                 }
-                return (CDJSeratoExport.plan(crates: crates, library: tracks, previous: previous, root: root, options: options), nil)
+                let built = CDJSeratoExport.plan(crates: crates, library: tracks, previous: previous, root: root, options: options)
+                return (built, nil, foreign)
             }.value
             plan = outcome.0
             errorMessage = outcome.1
+            foreignLibrary = outcome.2
         }
     }
 

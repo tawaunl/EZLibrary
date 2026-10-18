@@ -186,4 +186,51 @@ enum RekordboxExportVerifier {
             throw CDJExportError.verificationFailed("An analysis file names \(path ?? "no file") instead of \(audioPath).")
         }
     }
+
+    /// Reads `exportLibrary.db` back and checks it agrees with the plan and with `export.pdb`:
+    /// it opens under the key, has every table, and lists the same tracks with intact playlists.
+    static func verifyOneLibrary(at url: URL, plan: CDJExportPlan, tracks: [CDJExportTrack]) throws {
+        func fail(_ detail: String) -> CDJExportError { .verificationFailed("exportLibrary.db: \(detail)") }
+        let database: CDJSQLiteDatabase
+        do {
+            database = try CDJSQLiteDatabase(url: url, passphrase: OneLibraryKey.passphrase(), readOnly: true)
+        } catch {
+            throw fail("it can't be opened.")
+        }
+        do {
+            let tables = try database.rows("SELECT name FROM sqlite_master WHERE type = 'table'", columns: 1)
+            guard tables.count >= OneLibraryWriter.schema.count else { throw fail("it is missing tables.") }
+
+            let content = try database.rows("SELECT content_id, path, analysisDataFilePath FROM content", columns: 3)
+            let expected = Dictionary(uniqueKeysWithValues: tracks.map { ($0.id, $0) })
+            guard content.count == tracks.count else {
+                throw fail("it lists \(content.count) tracks but \(tracks.count) were exported.")
+            }
+            for row in content {
+                guard let id = row[0].intValue, let track = expected[UInt32(truncatingIfNeeded: id)],
+                      row[1].textValue == track.stickPath, row[2].textValue == track.analyzePath else {
+                    throw fail("a track disagrees with export.pdb.")
+                }
+            }
+            let playlists = try database.rows("SELECT playlist_id, playlist_id_parent FROM playlist", columns: 2)
+            let playlistIDs = Set(playlists.compactMap { $0[0].intValue })
+            guard playlistIDs.count == plan.playlists.count,
+                  playlists.allSatisfy({ ($0[1].intValue ?? 0) == 0 || playlistIDs.contains($0[1].intValue ?? 0) }) else {
+                throw fail("its playlists don't match the plan.")
+            }
+            let orphans = try database.rows(
+                """
+                SELECT COUNT(*) FROM playlist_content
+                WHERE content_id NOT IN (SELECT content_id FROM content)
+                   OR playlist_id NOT IN (SELECT playlist_id FROM playlist)
+                """, columns: 1)
+            guard orphans.first?.first?.intValue == 0 else { throw fail("a playlist entry points at a missing track.") }
+            let counted = try database.rows("SELECT numberOfContents FROM property", columns: 1).first?.first?.intValue
+            guard counted == Int64(tracks.count) else { throw fail("its track count is wrong.") }
+        } catch let error as CDJExportError {
+            throw error
+        } catch {
+            throw fail("it couldn't be read back.")
+        }
+    }
 }
