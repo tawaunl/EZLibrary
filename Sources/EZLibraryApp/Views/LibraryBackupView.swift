@@ -55,6 +55,9 @@ struct LibraryBackupView: View {
                 heroCard
                 statsCard
                 destinationCard
+                if !backupJob.knownDevices.isEmpty {
+                    knownDevicesCard
+                }
                 modeCard
                 actionCard
             }
@@ -226,6 +229,47 @@ struct LibraryBackupView: View {
                 .foregroundStyle(.secondary)
         }
         .padding(20)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Color(nsColor: .controlBackgroundColor).opacity(0.55)))
+        .glowCardStyle(radius: 8, opacity: 0.05)
+    }
+
+    private var knownDevicesCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Known Backup Drives")
+                .font(.title3.weight(.semibold))
+
+            Text("Plugging in one of these switches the destination to it automatically. Forgetting a drive only stops that; nothing on the drive is touched.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+
+            ForEach(backupJob.knownDevices, id: \.volumeUUID) { device in
+                let connected = backupJob.connectedDeviceUUIDs.contains(device.volumeUUID)
+                HStack(spacing: 10) {
+                    Image(systemName: connected ? "externaldrive.fill" : "externaldrive")
+                        .foregroundStyle(connected ? Color.accentColor : .secondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(device.name).font(.body.weight(.medium))
+                        Text(
+                            (device.relativePath.isEmpty ? "Drive root" : device.relativePath)
+                                + " · " + (connected ? "Connected" : "Not connected")
+                                + " · last used " + device.lastUsed.formatted(date: .abbreviated, time: .omitted)
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 0)
+                    Button("Use") { backupJob.use(device) }
+                        .controlSize(.small)
+                        .disabled(!connected || isRunning)
+                        .help("Set the backup destination to this drive.")
+                    Button("Forget", role: .destructive) { backupJob.forget(device) }
+                        .controlSize(.small)
+                        .help("Stop remembering this drive.")
+                }
+            }
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 12).fill(Color(nsColor: .controlBackgroundColor).opacity(0.55)))
         .glowCardStyle(radius: 8, opacity: 0.05)
     }

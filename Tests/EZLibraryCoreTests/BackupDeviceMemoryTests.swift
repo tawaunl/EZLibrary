@@ -55,3 +55,17 @@ private func volume(_ uuid: String, at path: String, name: String = "Drive") -> 
     #expect(memory.devices.count == 1)
     #expect(memory.devices.first?.relativePath == "Two")
 }
+
+@Test func aForgottenDriveIsNoLongerSwitchedTo() {
+    let memory = BackupDeviceMemory(defaults: TestDefaults.inMemory())
+    let drive = volume("UUID-A", at: "/Volumes/A")
+    let other = volume("UUID-B", at: "/Volumes/B")
+    memory.record(destination: URL(fileURLWithPath: "/Volumes/A"), on: drive)
+    memory.record(destination: URL(fileURLWithPath: "/Volumes/B"), on: other)
+
+    memory.forget(volumeUUID: "UUID-A")
+
+    #expect(memory.device(forVolumeUUID: "UUID-A") == nil)
+    #expect(memory.destination(for: drive) == nil)
+    #expect(memory.device(forVolumeUUID: "UUID-B") != nil)
+}

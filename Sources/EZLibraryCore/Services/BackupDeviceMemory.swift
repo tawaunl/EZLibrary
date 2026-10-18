@@ -72,6 +72,14 @@ public struct BackupDeviceMemory {
         }
     }
 
+    /// Drops a drive from memory, so it is no longer switched to on connect.
+    public func forget(volumeUUID: String) {
+        let remaining = devices.filter { $0.volumeUUID != volumeUUID }
+        if let data = try? JSONEncoder().encode(remaining) {
+            defaults.set(data, forKey: key)
+        }
+    }
+
     /// Where the remembered folder is now that the drive is mounted at
     /// `volume.mountPoint`. Falls back to the drive's root when that folder no
     /// longer exists, so a switch never points at a missing path.

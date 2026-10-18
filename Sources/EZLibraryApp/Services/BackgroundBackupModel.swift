@@ -44,6 +44,10 @@ final class BackgroundBackupModel: ObservableObject {
     /// Set when plugging in a known drive moved the destination; shown in the
     /// Backup view until the user dismisses it or starts a backup.
     @Published private(set) var deviceNotice: String?
+    /// Drives used for backups before, most recently used first.
+    @Published private(set) var knownDevices: [BackupDeviceMemory.Device] = []
+    /// Volume UUIDs of the known drives that are plugged in right now.
+    @Published private(set) var connectedDeviceUUIDs: Set<String> = []
     @Published private(set) var successMessage: String?
     @Published private(set) var errorMessage: String?
 
@@ -58,9 +62,20 @@ final class BackgroundBackupModel: ObservableObject {
             queue: .main
         ) { [weak self] notification in
             let mounted = notification.userInfo?[NSWorkspace.volumeURLUserInfoKey] as? URL
-            MainActor.assumeIsolated { self?.driveMounted(at: mounted) }
+            MainActor.assumeIsolated {
+                self?.driveMounted(at: mounted)
+                self?.refreshKnownDevices()
+            }
+        }
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didUnmountNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshKnownDevices() }
         }
         adoptMountedDeviceIfDestinationMissing()
+        refreshKnownDevices()
     }
 
     /// Starts a backup. Ignored while one is already running.
@@ -87,6 +102,7 @@ final class BackgroundBackupModel: ObservableObject {
                 let note = result.note.map { " \($0)" } ?? ""
                 if let volume = BackupDeviceMemory.externalVolume(containing: request.destinationFolderURL) {
                     deviceMemory.record(destination: request.destinationFolderURL, on: volume)
+                    refreshKnownDevices()
                 }
                 successMessage = "Backup created at \(result.backupRootURL.path).\(note)"
             } catch {
@@ -94,6 +110,33 @@ final class BackgroundBackupModel: ObservableObject {
             }
             isRunning = false
         }
+    }
+
+    /// Stops remembering a drive; it will no longer be switched to on connect.
+    func forget(_ device: BackupDeviceMemory.Device) {
+        deviceMemory.forget(volumeUUID: device.volumeUUID)
+        refreshKnownDevices()
+    }
+
+    /// Points the destination at a known drive that is plugged in.
+    func use(_ device: BackupDeviceMemory.Device) {
+        guard !isRunning, let volume = mountedVolumes().first(where: { $0.uuid == device.volumeUUID }),
+              let destination = deviceMemory.destination(for: volume) else { return }
+        UserDefaults.standard.set(destination.path, forKey: Self.destinationDefaultsKey)
+        deviceNotice = nil
+    }
+
+    private func mountedVolumes() -> [BackupDeviceMemory.Volume] {
+        let urls = FileManager.default.mountedVolumeURLs(
+            includingResourceValuesForKeys: nil, options: [.skipHiddenVolumes]
+        ) ?? []
+        return urls.compactMap { BackupDeviceMemory.externalVolume(containing: $0) }
+    }
+
+    private func refreshKnownDevices() {
+        knownDevices = deviceMemory.devices.sorted { $0.lastUsed > $1.lastUsed }
+        let known = Set(knownDevices.map(\.volumeUUID))
+        connectedDeviceUUIDs = Set(mountedVolumes().map(\.uuid)).intersection(known)
     }
 
     func dismissDeviceNotice() { deviceNotice = nil }
@@ -116,12 +159,8 @@ final class BackgroundBackupModel: ObservableObject {
     private func adoptMountedDeviceIfDestinationMissing() {
         let saved = UserDefaults.standard.string(forKey: Self.destinationDefaultsKey) ?? ""
         guard !saved.isEmpty, !FileManager.default.fileExists(atPath: saved) else { return }
-        let mounted = FileManager.default.mountedVolumeURLs(
-            includingResourceValuesForKeys: nil, options: [.skipHiddenVolumes]
-        ) ?? []
-        let candidates = mounted.compactMap { url -> (BackupDeviceMemory.Volume, Date)? in
-            guard let volume = BackupDeviceMemory.externalVolume(containing: url),
-                  let device = deviceMemory.device(forVolumeUUID: volume.uuid) else { return nil }
+        let candidates = mountedVolumes().compactMap { volume -> (BackupDeviceMemory.Volume, Date)? in
+            guard let device = deviceMemory.device(forVolumeUUID: volume.uuid) else { return nil }
             return (volume, device.lastUsed)
         }
         guard let best = candidates.max(by: { $0.1 < $1.1 })?.0,
