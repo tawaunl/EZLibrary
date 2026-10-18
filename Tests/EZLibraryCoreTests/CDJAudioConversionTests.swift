@@ -185,3 +185,31 @@ private func scratch(_ name: String) -> URL {
     #expect(third.filesCopied == 1)
     #expect(!FileManager.default.fileExists(atPath: onStick.path))
 }
+
+@Test func exportDrawsWaveformsFromTheRealAudio() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("cdjwave-\(UUID().uuidString)")
+    let stick = directory.appendingPathComponent("STICK")
+    try FileManager.default.createDirectory(at: stick, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let wav = directory.appendingPathComponent("tone.wav")
+    try writeTone(to: wav, sampleRate: 44_100, channels: 2, bitDepth: 16, seconds: 2)
+    let track = Track(seratoStoredPath: "p/tone.wav", fileURL: wav, title: "Tone", artist: "A", album: "B", duration: 2)
+    let crate = Crate(pathComponents: ["C"], trackPaths: [track.seratoStoredPath])
+    let environment = CDJExportEnvironment(requireVolumePath: false, detectFormat: { _ in .fat32 }, freeBytes: { _ in .max })
+
+    _ = try await CDJSeratoExport.export(
+        CDJSeratoExport.plan(crates: [crate], library: [track]), to: stick, environment: environment)
+    let item = try #require(CDJSeratoExport.plan(crates: [crate], library: [track]).items.first)
+    let base = String(item.export.analyzePath.dropFirst().dropLast(3))
+
+    // 2 s of a 440 Hz tone is 300 columns, mostly low band, none silent.
+    let twoEx = try Data(contentsOf: stick.appendingPathComponent(base + "2EX"))
+    let marker = try #require(twoEx.range(of: Data("PWV7".utf8)))
+    let header = twoEx.subdata(in: marker.lowerBound..<(marker.lowerBound + 24))
+    #expect(header.suffix(12).prefix(8) == Data([0, 0, 0, 3, 0, 0, 1, 0x2C]))  // stride 3, 300 entries
+    let first = [UInt8](twoEx.subdata(in: (marker.lowerBound + 24 + 3 * 100)..<(marker.lowerBound + 24 + 3 * 100 + 3)))
+    #expect(first[0] > 0 && first[0] > first[2])
+
+    let dat = try Data(contentsOf: stick.appendingPathComponent(base + "DAT"))
+    try RekordboxExportVerifier.verifyAnalysis(dat, audioPath: item.export.stickPath)
+}

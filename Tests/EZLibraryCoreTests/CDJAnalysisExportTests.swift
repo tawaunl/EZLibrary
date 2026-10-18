@@ -80,48 +80,104 @@ private func sections(in data: Data) -> [(tag: String, header: Int, length: Int,
     #expect(beats.last!.timeMs <= 5_000)
 }
 
+/// A synthetic track: a loud, bass-heavy first half and a quiet, treble-only second half.
+private func sampleColumns(count: Int = 600) -> [CDJBandColumn] {
+    (0..<count).map { index in
+        index < count / 2
+            ? CDJBandColumn(low: 220, mid: 60, high: 20, peak: 230)
+            : CDJBandColumn(low: 5, mid: 20, high: 120, peak: 120)
+    }
+}
+
+private func body(of section: (tag: String, header: Int, length: Int, offset: Int), in data: Data) -> Data {
+    data.subdata(in: (section.offset + section.header)..<(section.offset + section.length))
+}
+
 @Test func datFileHasConsistentSectionsAndBeatGrid() {
     let analysis = SeratoTrackAnalysis(
         cues: [.init(index: 0, positionMs: 2_000, color: .init(red: 1, green: 2, blue: 3), name: "Intro")],
         loops: [.init(index: 0, startMs: 4_000, endMs: 8_000, color: .init(red: 0, green: 0, blue: 0), name: "")])
     let input = CDJAnalysisInput(
-        stickPath: "/Contents/A/B/x.mp3", durationMs: 10_000,
+        stickPath: "/Contents/A/B/x.mp3", durationMs: 4_000,
         beats: [CDJBeat(beatNumber: 1, tempo: 12_000, timeMs: 500)],
-        analysis: analysis, peaks: (0..<1000).map { Float($0) / 1000 })
+        analysis: analysis, columns: sampleColumns())
     let dat = RekordboxAnalysisWriter.datFile(input)
 
     #expect(String(decoding: dat.prefix(4), as: UTF8.self) == "PMAI")
     #expect(Int(dat.subdata(in: 8..<12).reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }) == dat.count)
     let found = sections(in: dat)
-    #expect(found.map(\.tag) == ["PPTH", "PQTZ", "PWAV", "PWV2", "PCOB", "PCOB"])
+    #expect(found.map(\.tag) == ["PPTH", "PVBR", "PQTZ", "PWAV", "PWV2", "PCOB", "PCOB"])
+    #expect(found.last.map { $0.offset + $0.length } == dat.count)
     // The container's header extra and the beat grid's header word are rekordbox's constants.
     #expect(Array(dat[12..<28]) == be32(1) + be32(0x10000) + be32(0x10000) + be32(0))
-    #expect(Array(dat[(found[1].offset + 16)..<(found[1].offset + 20)]) == be32(0x0008_0000))
-    #expect(found.last.map { $0.offset + $0.length } == dat.count)
-    #expect(found[2].length - found[2].header == 400)
-    #expect(found[3].length - found[3].header == 100)
+    #expect(Array(dat[(found[2].offset + 16)..<(found[2].offset + 20)]) == be32(0x0008_0000))
+    // rekordbox 6 and 7 reject a .DAT without its VBR seek table.
+    #expect(found[1].header == 16)
+    #expect(found[1].length - found[1].header == 401 * 4)
+    #expect(found[3].length - found[3].header == 400)
+    #expect(found[4].length - found[4].header == 100)
     // Hot cues (A-C) first, then the memory list holding the loop.
-    #expect(dat[found[4].offset + 12 + 3] == 1)
-    #expect(found[4].length - found[4].header == 0x38)
-    #expect(dat[found[5].offset + 12 + 3] == 0)
+    #expect(dat[found[5].offset + 12 + 3] == 1)
     #expect(found[5].length - found[5].header == 0x38)
+    #expect(dat[found[6].offset + 12 + 3] == 0)
+    #expect(found[6].length - found[6].header == 0x38)
 }
 
-@Test func extFileCarriesColouredCuesAndScrollWaveform() {
+@Test func extFileCarriesCuesAndColourWaveforms() {
     let input = CDJAnalysisInput(
         stickPath: "/Contents/A/B/x.mp3", durationMs: 4_000,
         analysis: SeratoTrackAnalysis(cues: [
             .init(index: 1, positionMs: 100, color: .init(red: 9, green: 8, blue: 7), name: "")]),
-        peaks: [0.1, 0.9, 0.5])
+        columns: sampleColumns())
     let ext = RekordboxAnalysisWriter.extFile(input)
     let found = sections(in: ext)
-    #expect(found.map(\.tag) == ["PPTH", "PWV3", "PCOB", "PCOB", "PCO2", "PCO2"])
-    #expect(found[1].length - found[1].header == 600)  // 4 s at 150 columns/s
+    #expect(found.map(\.tag) == ["PPTH", "PWV3", "PCOB", "PCOB", "PCO2", "PCO2", "PWV5", "PWV4"])
+    #expect(found[1].length - found[1].header == 600)  // one byte per 1/150 s
+    #expect(found[6].length - found[6].header == 1200)  // two bytes per column
+    #expect(found[7].length - found[7].header == 1200 * 6)  // 1,200 columns of six bytes
     // Hot cue B lives in the extended list only: the legacy EXT lists start at D.
     #expect(found[2].length == found[2].header)
     #expect(found[4].length - found[4].header == 88)
-    let hotCues = ext.subdata(in: found[4].offset..<(found[4].offset + found[4].length))
-    #expect(hotCues.range(of: Data([0, 9, 8, 7])) == nil)  // snapped to the nearest palette colour
+    #expect(body(of: found[4], in: ext).range(of: Data([0, 9, 8, 7])) == nil)  // snapped to the palette
+    // Scroll headers: stride, entries, and each tag's constant.
+    func header(_ section: (tag: String, header: Int, length: Int, offset: Int)) -> [UInt32] {
+        stride(from: section.offset + 12, to: section.offset + section.header, by: 4).map { at in
+            ext.subdata(in: at..<(at + 4)).reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
+        }
+    }
+    #expect(header(found[1]) == [1, 600, 0x0096_0000])
+    #expect(header(found[6]) == [2, 600, 0x0096_0305])
+    #expect(header(found[7]) == [6, 1200, 0])
+}
+
+@Test func twoExFileHoldsTheThreeBandWaveforms() {
+    let input = CDJAnalysisInput(stickPath: "/Contents/A/B/x.mp3", durationMs: 4_000, columns: sampleColumns())
+    let twoEx = RekordboxAnalysisWriter.twoExFile(input)
+    let found = sections(in: twoEx)
+    #expect(found.map(\.tag) == ["PPTH", "PWV7", "PWV6"])
+    #expect(found[1].header == 24)
+    #expect(found[1].length - found[1].header == 600 * 3)
+    // PWV6's header is 20 bytes, not the 24 the other scroll tags use.
+    #expect(found[2].header == 20)
+    #expect(found[2].length - found[2].header == 1200 * 3)
+    // PWV7 keeps the detail range: the loud bass half reaches 220 >> 1.
+    #expect(body(of: found[1], in: twoEx).prefix(3) == Data([110, 30, 10]))
+}
+
+@Test func colourWaveformsEncodeBandsAndHeights() {
+    let bass = CDJBandColumn(low: 255, mid: 0, high: 0, peak: 255)
+    let treble = CDJBandColumn(low: 0, mid: 0, high: 255, peak: 128)
+    let ext = RekordboxAnalysisWriter.extFile(CDJAnalysisInput(
+        stickPath: "/x.mp3", durationMs: 20, columns: [bass, treble, CDJBandColumn()]))
+    let found = sections(in: ext)
+    // PWV3: whiteness (the treble share) in the top three bits, height round(31 * (peak/255)^2) below.
+    #expect([UInt8](body(of: found[1], in: ext)) == [0b000_11111, 0b111_01000, 0])
+    // PWV5: rrrgggbbbhhhhh00, colour as shares of the strongest band.
+    let words = stride(from: 0, to: 6, by: 2).map { offset -> UInt16 in
+        let bytes = [UInt8](body(of: found[6], in: ext))
+        return UInt16(bytes[offset]) << 8 | UInt16(bytes[offset + 1])
+    }
+    #expect(words == [7 << 13 | 31 << 2, 7 << 7 | 8 << 2, 0])
 }
 
 @Test func analysisFilesAreStagedForTrackWithoutAudio() async throws {
@@ -139,7 +195,10 @@ private func sections(in data: Data) -> [(tag: String, header: Int, length: Int,
     var placements: [String] = []
     let hadSeratoData = try await CDJSeratoExport.writeAnalysis(for: item, into: stage, placements: &placements)
     #expect(hadSeratoData == false)
-    #expect(placements == ["PIONEER/USBANLZ/P03B/0002F797/ANLZ0000.DAT", "PIONEER/USBANLZ/P03B/0002F797/ANLZ0000.EXT"])
+    #expect(placements == [
+        "PIONEER/USBANLZ/P03B/0002F797/ANLZ0000.DAT", "PIONEER/USBANLZ/P03B/0002F797/ANLZ0000.EXT",
+        "PIONEER/USBANLZ/P03B/0002F797/ANLZ0000.2EX"
+    ])
     for relative in placements {
         #expect(FileManager.default.fileExists(atPath: stage.appendingPathComponent(relative).path))
     }
@@ -181,12 +240,14 @@ private func sections(in data: Data) -> [(tag: String, header: Int, length: Int,
 }
 
 @Test func previewWaveformsNeverContainAZeroColumnOrExceedTheirCeiling() {
+    // Mostly silence with the odd loud column: the quiet ones must still not be zero.
     let input = CDJAnalysisInput(
-        stickPath: "/x.mp3", durationMs: 10_000, peaks: (0..<2000).map { $0 % 7 == 0 ? 1 : 0 })
+        stickPath: "/x.mp3", durationMs: 10_000,
+        columns: (0..<1500).map { $0 % 7 == 0 ? CDJBandColumn(low: 255, mid: 255, high: 255, peak: 255) : CDJBandColumn() })
     let dat = RekordboxAnalysisWriter.datFile(input)
     let found = sections(in: dat)
-    let pwav = dat[(found[2].offset + found[2].header)..<(found[2].offset + found[2].length)]
-    let pwv2 = dat[(found[3].offset + found[3].header)..<(found[3].offset + found[3].length)]
+    let pwav = body(of: found[3], in: dat)
+    let pwv2 = body(of: found[4], in: dat)
     #expect(pwav.map { $0 & 0x1f }.allSatisfy { (2...25).contains($0) })
     #expect(pwv2.allSatisfy { (1...15).contains($0) })  // height only, no whiteness bits
 }
@@ -217,4 +278,35 @@ private func sections(in data: Data) -> [(tag: String, header: Int, length: Int,
         analyzePath: "/PIONEER/USBANLZ/P000/00000001/ANLZ0000.DAT")
     let data = RekordboxPDBWriter.build(tracks: [track], playlists: [])
     #expect(data.range(of: Data("/PIONEER/USBANLZ/P000/00000001/ANLZ0000.DAT".utf8)) != nil)
+}
+
+@Test func bandAccumulatorSeparatesBassFromTreble() {
+    func columns(frequency: Double) -> [CDJBandColumn] {
+        let rate = 44_100.0
+        let samples = (0..<Int(rate)).map { Float(0.5 * sin(2 * Double.pi * frequency * Double($0) / rate)) }
+        var accumulator = CDJBandAccumulator(sampleRate: rate)
+        samples.withUnsafeBufferPointer { accumulator.push($0) }
+        return accumulator.finish()
+    }
+    let bass = columns(frequency: 60)
+    #expect(bass.count == 150)
+    let settled = bass[75]
+    #expect(settled.low > settled.mid && settled.low > settled.high)
+
+    let treble = columns(frequency: 9_000)
+    #expect(treble[75].high > treble[75].mid && treble[75].high > treble[75].low)
+    #expect(treble[75].peak > 100)  // 0.5 of full scale
+}
+
+@Test func bandAccumulatorHandlesOddSampleRatesAndSplitBuffers() {
+    var whole = CDJBandAccumulator(sampleRate: 48_000)
+    var split = CDJBandAccumulator(sampleRate: 48_000)
+    let samples = (0..<48_000).map { Float(0.4 * sin(2 * Double.pi * 440 * Double($0) / 48_000)) }
+    samples.withUnsafeBufferPointer { whole.push($0) }
+    samples.withUnsafeBufferPointer {
+        split.push(UnsafeBufferPointer(rebasing: $0[0..<12_345]))
+        split.push(UnsafeBufferPointer(rebasing: $0[12_345...]))
+    }
+    #expect(whole.finish() == split.finish())
+    #expect(whole.columns.count == 150)
 }

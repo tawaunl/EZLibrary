@@ -432,9 +432,9 @@ public enum CDJSeratoExport {
         }
         func analysisIsCurrent(_ item: CDJExportPlan.Item) -> Bool {
             guard audioIsCurrent(item), previousByKey[item.key]?.analyzePath == item.export.analyzePath else { return false }
-            let dat = volume.appendingPathComponent(String(item.export.analyzePath.dropFirst()))
-            let ext = dat.deletingPathExtension().appendingPathExtension("EXT")
-            return fileManager.fileExists(atPath: dat.path) && fileManager.fileExists(atPath: ext.path)
+            let dat = String(item.export.analyzePath.dropFirst())
+            return [dat, replacingExtension(of: dat, with: "EXT"), replacingExtension(of: dat, with: "2EX")]
+                .allSatisfy { fileManager.fileExists(atPath: volume.appendingPathComponent($0).path) }
         }
 
         let needed = plan.items.filter { !audioIsCurrent($0) }.reduce(0) { $0 + $1.export.fileSize }
@@ -549,21 +549,20 @@ public enum CDJSeratoExport {
     ) async throws -> Bool {
         let seratoAnalysis = SeratoAnalysisTagReader.analysis(forFileAt: item.source)
         let durationMs = item.export.durationSeconds * 1000
-        // A track we can't draw a waveform for still gets its cues and beat grid.
-        let waveform = try? await AudioWaveformSampler.waveform(
-            forFileAt: item.source, resolution: .perSecond(Double(RekordboxAnalysisWriter.scrollColumnsPerSecond)))
+        // A track we can't decode still gets its cues and beat grid, and silent waveforms.
+        let bands = try? CDJBandAnalyzer.analyze(fileAt: item.source)
         let input = CDJAnalysisInput(
             stickPath: item.export.stickPath,
-            durationMs: waveform.map { Int($0.duration * 1000) } ?? durationMs,
+            durationMs: bands.map { Int($0.durationSeconds * 1000) } ?? durationMs,
             beats: RekordboxAnalysisWriter.beats(from: seratoAnalysis?.beatgrid ?? [], durationMs: durationMs),
             analysis: seratoAnalysis ?? SeratoTrackAnalysis(),
-            peaks: waveform?.peaks ?? [])
+            columns: bands?.columns ?? [])
 
         let datRelative = String(item.export.analyzePath.dropFirst())
-        let extRelative = String(datRelative.dropLast(3)) + "EXT"
         for (relative, data) in [
             (datRelative, RekordboxAnalysisWriter.datFile(input)),
-            (extRelative, RekordboxAnalysisWriter.extFile(input))
+            (replacingExtension(of: datRelative, with: "EXT"), RekordboxAnalysisWriter.extFile(input)),
+            (replacingExtension(of: datRelative, with: "2EX"), RekordboxAnalysisWriter.twoExFile(input))
         ] {
             let url = stage.appendingPathComponent(relative)
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -574,6 +573,11 @@ public enum CDJSeratoExport {
     }
 
     // MARK: - Helpers
+
+    /// `a/ANLZ0000.DAT` as `a/ANLZ0000.EXT` and so on.
+    static func replacingExtension(of path: String, with newExtension: String) -> String {
+        (path as NSString).deletingPathExtension + "." + newExtension
+    }
 
     private static func writeStaged(_ data: Data, relative: String, in publication: CDJExportPublication) throws {
         let url = publication.stagedURL(relative)
@@ -588,7 +592,8 @@ public enum CDJSeratoExport {
             paths.insert(String(removal.stickPath.dropFirst()))
             let dat = String(removal.analyzePath.dropFirst())
             paths.insert(dat)
-            paths.insert(String(dat.dropLast(3)) + "EXT")
+            paths.insert(replacingExtension(of: dat, with: "EXT"))
+            paths.insert(replacingExtension(of: dat, with: "2EX"))
         }
         return paths
     }

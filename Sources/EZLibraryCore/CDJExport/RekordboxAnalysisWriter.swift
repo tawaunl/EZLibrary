@@ -25,18 +25,18 @@ public struct CDJAnalysisInput: Sendable {
     public var durationMs: Int
     public var beats: [CDJBeat]
     public var analysis: SeratoTrackAnalysis
-    /// Normalised 0...1 peaks, any length; resampled per waveform kind.
-    public var peaks: [Float]
+    /// 150 columns per second of three-band peaks; empty when the audio couldn't be decoded.
+    public var columns: [CDJBandColumn]
 
     public init(
         stickPath: String, durationMs: Int, beats: [CDJBeat] = [],
-        analysis: SeratoTrackAnalysis = SeratoTrackAnalysis(), peaks: [Float] = []
+        analysis: SeratoTrackAnalysis = SeratoTrackAnalysis(), columns: [CDJBandColumn] = []
     ) {
         self.stickPath = stickPath
         self.durationMs = durationMs
         self.beats = beats
         self.analysis = analysis
-        self.peaks = peaks
+        self.columns = columns
     }
 }
 
@@ -54,29 +54,53 @@ public enum RekordboxAnalysisWriter {
     /// Hot cue slots on a CDJ (A–H).
     static let hotCueSlots = 8
 
+    /// `.DAT`: path, VBR table, beat grid, the two previews and the legacy cue lists
+    /// (hot cues A-C, then memory cues).
     public static func datFile(_ input: CDJAnalysisInput) -> Data {
         container([
             pathSection(input.stickPath),
+            vbrSection(),
             beatGridSection(input.beats),
-            previewSection(input.peaks, columns: previewColumns, fourCC: "PWAV"),
-            previewSection(input.peaks, columns: tinyPreviewColumns, fourCC: "PWV2"),
-            // The legacy lists in the .DAT hold hot cues A-C and the memory cues.
+            previewSection(columns(of: input), count: previewColumns, fourCC: "PWAV"),
+            previewSection(columns(of: input), count: tinyPreviewColumns, fourCC: "PWV2"),
             legacyCueSection(input.analysis, hot: true, slots: [1, 2, 3]),
             legacyCueSection(input.analysis, hot: false, slots: [0])
         ])
     }
 
+    /// `.EXT`: the scrolling waveforms, the legacy cue lists for hot cues D-P
+    /// and an empty memory list, then the extended cue lists with colour and
+    /// comment, and the colour waveforms.
     public static func extFile(_ input: CDJAnalysisInput) -> Data {
-        container([
+        let bands = columns(of: input)
+        return container([
             pathSection(input.stickPath),
-            scrollWaveformSection(input.peaks, durationMs: input.durationMs),
-            // The legacy lists in the .EXT hold hot cues D-P and an empty memory list;
-            // the extended lists below carry every cue with colour and comment.
+            scrollSection("PWV3", stride: 1, trailer: 0x0096_0000, data: detailBytes(bands)),
             legacyCueSection(input.analysis, hot: true, slots: Set(4...16)),
             legacyCueSection(input.analysis, hot: false, slots: []),
             extendedCueSection(input.analysis, hot: true),
-            extendedCueSection(input.analysis, hot: false)
+            extendedCueSection(input.analysis, hot: false),
+            scrollSection("PWV5", stride: 2, trailer: 0x0096_0305, data: colourDetailBytes(bands)),
+            scrollSection("PWV4", stride: 6, trailer: 0, data: colourPreviewBytes(bands))
         ])
+    }
+
+    /// `.2EX`: the CDJ-3000's three-band waveforms.
+    public static func twoExFile(_ input: CDJAnalysisInput) -> Data {
+        let bands = columns(of: input)
+        return container([
+            pathSection(input.stickPath),
+            scrollSection("PWV7", stride: 3, trailer: 0x0096_0000, data: bandDetailBytes(bands)),
+            scrollSection("PWV6", stride: 3, trailer: nil, data: bandOverviewBytes(bands))
+        ])
+    }
+
+    /// The input's columns, or silence of the right length when the audio couldn't be decoded,
+    /// so every file still has the sections a player expects.
+    private static func columns(of input: CDJAnalysisInput) -> [CDJBandColumn] {
+        if !input.columns.isEmpty { return input.columns }
+        let count = max(1, input.durationMs * scrollColumnsPerSecond / 1000)
+        return [CDJBandColumn](repeating: CDJBandColumn(), count: count)
     }
 
     // MARK: - Beat grid
@@ -227,40 +251,141 @@ public enum RekordboxAnalysisWriter {
     }
 
     // MARK: - Waveforms
+    //
+    // The encodings follow rekordbox's own files. The five-bit heights don't share a
+    // ceiling (`PWAV` 25, `PWV2` 15, the scrolling tags 31), and neither preview may
+    // contain a zero column or a Nexus-era deck discards the whole preview.
 
-    /// `PWAV` (400 columns) and `PWV2` (100). Neither may contain a zero column,
-    /// or a Nexus-era deck discards the whole preview. `PWAV` stops at 25 and
-    /// `PWV2` at 15, and `PWV2` has no whiteness bits.
-    private static func previewSection(_ peaks: [Float], columns: Int, fourCC: String) -> Data {
+    /// The loudest of each field over the columns that fall in each of `count` buckets.
+    private static func resample(_ columns: [CDJBandColumn], to count: Int) -> [CDJBandColumn] {
+        guard !columns.isEmpty else { return [CDJBandColumn](repeating: CDJBandColumn(), count: count) }
+        return (0..<count).map { bucket in
+            let start = bucket * columns.count / count
+            let end = min(columns.count, max(start + 1, (bucket + 1) * columns.count / count))
+            return columns[start..<end].reduce(CDJBandColumn()) {
+                CDJBandColumn(
+                    low: max($0.low, $1.low), mid: max($0.mid, $1.mid),
+                    high: max($0.high, $1.high), peak: max($0.peak, $1.peak))
+            }
+        }
+    }
+
+    /// A band scaled to the 44-step range the previews and `PWV6` use.
+    private static func band(_ value: UInt8) -> UInt32 { UInt32(value) * 44 / 255 }
+
+    /// A preview column's height: its loudest band, up to `ceiling`.
+    private static func previewHeight(_ column: CDJBandColumn, ceiling: UInt32) -> UInt32 {
+        let loudest = max(band(column.low), band(column.mid), band(column.high))
+        return min(ceiling, loudest * ceiling / 44)
+    }
+
+    /// A scrolling column's height: its sample peak squared, rounded into five bits.
+    private static func detailHeight(_ column: CDJBandColumn) -> UInt32 {
+        let full: UInt32 = 255 * 255
+        let peak = UInt32(column.peak)
+        return min(31, (31 * peak * peak + full / 2) / full)
+    }
+
+    /// Height in the low five bits, and above it how much of the column is treble.
+    private static func monoByte(_ column: CDJBandColumn, height: UInt32) -> UInt8 {
+        let total = UInt32(column.low) + UInt32(column.mid) + UInt32(column.high)
+        let whiteness = total == 0 ? 0 : (UInt32(column.high) * 7 + total / 2) / total
+        return UInt8((min(whiteness, 7) << 5) | min(height, 31))
+    }
+
+    /// `PWAV` (400 columns, height 2...25 plus whiteness) or `PWV2` (100 columns, height 1...15 alone).
+    private static func previewSection(_ bands: [CDJBandColumn], count: Int, fourCC: String) -> Data {
         let isMain = fourCC == "PWAV"
-        let low = isMain ? 2 : 1
-        let high = isMain ? 25 : 15
-        let values = AudioWaveformSampler.resample(peaks, to: columns)
         var body = Data()
-        for index in 0..<columns {
-            let peak = index < values.count ? max(0, min(1, values[index])) : 0
-            let height = UInt8(low + Int((peak * Float(high - low)).rounded()))
-            body.append(isMain ? (5 << 5) | height : height)
+        for column in resample(bands, to: count) {
+            if isMain {
+                let byte = monoByte(column, height: previewHeight(column, ceiling: 25))
+                body.append((byte & 0xe0) | max(byte & 0x1f, 2))
+            } else {
+                body.append(UInt8(min(max(previewHeight(column, ceiling: 15), 1), 15)))
+            }
         }
         var extra = Data()
-        extra.appendBE(UInt32(columns))
+        extra.appendBE(UInt32(body.count))
         extra.appendBE(UInt32(0x10000))
         return section(fourCC, headerExtra: extra, body: body)
     }
 
-    private static func scrollWaveformSection(_ peaks: [Float], durationMs: Int) -> Data {
-        let columns = max(1, durationMs * scrollColumnsPerSecond / 1000)
-        let values = AudioWaveformSampler.resample(peaks, to: columns)
-        var body = Data()
-        for index in 0..<columns {
-            let peak = index < values.count ? max(0, min(1, values[index])) : 0
-            body.append((5 << 5) | UInt8((peak * 31).rounded()))
+    private static func detailBytes(_ bands: [CDJBandColumn]) -> Data {
+        Data(bands.map { monoByte($0, height: detailHeight($0)) })
+    }
+
+    /// `PWV4`: 1,200 columns of six bytes: peak, two unknown zeros, then low, mid and high.
+    /// Mid and high are weighted down, which is what the decks' own colour matching expects.
+    private static func colourPreviewBytes(_ bands: [CDJBandColumn]) -> Data {
+        func weigh(_ value: UInt8, _ numerator: UInt32, _ denominator: UInt32) -> UInt8 {
+            UInt8(min(127, UInt32(value >> 1) * numerator / denominator))
         }
+        var body = Data()
+        for column in resample(bands, to: 1200) {
+            body.append(contentsOf: [
+                column.peak >> 1, 0, 0, column.low >> 1, weigh(column.mid, 4, 5), weigh(column.high, 13, 20)
+            ])
+        }
+        return body
+    }
+
+    /// `PWV5`: a big-endian word per column, `rrrgggbbbhhhhh00`. Red, green and blue are
+    /// the low, mid and high bands as shares of the strongest (green at most 5), so the
+    /// colour says what the column holds and the height alone how loud it is.
+    private static func colourDetailBytes(_ bands: [CDJBandColumn]) -> Data {
+        var body = Data()
+        for column in bands {
+            let low = 2 * UInt32(column.low)
+            let mid = 2 * UInt32(column.mid)
+            let high = 3 * UInt32(column.high)
+            let strongest = max(low, mid, high)
+            var red: UInt32 = 0
+            var green: UInt32 = 0
+            var blue: UInt32 = 0
+            if strongest > 0 {
+                func share(_ value: UInt32, _ full: UInt32) -> UInt32 { (2 * full * value + strongest) / (2 * strongest) }
+                red = share(low, 7)
+                green = share(mid, 5)
+                blue = share(high, 7)
+            }
+            body.appendBE(UInt16(red << 13 | green << 10 | blue << 7 | detailHeight(column) << 2))
+        }
+        return body
+    }
+
+    /// `PWV7`: three bytes per column (low, mid, high), seven-bit.
+    private static func bandDetailBytes(_ bands: [CDJBandColumn]) -> Data {
+        var body = Data()
+        for column in bands { body.append(contentsOf: [column.low >> 1, column.mid >> 1, column.high >> 1]) }
+        return body
+    }
+
+    /// `PWV6`: 1,200 columns of three bytes (low, mid, high).
+    private static func bandOverviewBytes(_ bands: [CDJBandColumn]) -> Data {
+        var body = Data()
+        for column in resample(bands, to: 1200) {
+            body.append(contentsOf: [UInt8(band(column.low)), UInt8(band(column.mid)), UInt8(band(column.high))])
+        }
+        return body
+    }
+
+    /// A scrolling waveform: the stride, the number of entries, and a tag-specific
+    /// constant. `PWV6` has no such constant, so its header is 20 bytes, not 24.
+    private static func scrollSection(_ fourCC: String, stride: Int, trailer: UInt32?, data: Data) -> Data {
         var extra = Data()
-        extra.appendBE(UInt32(1))
-        extra.appendBE(UInt32(columns))
-        extra.appendBE(UInt32(0x96_0000))
-        return section("PWV3", headerExtra: extra, body: body)
+        extra.appendBE(UInt32(stride))
+        extra.appendBE(UInt32(data.count / stride))
+        if let trailer { extra.appendBE(trailer) }
+        return section(fourCC, headerExtra: extra, body: data)
+    }
+
+    /// The seek table of a VBR file. rekordbox 6 and 7 reject a `.DAT` without one;
+    /// all zeros is what it writes for a track with no VBR frames to index.
+    private static func vbrSection() -> Data {
+        var extra = Data()
+        extra.appendBE(UInt32(0))
+        return section("PVBR", headerExtra: extra, body: Data(count: 401 * 4))
     }
 
     // MARK: - Containers

@@ -69,6 +69,7 @@ private struct Bench {
         #expect(bench.exists(String(item.export.stickPath.dropFirst())))
         #expect(bench.exists(String(item.export.analyzePath.dropFirst())))
         #expect(bench.exists(String(item.export.analyzePath.dropFirst().dropLast(3)) + "EXT"))
+        #expect(bench.exists(String(item.export.analyzePath.dropFirst().dropLast(3)) + "2EX"))
     }
     let database = try Data(contentsOf: bench.stick.appendingPathComponent("PIONEER/rekordbox/export.pdb"))
     let file = try RekordboxPDBFile(database)
@@ -287,4 +288,35 @@ private func read(_ url: URL) -> String? { try? String(contentsOf: url, encoding
     #expect(throws: CDJExportError.self) {
         try RekordboxExportVerifier.verify(database: database, plan: plan, analysis: { _ in wrong }, fileExists: { _ in true })
     }
+}
+
+@Test func aStickMissingItsThreeBandFileGetsItOnTheNextExport() async throws {
+    var bench = try Bench()
+    defer { bench.cleanUp() }
+    let one = try bench.addTrack("one")
+    let crate = Crate(pathComponents: ["Set"], trackPaths: [one.seratoStoredPath])
+    _ = try await bench.run([crate])
+    let item = bench.plan([crate]).items[0]
+    let twoEx = bench.stick.appendingPathComponent(String(item.export.analyzePath.dropFirst().dropLast(3)) + "2EX")
+    try FileManager.default.removeItem(at: twoEx)
+
+    let result = try await bench.run([crate])
+    #expect(result.filesCopied == 0)  // the audio is untouched...
+    #expect(FileManager.default.fileExists(atPath: twoEx.path))  // ...but the analysis is repaired
+}
+
+@Test func removedTracksTakeTheirThreeAnalysisFilesWithThem() async throws {
+    var bench = try Bench()
+    defer { bench.cleanUp() }
+    let one = try bench.addTrack("one", artist: "Keep")
+    let two = try bench.addTrack("two", artist: "Drop")
+    let keep = Crate(pathComponents: ["Keep"], trackPaths: [one.seratoStoredPath])
+    let drop = Crate(pathComponents: ["Drop"], trackPaths: [two.seratoStoredPath])
+    _ = try await bench.run([keep, drop])
+    let dropped = bench.plan([keep, drop]).items.first { $0.key == two.seratoStoredPath }!
+    let base = String(dropped.export.analyzePath.dropFirst().dropLast(3))
+    #expect(bench.exists(base + "2EX"))
+
+    _ = try await bench.run([keep])
+    for ext in ["DAT", "EXT", "2EX"] { #expect(!bench.exists(base + ext)) }
 }
