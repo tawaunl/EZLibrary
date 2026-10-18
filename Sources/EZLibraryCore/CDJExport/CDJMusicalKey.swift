@@ -13,13 +13,12 @@ import Foundation
 /// Turns the key text Serato stores (`Am`, `8A`, `A min`, `C#`…) into the
 /// classic key names a player's key column shows.
 ///
-/// Names follow rekordbox's classic spelling: flats for the black keys
-/// except F#, and a trailing `m` for minor. That spelling is from memory of
-/// rekordbox's key table rather than from the rbxport reference, which
-/// doesn't list the names.
+/// Names follow rekordbox's classic spelling, which the rbxport reference read off a
+/// 38,507-track rekordbox library: flats everywhere except `F#`, minor keys with a
+/// trailing `m` (`Dbm`, `Abm`, `F#m`). Camelot codes are accepted as a fallback.
 enum CDJMusicalKey {
     private static let majors = ["C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"]
-    private static let minors = ["Cm", "C#m", "Dm", "Ebm", "Em", "Fm", "F#m", "Gm", "G#m", "Am", "Bbm", "Bm"]
+    private static let minors = ["Cm", "Dbm", "Dm", "Ebm", "Em", "Fm", "F#m", "Gm", "Abm", "Am", "Bbm", "Bm"]
 
     /// Pitch classes (0 = C) by note letter, before any sharp or flat.
     private static let naturals: [Character: Int] = ["C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11]

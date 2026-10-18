@@ -39,7 +39,10 @@ private func size(ofImage data: Data) -> (Int, Int)? {
 @Test func keysAreReadFromCamelotClassicAndSpelledForms() {
     #expect(CDJMusicalKey.classicName(from: "8A") == "Am")
     #expect(CDJMusicalKey.classicName(from: "8B") == "C")
-    #expect(CDJMusicalKey.classicName(from: "12a") == "C#m")
+    #expect(CDJMusicalKey.classicName(from: "12a") == "Dbm")
+    #expect(CDJMusicalKey.classicName(from: "1A") == "Abm")
+    #expect(CDJMusicalKey.classicName(from: "C#m") == "Dbm")
+    #expect(CDJMusicalKey.classicName(from: "G#") == "Ab")
     #expect(CDJMusicalKey.classicName(from: "Am") == "Am")
     #expect(CDJMusicalKey.classicName(from: "A min") == "Am")
     #expect(CDJMusicalKey.classicName(from: "F# major") == "F#")
