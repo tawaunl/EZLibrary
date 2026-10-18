@@ -133,7 +133,8 @@ private func sections(in data: Data) -> [(tag: String, header: Int, length: Int,
         analyzePath: RekordboxAnalysisPath.datPath(forAudioPath: audioPath))
     #expect(export.analyzePath == "/PIONEER/USBANLZ/P03B/0002F797/ANLZ0000.DAT")
     let item = CDJExportPlan.Item(
-        key: "k", source: URL(fileURLWithPath: "/nonexistent/x.flac"), sourceModified: 0, export: export)
+        key: "k", source: URL(fileURLWithPath: "/nonexistent/x.flac"), sourceModified: 0, sourceSize: 0,
+        conversion: nil, export: export)
 
     var placements: [String] = []
     let hadSeratoData = try await CDJSeratoExport.writeAnalysis(for: item, into: stage, placements: &placements)

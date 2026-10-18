@@ -26,6 +26,8 @@ public struct CDJExportManifest: Codable, Equatable, Sendable {
         public var sourceSize: Int
         public var sourceModified: Double
         public var copySize: Int
+        /// The conversion recipe the copy was made with, or nil for a byte-for-byte copy.
+        public var conversion: String?
     }
 
     public struct PlaylistRecord: Codable, Equatable, Sendable {

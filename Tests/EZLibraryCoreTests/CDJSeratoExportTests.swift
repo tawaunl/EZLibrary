@@ -249,10 +249,46 @@ private func makeTrack(_ id: UInt32, title: String, artist: String = "A", album:
     var used = Set<String>()
     let url = URL(fileURLWithPath: "/m/Song?.mp3")
     let track = Track(seratoStoredPath: "m/Song?.mp3", fileURL: url, artist: "AC/DC", album: "")
-    let first = CDJSeratoExport.uniqueStickPath(for: track, used: &used)
-    let second = CDJSeratoExport.uniqueStickPath(for: track, used: &used)
-    #expect(first == "/Contents/AC_DC/Unknown Album/Song_.mp3")
-    #expect(second == "/Contents/AC_DC/Unknown Album/Song_ (2).mp3")
+    let first = CDJSeratoExport.uniqueStickPath(for: track, id: 1, used: &used)
+    let second = CDJSeratoExport.uniqueStickPath(for: track, id: 2, used: &used)
+    let third = CDJSeratoExport.uniqueStickPath(for: track, id: 3, used: &used)
+    #expect(first == "/Contents/AC_DC/UnknownAlbum/Song_.mp3")
+    // The first clash adds the track id, later ones a serial after it.
+    #expect(second == "/Contents/AC_DC/UnknownAlbum/Song_-2.mp3")
+    #expect(third == "/Contents/AC_DC/UnknownAlbum/Song_-3.mp3")
+}
+
+@Test func collisionsIgnoreCaseAndAccentForm() {
+    var used = Set<String>()
+    let composed = Track(seratoStoredPath: "a", fileURL: URL(fileURLWithPath: "/m/caf\u{E9}.mp3"), artist: "A", album: "B")
+    let decomposed = Track(seratoStoredPath: "b", fileURL: URL(fileURLWithPath: "/m/CAFE\u{301}.MP3"), artist: "a", album: "b")
+    let one = CDJSeratoExport.uniqueStickPath(for: composed, id: 1, used: &used)
+    let two = CDJSeratoExport.uniqueStickPath(for: decomposed, id: 2, used: &used)
+    #expect(one == "/Contents/A/B/caf\u{E9}.mp3")
+    #expect(two != one)
+    #expect(two.hasSuffix("-2.MP3"))
+}
+
+@Test func foldersCutAt48CharactersAndFilesAt120Bytes() {
+    let long = String(repeating: "x", count: 60)
+    #expect(CDJSeratoExport.directoryName(long, fallback: "F").count == 48)
+    #expect(CDJSeratoExport.directoryName("Dots...  ", fallback: "F") == "Dots")
+    #expect(CDJSeratoExport.directoryName("", fallback: "UnknownArtist") == "UnknownArtist")
+    #expect(CDJSeratoExport.directoryName("...", fallback: "F") == "Unknown")
+    #expect(CDJSeratoExport.directoryName("a|b:c", fallback: "F") == "a_b_c")
+
+    let name = CDJSeratoExport.fileName(stem: String(repeating: "é", count: 100), ext: "mp3")
+    #expect(name.utf8.count <= 120)
+    #expect(name.hasSuffix(".mp3"))
+    #expect(name.hasPrefix("é"))
+    #expect(CDJSeratoExport.fileName(stem: "...", ext: "wav") == "Track.wav")
+}
+
+@Test func convertedTracksGetADistinctNameAndExtension() {
+    var used = Set<String>()
+    let track = Track(seratoStoredPath: "a", fileURL: URL(fileURLWithPath: "/m/Song.flac"), artist: "A", album: "B")
+    #expect(CDJSeratoExport.uniqueStickPath(for: track, id: 7, conversion: .wav, used: &used)
+        == "/Contents/A/B/Song-cdj-7.wav")
 }
 
 @Test func planMapsNestedCratesToFoldersAndReportsProblems() throws {
@@ -287,7 +323,8 @@ private func makeTrack(_ id: UInt32, title: String, artist: String = "A", album:
     let plan = CDJSeratoExport.plan(crates: [], library: [])
     var withItem = plan
     withItem.items = [.init(
-        key: "x", source: URL(fileURLWithPath: "/x.mp3"), sourceModified: 0, export: makeTrack(1, title: "x"))]
+        key: "x", source: URL(fileURLWithPath: "/x.mp3"), sourceModified: 0, sourceSize: 0, conversion: nil,
+        export: makeTrack(1, title: "x"))]
     let planToRun = withItem
     await #expect(throws: CDJExportError.self) {
         try await CDJSeratoExport.export(planToRun, to: FileManager.default.temporaryDirectory)

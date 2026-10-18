@@ -60,7 +60,17 @@ public struct CDJExportPlan: Sendable {
         public let key: String
         public let source: URL
         public let sourceModified: Double
+        /// Size of the file in the Serato library (the stick copy differs when converted).
+        public let sourceSize: Int
+        /// How the audio is converted for the stick, or nil to copy it unchanged.
+        public let conversion: CDJAudioConversion?
         public let export: CDJExportTrack
+    }
+
+    /// A track left out because it can't be put on a stick as it is.
+    public struct Refusal: Sendable {
+        public let track: Track
+        public let reason: String
     }
 
     /// A file from an earlier export that this one no longer wants.
@@ -75,6 +85,11 @@ public struct CDJExportPlan: Sendable {
     public var missing: [Track]
     /// Tracks in a file type CDJs can't play.
     public var unsupported: [Track]
+    /// Tracks that would need converting or copying in a way that isn't possible.
+    public var refused: [Refusal] = []
+    public var options = CDJExportOptions()
+    /// How many tracks will be converted rather than copied.
+    public var convertedCount: Int { items.filter { $0.conversion != nil }.count }
     /// `PIONEER` or `.PIONEER`: the folder the stick keeps its library in.
     public var root: String = "PIONEER"
     /// The manifest this plan was made against, to notice the stick changing under it.
@@ -178,7 +193,8 @@ public enum CDJSeratoExport {
     /// Works out what an export would do, without touching the stick.
     public static func plan(
         crates: [Crate], library tracks: [Track],
-        previous: CDJExportManifest? = nil, root: String = "PIONEER"
+        previous: CDJExportManifest? = nil, root: String = "PIONEER",
+        options: CDJExportOptions = CDJExportOptions()
     ) -> CDJExportPlan {
         let byPath = Dictionary(tracks.map { ($0.seratoStoredPath, $0) }, uniquingKeysWith: { first, _ in first })
         let fileManager = FileManager.default
@@ -189,10 +205,19 @@ public enum CDJSeratoExport {
         let sortedCrates = crates.sorted { $0.pathComponents.lexicographicallyPrecedes($1.pathComponents) }
 
         // 1. The distinct playable tracks, in the order the crates first use them.
-        var ordered: [(track: Track, type: CDJFileType)] = []
+        struct Candidate {
+            var track: Track
+            var type: CDJFileType
+            var conversion: CDJAudioConversion?
+            var size: Int
+            var modified: Double
+            var probe: CDJAudioProbe?
+        }
+        var ordered: [Candidate] = []
         var seen = Set<String>()
         var missing: [Track] = []
         var unsupported: [Track] = []
+        var refused: [CDJExportPlan.Refusal] = []
         for crate in sortedCrates {
             for path in crate.trackPaths {
                 guard let track = byPath[path], seen.insert(path).inserted else { continue }
@@ -204,7 +229,23 @@ public enum CDJSeratoExport {
                     missing.append(track)
                     continue
                 }
-                ordered.append((track, type))
+                // A URL caches file attributes, and library URLs live a long time: read through a fresh one.
+                let values = try? URL(fileURLWithPath: track.fileURL.path)
+                    .resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+                let size = values?.fileSize ?? 0
+                let probe = CDJAudioProbe.read(track.fileURL)
+                switch CDJAudioCompatibility.decide(type: type, probe: probe, fileSize: size, options: options) {
+                case .copy:
+                    ordered.append(Candidate(
+                        track: track, type: type, conversion: nil, size: size,
+                        modified: values?.contentModificationDate?.timeIntervalSince1970 ?? 0, probe: probe))
+                case .convert(let target):
+                    ordered.append(Candidate(
+                        track: track, type: target.fileType, conversion: target, size: size,
+                        modified: values?.contentModificationDate?.timeIntervalSince1970 ?? 0, probe: probe))
+                case .refuse(let reason):
+                    refused.append(.init(track: track, reason: reason))
+                }
             }
         }
 
@@ -216,18 +257,19 @@ public enum CDJSeratoExport {
         var analyzePaths: [String: String] = [:]
         var ids: [String: UInt32] = [:]
 
-        func claim(_ track: Track, preferred: CDJExportManifest.TrackRecord?) {
+        func claim(_ track: Track, conversion: CDJAudioConversion?, preferred: CDJExportManifest.TrackRecord?) {
             let key = track.seratoStoredPath
             let id: UInt32
             if let preferred { id = preferred.id } else { id = nextTrackID; nextTrackID += 1 }
             ids[key] = id
             var stickPath: String
-            if let preferred, sameExtension(preferred.stickPath, track),
-               !usedStickPaths.contains(preferred.stickPath.lowercased()) {
+            if let preferred, preferred.conversion == conversion?.profile,
+               sameExtension(preferred.stickPath, track, conversion: conversion),
+               !usedStickPaths.contains(pathKey(preferred.stickPath)) {
                 stickPath = preferred.stickPath
-                usedStickPaths.insert(stickPath.lowercased())
+                usedStickPaths.insert(pathKey(stickPath))
             } else {
-                stickPath = uniqueStickPath(for: track, used: &usedStickPaths)
+                stickPath = uniqueStickPath(for: track, id: id, conversion: conversion, used: &usedStickPaths)
             }
             var analyzePath = RekordboxAnalysisPath.datPath(forAudioPath: stickPath, root: root)
             // Two audio paths that hash to the same folder would share analysis files.
@@ -235,7 +277,7 @@ public enum CDJSeratoExport {
             while !usedAnalyzePaths.insert(analyzePath).inserted {
                 attempt += 1
                 stickPath = withSuffix("-\(id)" + (attempt > 1 ? "-\(attempt)" : ""), to: stickPath)
-                usedStickPaths.insert(stickPath.lowercased())
+                usedStickPaths.insert(pathKey(stickPath))
                 analyzePath = RekordboxAnalysisPath.datPath(forAudioPath: stickPath, root: root)
             }
             stickPaths[key] = stickPath
@@ -243,39 +285,45 @@ public enum CDJSeratoExport {
         }
         // Existing tracks first, so a new track can't take a path an old one is keeping.
         for entry in ordered where previousTracks[entry.track.seratoStoredPath] != nil {
-            claim(entry.track, preferred: previousTracks[entry.track.seratoStoredPath])
+            claim(entry.track, conversion: entry.conversion, preferred: previousTracks[entry.track.seratoStoredPath])
         }
         for entry in ordered where previousTracks[entry.track.seratoStoredPath] == nil {
-            claim(entry.track, preferred: nil)
+            claim(entry.track, conversion: entry.conversion, preferred: nil)
         }
 
         var items: [CDJExportPlan.Item] = []
         var records: [CDJExportManifest.TrackRecord] = []
         let libraryID = previous?.libraryID ?? UInt32.random(in: 1...UInt32.max)
-        for (track, type) in ordered {
+        for candidate in ordered {
+            let track = candidate.track
             let key = track.seratoStoredPath
             guard let id = ids[key], let stickPath = stickPaths[key], let analyzePath = analyzePaths[key] else { continue }
-            // A URL caches file attributes, and library URLs live a long time: read through a fresh one.
-            let values = try? URL(fileURLWithPath: track.fileURL.path)
-                .resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
-            let size = values?.fileSize ?? 0
-            let modified = values?.contentModificationDate?.timeIntervalSince1970 ?? 0
             let title = track.title.isEmpty ? track.fileURL.deletingPathExtension().lastPathComponent : track.title
+            let duration = track.duration ?? candidate.probe?.durationSeconds ?? 0
+            let converted = candidate.conversion != nil
+            // A converted file is a different size, rate and bitrate from the original.
+            let copySize = converted
+                ? CDJAudioConversion.estimatedSize(durationSeconds: candidate.probe?.durationSeconds ?? duration)
+                : candidate.size
             items.append(CDJExportPlan.Item(
-                key: key, source: track.fileURL, sourceModified: modified,
+                key: key, source: track.fileURL, sourceModified: candidate.modified,
+                sourceSize: candidate.size, conversion: candidate.conversion,
                 export: CDJExportTrack(
                     id: id, title: title,
                     artist: track.artist, album: track.album, genre: track.genre,
                     label: track.label, comment: track.comment, year: track.year ?? 0,
-                    durationSeconds: Int(track.duration ?? 0), bpm: track.bpm ?? 0,
-                    bitrate: Int(track.bitrate?.filter(\.isNumber) ?? "") ?? 0,
-                    sampleRate: Int(track.sampleRate?.filter(\.isNumber) ?? "") ?? 44_100,
-                    fileSize: size, trackNumber: track.trackNumber ?? 0, fileType: type,
+                    durationSeconds: Int(duration), bpm: track.bpm ?? 0,
+                    bitrate: converted ? CDJAudioConversion.bitrateKbps
+                        : Int(track.bitrate?.filter(\.isNumber) ?? "") ?? 0,
+                    sampleRate: converted ? CDJAudioConversion.sampleRate
+                        : Int(track.sampleRate?.filter(\.isNumber) ?? "") ?? Int(candidate.probe?.sampleRate ?? 44_100),
+                    fileSize: copySize, trackNumber: track.trackNumber ?? 0, fileType: candidate.type,
                     stickPath: stickPath, dateAdded: dateString(track.dateAdded),
                     analyzePath: analyzePath)))
             records.append(CDJExportManifest.TrackRecord(
                 key: key, id: id, stickPath: stickPath, analyzePath: analyzePath,
-                sourceSize: size, sourceModified: modified, copySize: size))
+                sourceSize: candidate.size, sourceModified: candidate.modified, copySize: copySize,
+                conversion: candidate.conversion?.profile))
         }
 
         // 3. Playlists, numbered from 0 among their siblings and keeping their ids.
@@ -322,12 +370,12 @@ public enum CDJSeratoExport {
         }
 
         // 4. Whatever the last export put on the stick that this one drops or moves.
-        let keptPaths = Set(items.flatMap { [$0.export.stickPath.lowercased(), $0.export.analyzePath.lowercased()] })
+        let keptPaths = Set(items.flatMap { [pathKey($0.export.stickPath), pathKey($0.export.analyzePath)] })
         let removals = (previous?.tracks ?? []).filter { old in
             let kept = ids[old.key] != nil
             return !kept || old.stickPath != stickPaths[old.key] || old.analyzePath != analyzePaths[old.key]
         }.map { CDJExportPlan.Removal(stickPath: $0.stickPath, analyzePath: $0.analyzePath) }
-            .filter { !keptPaths.contains($0.stickPath.lowercased()) }
+            .filter { !keptPaths.contains(pathKey($0.stickPath)) }
 
         let manifest = CDJExportManifest(
             libraryID: libraryID, nextTrackID: nextTrackID, nextPlaylistID: nextPlaylistID,
@@ -335,6 +383,8 @@ public enum CDJSeratoExport {
         var plan = CDJExportPlan(
             items: items, playlists: playlists, missing: missing, unsupported: unsupported, manifest: manifest)
         plan.root = root
+        plan.refused = refused
+        plan.options = options
         plan.previous = previous
         plan.removals = removals
         return plan
@@ -375,7 +425,8 @@ public enum CDJSeratoExport {
             (plan.previous?.tracks ?? []).map { ($0.key, $0) }, uniquingKeysWith: { first, _ in first })
         func audioIsCurrent(_ item: CDJExportPlan.Item) -> Bool {
             guard let old = previousByKey[item.key], old.stickPath == item.export.stickPath,
-                  old.sourceSize == item.export.fileSize, old.sourceModified == item.sourceModified else { return false }
+                  old.sourceSize == item.sourceSize, old.sourceModified == item.sourceModified,
+                  old.conversion == item.conversion?.profile else { return false }
             let copy = volume.appendingPathComponent(String(item.export.stickPath.dropFirst()))
             return ((try? copy.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1) == old.copySize
         }
@@ -398,19 +449,33 @@ public enum CDJSeratoExport {
         var reused = 0
         var analysed = 0
         var withoutAnalysis = 0
+        // What the stick really holds, which differs from the plan's estimate once audio is converted.
+        var exports = plan.items.map(\.export)
+        var manifest = plan.manifest
         do {
             for (index, item) in plan.items.enumerated() {
                 try Task.checkCancellation()
                 let audioRelative = String(item.export.stickPath.dropFirst())
                 if audioIsCurrent(item) {
                     reused += 1
+                    exports[index].fileSize = previousByKey[item.key]?.copySize ?? item.export.fileSize
                 } else {
                     let staged = publication.stagedURL(audioRelative)
                     try fileManager.createDirectory(at: staged.deletingLastPathComponent(), withIntermediateDirectories: true)
-                    try fileManager.copyItem(at: item.source, to: staged)
+                    if let conversion = item.conversion {
+                        try CDJAudioConverter.convert(from: item.source, to: staged, as: conversion)
+                    } else {
+                        try fileManager.copyItem(at: item.source, to: staged)
+                    }
+                    let actual = (try? staged.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? item.export.fileSize
+                    guard actual <= CDJAudioConversion.maximumFileSize else {
+                        throw CDJExportError.verificationFailed("\(item.source.lastPathComponent) is too large for the stick.")
+                    }
+                    exports[index].fileSize = actual
                     placements.append(audioRelative)
                     copied += 1
                 }
+                manifest.tracks[index].copySize = exports[index].fileSize
                 if !analysisIsCurrent(item) {
                     let hadSeratoData = try await writeAnalysis(
                         for: item, into: publication.stage, placements: &placements)
@@ -420,13 +485,13 @@ public enum CDJSeratoExport {
             }
 
             let database = RekordboxPDBWriter.build(
-                tracks: plan.items.map(\.export), playlists: plan.playlists,
+                tracks: exports, playlists: plan.playlists,
                 deviceName: volume.lastPathComponent, createdDate: dateString(Date()),
                 libraryID: plan.manifest.libraryID)
             let databaseRelative = databasePath(root: plan.root)
             let manifestRelative = CDJExportManifest.relativePath(root: plan.root)
             try writeStaged(database, relative: databaseRelative, in: publication)
-            try writeStaged(try plan.manifest.encoded(), relative: manifestRelative, in: publication)
+            try writeStaged(try manifest.encoded(), relative: manifestRelative, in: publication)
 
             let removalPaths = removalRelativePaths(plan.removals)
             try RekordboxExportVerifier.verify(
@@ -528,40 +593,82 @@ public enum CDJSeratoExport {
         return paths
     }
 
-    private static func sameExtension(_ stickPath: String, _ track: Track) -> Bool {
-        (stickPath as NSString).pathExtension.lowercased() == track.fileURL.pathExtension.lowercased()
+    private static func sameExtension(_ stickPath: String, _ track: Track, conversion: CDJAudioConversion?) -> Bool {
+        let wanted = conversion?.pathExtension ?? track.fileURL.pathExtension
+        return (stickPath as NSString).pathExtension.lowercased() == wanted.lowercased()
     }
 
-    /// `/Contents/Artist/Album/File.ext`, made safe for FAT32 and unique within the export.
-    static func uniqueStickPath(for track: Track, used: inout Set<String>) -> String {
-        let artist = sanitize(track.artist, fallback: "Unknown Artist")
-        let album = sanitize(track.album, fallback: "Unknown Album")
-        let ext = track.fileURL.pathExtension
-        let base = sanitize(track.fileURL.deletingPathExtension().lastPathComponent, fallback: "Track")
-        var candidate = "/Contents/\(artist)/\(album)/\(base).\(ext)"
-        var counter = 2
-        while !used.insert(candidate.lowercased()).inserted {
-            candidate = "/Contents/\(artist)/\(album)/\(base) (\(counter)).\(ext)"
-            counter += 1
+    /// How paths are compared for collisions: FAT and macOS are both case-insensitive,
+    /// and macOS lists names decomposed while the databases hold them composed.
+    static func pathKey(_ path: String) -> String {
+        path.precomposedStringWithCanonicalMapping.lowercased()
+    }
+
+    /// `/Contents/Artist/Album/File.ext`, with every part safe for FAT32 and unique within the export.
+    ///
+    /// Folder names are cut to 48 characters, as rekordbox cuts them. A converted
+    /// track gets `-cdj-{id}` so it can't be mistaken for, or collide with, the original.
+    /// The first clash adds `-{id}`, later ones `-{id}-{n}`.
+    static func uniqueStickPath(
+        for track: Track, id: UInt32, conversion: CDJAudioConversion? = nil, used: inout Set<String>
+    ) -> String {
+        let artist = directoryName(track.artist, fallback: "UnknownArtist")
+        let album = directoryName(track.album, fallback: "UnknownAlbum")
+        let ext = conversion?.pathExtension ?? track.fileURL.pathExtension
+        var stem = track.fileURL.deletingPathExtension().lastPathComponent
+        if conversion != nil { stem += "-cdj-\(id)" }
+
+        func candidate(_ suffix: String) -> String {
+            "/Contents/\(artist)/\(album)/" + fileName(stem: stem + suffix, ext: ext)
         }
-        return candidate
+        var path = candidate("")
+        var serial = 0
+        while !used.insert(pathKey(path)).inserted {
+            serial += 1
+            path = candidate(serial == 1 ? "-\(id)" : "-\(id)-\(serial - 1)")
+        }
+        return path
     }
 
     /// `/a/b/file.mp3` with `suffix` added to the file's name before its extension.
     static func withSuffix(_ suffix: String, to path: String) -> String {
         let url = URL(fileURLWithPath: path)
         let stem = url.deletingPathExtension().lastPathComponent
-        let name = url.pathExtension.isEmpty ? stem + suffix : "\(stem)\(suffix).\(url.pathExtension)"
-        return url.deletingLastPathComponent().appendingPathComponent(name).path
+        return url.deletingLastPathComponent()
+            .appendingPathComponent(fileName(stem: stem + suffix, ext: url.pathExtension)).path
     }
 
-    static func sanitize(_ name: String, fallback: String) -> String {
+    /// Replaces what FAT forbids (`/ \ : * ? " < > |` and control characters) with `_`,
+    /// composes accents, and strips trailing dots and spaces.
+    static func fatSafe(_ name: String) -> String {
         let illegal = CharacterSet(charactersIn: "<>:\"/\\|?*").union(.controlCharacters)
-        var cleaned = name.components(separatedBy: illegal).joined(separator: "_")
-            .trimmingCharacters(in: CharacterSet(charactersIn: " .")
-            )
-        if cleaned.count > 80 { cleaned = String(cleaned.prefix(80)).trimmingCharacters(in: .whitespaces) }
-        return cleaned.isEmpty ? fallback : cleaned
+        let cleaned = name.precomposedStringWithCanonicalMapping
+            .components(separatedBy: illegal).joined(separator: "_")
+        return trimmingTrailingDotsAndSpaces(cleaned)
+    }
+
+    private static func trimmingTrailingDotsAndSpaces(_ text: String) -> String {
+        var result = Substring(text)
+        while let last = result.last, last == "." || last == " " { result = result.dropLast() }
+        return String(result)
+    }
+
+    /// A folder name: made FAT-safe, cut to 48 characters, trimmed again, never empty.
+    static func directoryName(_ name: String, fallback: String) -> String {
+        if name.trimmingCharacters(in: .whitespaces).isEmpty { return fallback }
+        let safe = fatSafe(name)
+        let cut = trimmingTrailingDotsAndSpaces(String(safe.prefix(48)))
+        return cut.isEmpty ? "Unknown" : cut
+    }
+
+    /// A file name of at most 120 bytes, keeping its extension, cut on a character boundary.
+    static func fileName(stem: String, ext: String) -> String {
+        let suffix = ext.isEmpty ? "" : "." + fatSafe(ext)
+        var safeStem = fatSafe(stem)
+        if safeStem.isEmpty { safeStem = "Track" }
+        let budget = max(1, 120 - suffix.utf8.count)
+        while safeStem.utf8.count > budget { safeStem.removeLast() }
+        return trimmingTrailingDotsAndSpaces(safeStem) + suffix
     }
 
     private static func dateString(_ date: Date?) -> String {

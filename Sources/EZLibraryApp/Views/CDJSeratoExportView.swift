@@ -18,6 +18,7 @@ struct CDJSeratoExportView: View {
     @State private var selectedCrateIDs = Set<UUID>()
     @State private var volumes: [URL] = []
     @State private var selectedVolume: URL?
+    @State private var maximumCompatibility = true
     @State private var plan: CDJExportPlan?
     @State private var isExporting = false
     @State private var progress: (done: Int, total: Int)?
@@ -75,8 +76,13 @@ struct CDJSeratoExportView: View {
                 }
                 GroupBox("3. Export") {
                     VStack(alignment: .leading, spacing: 8) {
+                        Toggle("Maximum CDJ compatibility", isOn: $maximumCompatibility)
+                        Text(maximumCompatibility
+                            ? "FLAC, M4A, hi-res and unusual-rate audio is converted to 16-bit 44.1 kHz WAV/AIFF so any CDJ can play it."
+                            : "Every file is copied exactly as it is. Older players may not play FLAC, M4A or hi-res files.")
+                            .font(.caption).foregroundStyle(.secondary)
                         if let plan { planSummary(plan) }
-                        Text("Hot cues, loops, beatgrids and waveforms are copied for MP3, AIFF, WAV, FLAC and M4A.")
+                        Text("Hot cues, loops, beatgrids and waveforms are carried over for MP3, AIFF, WAV, FLAC and M4A.")
                             .font(.caption).foregroundStyle(.secondary)
                         if let progress {
                             ProgressView(value: Double(progress.done), total: Double(max(progress.total, 1)))
@@ -94,6 +100,7 @@ struct CDJSeratoExportView: View {
         .task { refreshVolumes() }
         .onChange(of: selectedCrateIDs) { _, _ in refreshPlan() }
         .onChange(of: selectedVolume) { _, _ in refreshPlan() }
+        .onChange(of: maximumCompatibility) { _, _ in refreshPlan() }
     }
 
     private var canExport: Bool {
@@ -105,6 +112,14 @@ struct CDJSeratoExportView: View {
     private func planSummary(_ plan: CDJExportPlan) -> some View {
         let size = ByteCountFormatter().string(fromByteCount: Int64(plan.totalBytes))
         Text("\(plan.items.count) tracks, \(size), \(plan.playlists.filter { !$0.isFolder }.count) playlists")
+        if plan.convertedCount > 0 {
+            Label("\(plan.convertedCount) tracks will be converted, which takes longer and uses more space.", systemImage: "waveform")
+        }
+        if !plan.refused.isEmpty {
+            Label("\(plan.refused.count) tracks can't be put on a stick (surround audio or files over 4 GB) and will be skipped.",
+                  systemImage: "exclamationmark.triangle")
+                .foregroundStyle(.orange)
+        }
         if !plan.removals.isEmpty {
             Label(
                 "\(plan.removals.count) tracks from an earlier export aren't in the selected crates and will be removed from the stick.",
@@ -146,6 +161,7 @@ struct CDJSeratoExportView: View {
         let crates = selectedCrates
         let tracks = libraryService.tracks
         let volume = selectedVolume
+        let options = CDJExportOptions(maximumCompatibility: maximumCompatibility)
         plan = nil
         guard !crates.isEmpty else { return }
         Task {
@@ -162,7 +178,7 @@ struct CDJSeratoExportView: View {
                         return (nil, error.localizedDescription)
                     }
                 }
-                return (CDJSeratoExport.plan(crates: crates, library: tracks, previous: previous, root: root), nil)
+                return (CDJSeratoExport.plan(crates: crates, library: tracks, previous: previous, root: root, options: options), nil)
             }.value
             plan = outcome.0
             errorMessage = outcome.1
