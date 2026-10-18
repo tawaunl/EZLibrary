@@ -93,6 +93,7 @@ struct CDJSeratoExportView: View {
         }
         .task { refreshVolumes() }
         .onChange(of: selectedCrateIDs) { _, _ in refreshPlan() }
+        .onChange(of: selectedVolume) { _, _ in refreshPlan() }
     }
 
     private var canExport: Bool {
@@ -104,6 +105,12 @@ struct CDJSeratoExportView: View {
     private func planSummary(_ plan: CDJExportPlan) -> some View {
         let size = ByteCountFormatter().string(fromByteCount: Int64(plan.totalBytes))
         Text("\(plan.items.count) tracks, \(size), \(plan.playlists.filter { !$0.isFolder }.count) playlists")
+        if !plan.removals.isEmpty {
+            Label(
+                "\(plan.removals.count) tracks from an earlier export aren't in the selected crates and will be removed from the stick.",
+                systemImage: "trash")
+                .foregroundStyle(.orange)
+        }
         if !plan.missing.isEmpty {
             Label("\(plan.missing.count) tracks are missing on disk and will be skipped.", systemImage: "exclamationmark.triangle")
                 .foregroundStyle(.orange)
@@ -135,13 +142,30 @@ struct CDJSeratoExportView: View {
 
     private func refreshPlan() {
         successMessage = nil
+        errorMessage = nil
         let crates = selectedCrates
         let tracks = libraryService.tracks
+        let volume = selectedVolume
         plan = nil
         guard !crates.isEmpty else { return }
         Task {
-            let built = await Task.detached { CDJSeratoExport.plan(crates: crates, library: tracks) }.value
-            plan = built
+            // Planning is tied to the stick: it keeps track ids stable and spots what to remove.
+            let outcome = await Task.detached { () -> (CDJExportPlan?, String?) in
+                var previous: CDJExportManifest?
+                var root = "PIONEER"
+                if let volume {
+                    do {
+                        let state = try CDJSeratoExport.stickState(at: volume)
+                        root = state.root
+                        previous = state.manifest
+                    } catch {
+                        return (nil, error.localizedDescription)
+                    }
+                }
+                return (CDJSeratoExport.plan(crates: crates, library: tracks, previous: previous, root: root), nil)
+            }.value
+            plan = outcome.0
+            errorMessage = outcome.1
         }
     }
 
@@ -160,6 +184,8 @@ struct CDJSeratoExportView: View {
                 }.value
                 successMessage = "Wrote \(result.tracksWritten) tracks and \(result.playlistCount) playlists "
                     + "(\(result.filesCopied) copied, \(result.filesAlreadyOnStick) already on the stick). "
+                    + (result.tracksRemoved > 0 ? "\(result.tracksRemoved) removed. " : "")
+                    + (result.recoveredInterruptedExport ? "An earlier interrupted export was undone first. " : "")
                     + (result.tracksWithoutSeratoAnalysis > 0
                         ? "\(result.tracksWithoutSeratoAnalysis) tracks had no Serato cues or beatgrid, so they got a waveform only. " : "")
                     + "Eject the stick in Finder before unplugging it."

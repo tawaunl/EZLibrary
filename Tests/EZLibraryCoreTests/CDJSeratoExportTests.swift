@@ -61,6 +61,9 @@ private struct PDBReader {
             return String(decoding: data.subdata(in: (offset + 1)..<(offset + 1 + length)), as: UTF8.self)
         }
         let total = Int(u16(offset + 1))
+        if header == 0x40 {
+            return String(decoding: data.subdata(in: (offset + 4)..<(offset + total)), as: UTF8.self)
+        }
         let units = data.subdata(in: (offset + 4)..<(offset + total))
         return String(data: units, encoding: .utf16LittleEndian) ?? ""
     }
@@ -78,7 +81,8 @@ private func makeTrack(_ id: UInt32, title: String, artist: String = "A", album:
     #expect(reader.pageSize == 4096)
     #expect(reader.tableCount == 20)
     #expect(data.count % 4096 == 0)
-    #expect(Int(reader.u32(12)) * 4096 == data.count)
+    #expect(Int(reader.u32(12)) * 4096 >= data.count)  // trailing blank pages are named, not written
+    #expect(reader.u32(0x10) == 1)
 }
 
 @Test func pdbTrackRowsRoundTrip() throws {
@@ -129,19 +133,116 @@ private func makeTrack(_ id: UInt32, title: String, artist: String = "A", album:
     #expect(entries.allSatisfy { reader.u32($0 + 8) == 2 })
 }
 
-@Test func emptyTablesStillHaveAnIndexPage() {
-    let reader = PDBReader(data: RekordboxPDBWriter.build(tracks: [], playlists: []))
+@Test func everyTableStartsWithAnIndexPageAndEndsAtItsEmptyCandidate() {
+    let data = RekordboxPDBWriter.build(
+        tracks: (1...40).map { makeTrack(UInt32($0), title: "T\($0)") }, playlists: [])
+    let reader = PDBReader(data: data)
+    let populated: Set<UInt32> = [0, 1, 2, 3, 6, 16, 17, 18, 19]
     for type in UInt32(0)..<20 {
         let table = reader.table(type)
         #expect(table != nil)
-        #expect(reader.rows(inTable: type).isEmpty)
+        guard let table else { continue }
+        let index = table.first * 4096
+        #expect(data[index + 0x1b] == 0x64)
+        #expect(reader.u16(index + 0x20) == 0x1fff)
+        #expect(reader.u16(index + 0x22) == 0x1fff)
+        #expect(reader.u16(index + 0x24) == 0x03ec)
+        #expect(Int(reader.u32(index + 0x28)) == table.first)  // body names its own page
+        #expect(reader.u32(index + 0x30) == 0x03ff_ffff)
+        #expect(Array(data[(index + 0x3a)..<(index + 0x3e)]) == [0xff, 0x1f, 0xf8, 0xff])
+        #expect(reader.rows(inTable: type).isEmpty != populated.contains(type))
+        if populated.contains(type) {
+            // The last data page points at the empty candidate; data pages are flagged 0x24.
+            let last = table.last * 4096
+            #expect(data[last + 0x1b] == 0x24)
+            #expect(Int(reader.u32(last + 0x0c)) == table.empty)
+        }
     }
+}
+
+@Test func headerSequenceIsAboveEveryPageSequence() {
+    let data = RekordboxPDBWriter.build(
+        tracks: (1...600).map { makeTrack(UInt32($0), title: "Track \($0)") }, playlists: [])
+    let reader = PDBReader(data: data)
+    let pageCount = data.count / 4096
+    let highest = (1..<pageCount).map { reader.u32($0 * 4096 + 0x10) }.max() ?? 0
+    #expect(reader.u32(0x14) == highest + 1)
+}
+
+@Test func rowsCarryTheirSlotOnThePageTimes32() {
+    let tracks = (1...400).map { makeTrack(UInt32($0), title: "Track number \($0)") }
+    let reader = PDBReader(data: RekordboxPDBWriter.build(tracks: tracks, playlists: []))
+    let table = reader.table(0)!
+    var page = Int(reader.u32(table.first * 4096 + 0x0c))
+    var pages = 0
+    while page != table.empty {
+        let base = page * 4096
+        for row in 0..<Int(reader.data[base + 0x18]) {
+            let flagsPos = base + 4096 - (row / 16) * 0x24 - 4
+            let offset = Int(reader.u16(flagsPos - 2 * (row % 16 + 1)))
+            #expect(reader.u16(base + 0x28 + offset + 2) == UInt16(row * 32))
+        }
+        pages += 1
+        page = Int(reader.u32(base + 0x0c))
+    }
+    #expect(pages > 1)
+}
+
+@Test func longStringsStartOnAFourByteBoundaryOfTheirRow() {
+    let long = String(repeating: "x", count: 200)
+    let track = CDJExportTrack(
+        id: 1, title: long, artist: "LÜRUM", album: "Ålbum", stickPath: "/Contents/A/B/x.mp3")
+    let reader = PDBReader(data: RekordboxPDBWriter.build(tracks: [track], playlists: []))
+    let row = reader.rows(inTable: 0)[0]
+    let titleAt = Int(reader.u16(row + 0x5E + 17 * 2))
+    #expect(titleAt % 4 == 0)
+    #expect(reader.data[row + titleAt] == 0x40)  // long ASCII
+    #expect(reader.string(at: row + titleAt).count == 200)
+    // A UTF-16 artist name moves to 0x0c, an album's to 0x18.
+    let artist = reader.rows(inTable: 2)[0]
+    #expect(reader.data[artist + 9] == 0x0c)
+    #expect(reader.data[reader.rows(inTable: 3)[0] + 0x15] == 0x18)
+}
+
+@Test func pagesOver255RowsMarkOnlyTheLastRowAsTouched() {
+    let playlist = CDJExportPlaylist(id: 1, name: "Big", trackIDs: Array(repeating: 1, count: 400))
+    let reader = PDBReader(data: RekordboxPDBWriter.build(tracks: [makeTrack(1, title: "a")], playlists: [playlist]))
+    let table = reader.table(8)!
+    let first = Int(reader.u32(table.first * 4096 + 0x0c)) * 4096
+    let rows = Int(reader.u32(first + 0x18) & 0x1fff)
+    #expect(rows > 255)
+    #expect(reader.u16(first + 0x20) == 1)
+    #expect(Int(reader.u16(first + 0x22)) == rows - 1)
+}
+
+@Test func fixedBrowseRowsAndPropertyRowAreWritten() {
+    let reader = PDBReader(data: RekordboxPDBWriter.build(
+        tracks: [makeTrack(1, title: "a")], playlists: [], deviceName: "STICK", createdDate: "2026-10-17"))
+    #expect(reader.rows(inTable: 16).count == 27)
+    #expect(reader.rows(inTable: 17).count == 22)
+    #expect(reader.rows(inTable: 18).count == 17)
+    #expect(reader.rows(inTable: 6).count == 8)
+    let property = reader.rows(inTable: 19)
+    #expect(property.count == 1)
+    #expect(reader.u32(property[0] + 4) == 1)  // numberOfContents
+    #expect(reader.string(at: property[0] + 0x0c) == "2026-10-17")
+    // Track row: master ids at 0x14 / 0x18, subtype and trailers.
+    let row = reader.rows(inTable: 0)[0]
+    #expect(reader.u16(row) == 0x24)
+    #expect(reader.u32(row + 0x14) == 1)
+    #expect(reader.u16(row + 0x56) == 0x29)
+    #expect(reader.u16(row + 0x5c) == 3)
 }
 
 @Test func deviceSQLStringForms() {
     #expect(DeviceSQLString.encode("") == Data([0x03]))
     #expect(DeviceSQLString.encode("ab") == Data([0x07, 0x61, 0x62]))
-    #expect(DeviceSQLString.encode("é").first == 0x90)
+    // Non-ASCII is UTF-16LE with no terminator; the length counts its 4 header bytes.
+    #expect(DeviceSQLString.encode("é") == Data([0x90, 0x06, 0x00, 0x00, 0xE9, 0x00]))
+    // ASCII of 126 characters or more switches to the long form.
+    let long = DeviceSQLString.encode(String(repeating: "a", count: 126))
+    #expect(long.prefix(4) == Data([0x40, 0x82, 0x00, 0x00]))
+    #expect(DeviceSQLString.encode(String(repeating: "a", count: 125)).first == UInt8(126 * 2 + 1))
 }
 
 @Test func stickPathsAreFATSafeAndUnique() {
@@ -183,10 +284,43 @@ private func makeTrack(_ id: UInt32, title: String, artist: String = "A", album:
 }
 
 @Test func exportRefusesPathsThatAreNotVolumes() async {
-    let plan = CDJExportPlan(
-        items: [.init(source: URL(fileURLWithPath: "/x.mp3"), export: makeTrack(1, title: "x"))],
-        playlists: [], missing: [], unsupported: [])
+    let plan = CDJSeratoExport.plan(crates: [], library: [])
+    var withItem = plan
+    withItem.items = [.init(
+        key: "x", source: URL(fileURLWithPath: "/x.mp3"), sourceModified: 0, export: makeTrack(1, title: "x"))]
+    let planToRun = withItem
     await #expect(throws: CDJExportError.self) {
-        try await CDJSeratoExport.export(plan, to: FileManager.default.temporaryDirectory)
+        try await CDJSeratoExport.export(planToRun, to: FileManager.default.temporaryDirectory)
+    }
+}
+
+@Test func playlistsAreNumberedFromZeroAmongTheirSiblings() {
+    let crates = [
+        Crate(pathComponents: ["Folder", "One"]), Crate(pathComponents: ["Folder", "Two"]),
+        Crate(pathComponents: ["Solo"])
+    ]
+    let plan = CDJSeratoExport.plan(crates: crates, library: [])
+    func order(_ name: String) -> UInt32? { plan.playlists.first { $0.name == name }?.sortOrder }
+    #expect(order("Folder") == 0)
+    #expect(order("One") == 0)
+    #expect(order("Two") == 1)
+    #expect(order("Solo") == 1)
+}
+
+@Test func planGivesEveryTrackItsOwnHashedAnalysisFolder() throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cdjhash-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    var tracks: [Track] = []
+    for index in 0..<50 {
+        let url = dir.appendingPathComponent("song\(index).mp3")
+        try Data("x".utf8).write(to: url)
+        tracks.append(Track(seratoStoredPath: "p/song\(index).mp3", fileURL: url, title: "S\(index)"))
+    }
+    let plan = CDJSeratoExport.plan(
+        crates: [Crate(pathComponents: ["All"], trackPaths: tracks.map(\.seratoStoredPath))], library: tracks)
+    #expect(Set(plan.items.map(\.export.analyzePath)).count == 50)
+    for item in plan.items {
+        #expect(item.export.analyzePath == RekordboxAnalysisPath.datPath(forAudioPath: item.export.stickPath))
     }
 }

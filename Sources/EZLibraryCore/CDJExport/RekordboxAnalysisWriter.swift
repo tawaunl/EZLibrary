@@ -60,19 +60,22 @@ public enum RekordboxAnalysisWriter {
             beatGridSection(input.beats),
             previewSection(input.peaks, columns: previewColumns, fourCC: "PWAV"),
             previewSection(input.peaks, columns: tinyPreviewColumns, fourCC: "PWV2"),
-            cueListSection(input.analysis, hot: false),
-            cueListSection(input.analysis, hot: true)
+            // The legacy lists in the .DAT hold hot cues A-C and the memory cues.
+            legacyCueSection(input.analysis, hot: true, slots: [1, 2, 3]),
+            legacyCueSection(input.analysis, hot: false, slots: [0])
         ])
     }
 
     public static func extFile(_ input: CDJAnalysisInput) -> Data {
         container([
             pathSection(input.stickPath),
-            cueListSection(input.analysis, hot: false),
-            cueListSection(input.analysis, hot: true),
-            extendedCueSection(input.analysis, hot: false),
+            scrollWaveformSection(input.peaks, durationMs: input.durationMs),
+            // The legacy lists in the .EXT hold hot cues D-P and an empty memory list;
+            // the extended lists below carry every cue with colour and comment.
+            legacyCueSection(input.analysis, hot: true, slots: Set(4...16)),
+            legacyCueSection(input.analysis, hot: false, slots: []),
             extendedCueSection(input.analysis, hot: true),
-            scrollWaveformSection(input.peaks, durationMs: input.durationMs)
+            extendedCueSection(input.analysis, hot: false)
         ])
     }
 
@@ -85,27 +88,29 @@ public enum RekordboxAnalysisWriter {
         var beatIndex = 0
         let limit = 200_000
 
-        func add(time: Double, tempoHundredths: Int) {
+        func add(time: Double, bpm: Double) {
             defer { beatIndex += 1 }
-            let ms = Int((time * 1000).rounded())
+            let ms = Int((time * 1000).rounded(.toNearestOrEven))
             guard ms >= 0, beats.count < limit else { return }
-            beats.append(CDJBeat(beatNumber: beatIndex % 4 + 1, tempo: tempoHundredths, timeMs: ms))
+            // Tempo is stored in hundredths of a BPM, clamped to what a deck accepts.
+            let tempo = Int((min(max(bpm, 40), 499) * 100).rounded(.toNearestOrEven))
+            beats.append(CDJBeat(beatNumber: beatIndex % 4 + 1, tempo: tempo, timeMs: ms))
         }
 
         for (position, marker) in markers.enumerated() {
             if let count = marker.beatsToNextMarker, position + 1 < markers.count, count > 0 {
                 let span = markers[position + 1].positionSeconds - marker.positionSeconds
                 guard span > 0 else { continue }
-                let tempo = Int((60 * Double(count) / span * 100).rounded())
+                let bpm = 60 * Double(count) / span
                 for beat in 0..<count {
-                    add(time: marker.positionSeconds + span * Double(beat) / Double(count), tempoHundredths: tempo)
+                    add(time: marker.positionSeconds + span * Double(beat) / Double(count), bpm: bpm)
                 }
             } else if let bpm = marker.bpm, bpm > 0 {
                 let interval = 60 / bpm
                 var time = marker.positionSeconds
                 let end = Double(durationMs) / 1000
                 while time <= end, beats.count < limit {
-                    add(time: time, tempoHundredths: Int((bpm * 100).rounded()))
+                    add(time: time, bpm: bpm)
                     time += interval
                 }
             }
@@ -116,7 +121,8 @@ public enum RekordboxAnalysisWriter {
     private static func beatGridSection(_ beats: [CDJBeat]) -> Data {
         var extra = Data()
         extra.appendBE(UInt32(0))
-        extra.appendBE(UInt32(0x0080_0000))
+        // Low 16 bits are a signed millisecond grid shift; we apply none.
+        extra.appendBE(UInt32(0x0008_0000))
         extra.appendBE(UInt32(beats.count))
         var body = Data()
         for beat in beats {
@@ -129,7 +135,17 @@ public enum RekordboxAnalysisWriter {
 
     // MARK: - Cues
 
-    private static func memoryAndHotCues(_ analysis: SeratoTrackAnalysis, hot: Bool) -> [CueRecord] {
+    private struct CueRecord {
+        /// 0 for a memory cue, 1-16 for hot cues A-P.
+        var slot: Int
+        var isLoop: Bool
+        var startMs: Int
+        var endMs: Int?
+        var color: SeratoTrackAnalysis.RGB
+        var name: String
+    }
+
+    private static func cueRecords(_ analysis: SeratoTrackAnalysis, hot: Bool) -> [CueRecord] {
         if hot {
             return analysis.cues.filter { $0.index < hotCueSlots }.map {
                 CueRecord(slot: $0.index + 1, isLoop: false, startMs: $0.positionMs, endMs: nil,
@@ -144,35 +160,30 @@ public enum RekordboxAnalysisWriter {
         }
     }
 
-    private struct CueRecord {
-        var slot: Int
-        var isLoop: Bool
-        var startMs: Int
-        var endMs: Int?
-        var color: SeratoTrackAnalysis.RGB
-        var name: String
-    }
-
-    private static func cueListSection(_ analysis: SeratoTrackAnalysis, hot: Bool) -> Data {
-        let records = memoryAndHotCues(analysis, hot: hot)
+    /// A `PCOB` list of 56-byte `PCPT` entries. `slots` limits which hot cues it holds.
+    private static func legacyCueSection(_ analysis: SeratoTrackAnalysis, hot: Bool, slots: Set<Int>) -> Data {
+        let records = cueRecords(analysis, hot: hot).filter { slots.contains($0.slot) }
         var extra = Data()
         extra.appendBE(UInt32(hot ? 1 : 0))
         extra.appendBE(UInt16(0))
         extra.appendBE(UInt16(records.count))
-        extra.appendBE(UInt32(hot ? 0 : records.count))
+        // 0xffffffff for hot and empty lists; otherwise the count less one.
+        extra.appendBE(hot || records.isEmpty ? UInt32.max : UInt32(records.count - 1))
         var body = Data()
-        for record in records {
+        for (index, record) in records.enumerated() {
             body.append(Data("PCPT".utf8))
             body.appendBE(UInt32(0x1c))
             body.appendBE(UInt32(0x38))
             body.appendBE(UInt32(record.slot))
-            body.appendBE(UInt32(1))
+            body.appendBE(UInt32(0))  // 4 would mark an active loop
             body.appendBE(UInt32(0x10000))
-            body.appendBE(UInt16(0xffff))
-            body.appendBE(UInt16(0xffff))
+            // Memory entries link to their neighbours; hot cues don't.
+            let previous: UInt16 = !hot && index > 0 ? UInt16(index - 1) : 0xffff
+            let next: UInt16 = !hot && index + 1 < records.count ? UInt16(index + 1) : 0xffff
+            body.appendBE(previous)
+            body.appendBE(next)
             body.append(record.isLoop ? 2 : 1)
-            body.append(0)
-            body.appendBE(UInt16(1000))
+            body.append(contentsOf: [0x00, 0x03, 0xE8])
             body.appendBE(UInt32(record.startMs))
             body.appendBE(UInt32(record.endMs ?? 0xffff_ffff))
             body.append(Data(count: 16))
@@ -180,32 +191,36 @@ public enum RekordboxAnalysisWriter {
         return section("PCOB", headerExtra: extra, body: body)
     }
 
+    /// A `PCO2` list of `PCP2` entries: 88 bytes plus the UTF-16 comment.
     private static func extendedCueSection(_ analysis: SeratoTrackAnalysis, hot: Bool) -> Data {
-        let records = memoryAndHotCues(analysis, hot: hot)
+        let records = cueRecords(analysis, hot: hot)
         var extra = Data()
         extra.appendBE(UInt32(hot ? 1 : 0))
         extra.appendBE(UInt16(records.count))
         extra.appendBE(UInt16(0))
         var body = Data()
         for record in records {
-            let comment = utf16BE(record.name)
+            // A non-empty comment is stored with its terminating NUL.
+            var comment = record.name.isEmpty ? Data() : utf16BE(record.name)
+            if !comment.isEmpty { comment.append(contentsOf: [0, 0]) }
+            let colour = RekordboxCuePalette.nearest(to: record.color)
+
             var entry = Data()
+            entry.append(Data("PCP2".utf8))
+            entry.appendBE(UInt32(0x10))
+            entry.appendBE(UInt32(88 + comment.count))
             entry.appendBE(UInt32(record.slot))
             entry.append(record.isLoop ? 2 : 1)
-            entry.append(0)
-            entry.appendBE(UInt16(1000))
+            entry.append(contentsOf: [0x00, 0x03, 0xE8])
             entry.appendBE(UInt32(record.startMs))
             entry.appendBE(UInt32(record.endMs ?? 0xffff_ffff))
-            entry.append(Data(count: 8))  // colour id + reserved
-            entry.appendBE(UInt16(0))
-            entry.appendBE(UInt16(0))
+            entry.append(0x00)  // memory colour id; hot cues use 0
+            entry.append(0x01)
+            entry.append(Data(count: 0x28 - entry.count))  // loop fraction fields stay zero
             entry.appendBE(UInt32(comment.count))
             entry.append(comment)
-            entry.append(contentsOf: [0, record.color.red, record.color.green, record.color.blue])
-            entry.append(Data(count: 4))
-            body.append(Data("PCP2".utf8))
-            body.appendBE(UInt32(0x10))
-            body.appendBE(UInt32(12 + entry.count))
+            entry.append(contentsOf: [colour.code, colour.red, colour.green, colour.blue])
+            entry.append(Data(count: 88 + comment.count - entry.count))
             body.append(entry)
         }
         return section("PCO2", headerExtra: extra, body: body)
@@ -213,14 +228,19 @@ public enum RekordboxAnalysisWriter {
 
     // MARK: - Waveforms
 
+    /// `PWAV` (400 columns) and `PWV2` (100). Neither may contain a zero column,
+    /// or a Nexus-era deck discards the whole preview. `PWAV` stops at 25 and
+    /// `PWV2` at 15, and `PWV2` has no whiteness bits.
     private static func previewSection(_ peaks: [Float], columns: Int, fourCC: String) -> Data {
-        let heightMax: Float = fourCC == "PWAV" ? 31 : 15
+        let isMain = fourCC == "PWAV"
+        let low = isMain ? 2 : 1
+        let high = isMain ? 25 : 15
         let values = AudioWaveformSampler.resample(peaks, to: columns)
         var body = Data()
         for index in 0..<columns {
             let peak = index < values.count ? max(0, min(1, values[index])) : 0
-            let height = UInt8((peak * heightMax).rounded())
-            body.append(fourCC == "PWAV" ? (5 << 5) | height : height)
+            let height = UInt8(low + Int((peak * Float(high - low)).rounded()))
+            body.append(isMain ? (5 << 5) | height : height)
         }
         var extra = Data()
         extra.appendBE(UInt32(columns))
@@ -268,9 +288,10 @@ public enum RekordboxAnalysisWriter {
         var data = Data("PMAI".utf8)
         data.appendBE(UInt32(0x1c))
         data.appendBE(UInt32(0x1c + body.count))
+        // rekordbox's constant header extra, reproduced rather than derived.
         data.appendBE(UInt32(1))
         data.appendBE(UInt32(0x10000))
-        data.appendBE(UInt32(0))
+        data.appendBE(UInt32(0x10000))
         data.appendBE(UInt32(0))
         data.append(body)
         return data

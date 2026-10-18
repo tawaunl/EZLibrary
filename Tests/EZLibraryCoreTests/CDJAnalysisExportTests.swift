@@ -94,11 +94,16 @@ private func sections(in data: Data) -> [(tag: String, header: Int, length: Int,
     #expect(Int(dat.subdata(in: 8..<12).reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }) == dat.count)
     let found = sections(in: dat)
     #expect(found.map(\.tag) == ["PPTH", "PQTZ", "PWAV", "PWV2", "PCOB", "PCOB"])
+    // The container's header extra and the beat grid's header word are rekordbox's constants.
+    #expect(Array(dat[12..<28]) == be32(1) + be32(0x10000) + be32(0x10000) + be32(0))
+    #expect(Array(dat[(found[1].offset + 16)..<(found[1].offset + 20)]) == be32(0x0008_0000))
     #expect(found.last.map { $0.offset + $0.length } == dat.count)
     #expect(found[2].length - found[2].header == 400)
     #expect(found[3].length - found[3].header == 100)
-    // One memory loop, one hot cue.
+    // Hot cues (A-C) first, then the memory list holding the loop.
+    #expect(dat[found[4].offset + 12 + 3] == 1)
     #expect(found[4].length - found[4].header == 0x38)
+    #expect(dat[found[5].offset + 12 + 3] == 0)
     #expect(found[5].length - found[5].header == 0x38)
 }
 
@@ -106,30 +111,103 @@ private func sections(in data: Data) -> [(tag: String, header: Int, length: Int,
     let input = CDJAnalysisInput(
         stickPath: "/Contents/A/B/x.mp3", durationMs: 4_000,
         analysis: SeratoTrackAnalysis(cues: [
-            .init(index: 1, positionMs: 100, color: .init(red: 9, green: 8, blue: 7), name: "Hi")]),
+            .init(index: 1, positionMs: 100, color: .init(red: 9, green: 8, blue: 7), name: "")]),
         peaks: [0.1, 0.9, 0.5])
     let ext = RekordboxAnalysisWriter.extFile(input)
     let found = sections(in: ext)
-    #expect(found.map(\.tag) == ["PPTH", "PCOB", "PCOB", "PCO2", "PCO2", "PWV3"])
-    #expect(found[5].length - found[5].header == 600)  // 4 s at 150 columns/s
+    #expect(found.map(\.tag) == ["PPTH", "PWV3", "PCOB", "PCOB", "PCO2", "PCO2"])
+    #expect(found[1].length - found[1].header == 600)  // 4 s at 150 columns/s
+    // Hot cue B lives in the extended list only: the legacy EXT lists start at D.
+    #expect(found[2].length == found[2].header)
+    #expect(found[4].length - found[4].header == 88)
     let hotCues = ext.subdata(in: found[4].offset..<(found[4].offset + found[4].length))
-    #expect(hotCues.range(of: Data([0, 9, 8, 7])) != nil)
+    #expect(hotCues.range(of: Data([0, 9, 8, 7])) == nil)  // snapped to the nearest palette colour
 }
 
-@Test func analysisFilesAreWrittenForTrackWithoutAudio() async throws {
-    let volume = FileManager.default.temporaryDirectory.appendingPathComponent("cdjvol-\(UUID().uuidString)")
-    defer { try? FileManager.default.removeItem(at: volume) }
+@Test func analysisFilesAreStagedForTrackWithoutAudio() async throws {
+    let stage = FileManager.default.temporaryDirectory.appendingPathComponent("cdjstage-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: stage) }
+    let audioPath = "/Contents/A/B/one.mp3"
     let export = CDJExportTrack(
-        id: 300, title: "x", durationSeconds: 5, stickPath: "/Contents/A/B/x.mp3",
-        analyzePath: CDJSeratoExport.analyzePath(forTrackID: 300))
-    #expect(export.analyzePath == "/PIONEER/USBANLZ/P001/0000012C/ANLZ0000.DAT")
-    let item = CDJExportPlan.Item(source: URL(fileURLWithPath: "/nonexistent/x.flac"), export: export)
+        id: 300, title: "x", durationSeconds: 5, stickPath: audioPath,
+        analyzePath: RekordboxAnalysisPath.datPath(forAudioPath: audioPath))
+    #expect(export.analyzePath == "/PIONEER/USBANLZ/P03B/0002F797/ANLZ0000.DAT")
+    let item = CDJExportPlan.Item(
+        key: "k", source: URL(fileURLWithPath: "/nonexistent/x.flac"), sourceModified: 0, export: export)
 
-    let hadSeratoData = try await CDJSeratoExport.writeAnalysis(for: item, volume: volume)
+    var placements: [String] = []
+    let hadSeratoData = try await CDJSeratoExport.writeAnalysis(for: item, into: stage, placements: &placements)
     #expect(hadSeratoData == false)
-    let base = volume.appendingPathComponent("PIONEER/USBANLZ/P001/0000012C")
-    #expect(FileManager.default.fileExists(atPath: base.appendingPathComponent("ANLZ0000.DAT").path))
-    #expect(FileManager.default.fileExists(atPath: base.appendingPathComponent("ANLZ0000.EXT").path))
+    #expect(placements == ["PIONEER/USBANLZ/P03B/0002F797/ANLZ0000.DAT", "PIONEER/USBANLZ/P03B/0002F797/ANLZ0000.EXT"])
+    for relative in placements {
+        #expect(FileManager.default.fileExists(atPath: stage.appendingPathComponent(relative).path))
+    }
+}
+
+@Test func analysisFolderIsHashedFromTheFinalAudioPath() {
+    // Vectors from the rbxport reference, reproduced from CDJ-3000 firmware 3.20.
+    #expect(RekordboxAnalysisPath.datPath(forAudioPath: "/Contents/A/B/one.mp3")
+        == "/PIONEER/USBANLZ/P03B/0002F797/ANLZ0000.DAT")
+    #expect(RekordboxAnalysisPath.datPath(
+        forAudioPath: "/Contents/Hosanna, Westend/Drum Death - Extended Mix/20130688_drum_death_(extended_mix).mp3")
+        == "/PIONEER/USBANLZ/P002/0002583E/ANLZ0000.DAT")
+    #expect(RekordboxAnalysisPath.datPath(forAudioPath: "/Contents/a.mp3", root: ".PIONEER").hasPrefix("/.PIONEER/USBANLZ/"))
+}
+
+@Test func extendedCueEntryMatchesTheReferenceBytes() throws {
+    // Hot cue A at 83,032 ms, no loop or comment, colour code 46 (FF005C).
+    let input = CDJAnalysisInput(
+        stickPath: "/x.mp3", durationMs: 1_000,
+        analysis: SeratoTrackAnalysis(cues: [
+            .init(index: 0, positionMs: 83_032, color: .init(red: 0xFF, green: 0x00, blue: 0x5C), name: "")]))
+    let ext = RekordboxAnalysisWriter.extFile(input)
+    let found = sections(in: ext)
+    let hot = try #require(found.first { $0.tag == "PCO2" })
+    let entry = Array(ext[(hot.offset + hot.header)..<(hot.offset + hot.length)])
+    let expected: [UInt8] = [
+        0x50, 0x43, 0x50, 0x32, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x58, 0x00, 0x00, 0x00, 0x01,
+        0x01, 0x00, 0x03, 0xE8, 0x00, 0x01, 0x44, 0x58, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x01, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2E, 0xFF, 0x00, 0x5C
+    ] + [UInt8](repeating: 0, count: 40)
+    #expect(entry == expected)
+}
+
+@Test func cueColoursSnapToThePalette() {
+    #expect(RekordboxCuePalette.nearest(to: .init(red: 0xFF, green: 0x00, blue: 0x00)).code == 42)
+    #expect(RekordboxCuePalette.nearest(to: .init(red: 0x00, green: 0xFF, blue: 0x00)).code == 21)
+    #expect(RekordboxCuePalette.nearest(to: .init(red: 0xFE, green: 0xFE, blue: 0xFE)).code == 64)
+    #expect(RekordboxCuePalette.rgb.count == 65)
+}
+
+@Test func previewWaveformsNeverContainAZeroColumnOrExceedTheirCeiling() {
+    let input = CDJAnalysisInput(
+        stickPath: "/x.mp3", durationMs: 10_000, peaks: (0..<2000).map { $0 % 7 == 0 ? 1 : 0 })
+    let dat = RekordboxAnalysisWriter.datFile(input)
+    let found = sections(in: dat)
+    let pwav = dat[(found[2].offset + found[2].header)..<(found[2].offset + found[2].length)]
+    let pwv2 = dat[(found[3].offset + found[3].header)..<(found[3].offset + found[3].length)]
+    #expect(pwav.map { $0 & 0x1f }.allSatisfy { (2...25).contains($0) })
+    #expect(pwv2.allSatisfy { (1...15).contains($0) })  // height only, no whiteness bits
+}
+
+@Test func beatTemposAreClampedAndGridTimesRoundTiesToEven() {
+    let markers: [SeratoTrackAnalysis.BeatMarker] = [.init(positionSeconds: 0, beatsToNextMarker: nil, bpm: 600)]
+    let beats = RekordboxAnalysisWriter.beats(from: markers, durationMs: 1_000)
+    #expect(beats.allSatisfy { $0.tempo == 49_900 })
+}
+
+@Test func legacyMemoryListCountsAndLinksEntries() {
+    let loops = (0..<3).map {
+        SeratoTrackAnalysis.Loop(index: $0, startMs: $0 * 1000, endMs: $0 * 1000 + 500,
+                                 color: .init(red: 0, green: 0, blue: 0), name: "")
+    }
+    let dat = RekordboxAnalysisWriter.datFile(CDJAnalysisInput(
+        stickPath: "/x.mp3", durationMs: 5_000, analysis: SeratoTrackAnalysis(loops: loops)))
+    let memory = sections(in: dat).last!
+    func u32(_ at: Int) -> UInt32 { dat.subdata(in: at..<(at + 4)).reduce(0) { ($0 << 8) | UInt32($1) } }
+    #expect(u32(memory.offset + 0x14) == 2)  // count less one
+    let second = memory.offset + memory.header + 0x38
+    #expect(dat.subdata(in: (second + 0x18)..<(second + 0x1c)) == Data([0, 0, 0, 2]))  // previous 0, next 2
 }
 
 @Test func pdbTrackRowPointsAtAnalysisFiles() {

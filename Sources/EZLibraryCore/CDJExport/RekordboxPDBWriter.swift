@@ -112,27 +112,51 @@ public struct CDJExportPlaylist: Sendable, Equatable {
 /// Writes the `export.pdb` file that Pioneer/AlphaTheta players read from
 /// `PIONEER/rekordbox/` on a USB stick.
 ///
-/// The format is the undocumented "DeviceSQL" page database, as reverse
-/// engineered by the Deep Symmetry (crate-digger) and rekordcrate projects.
-/// It is a fixed-size-page file: page 0 lists the tables, and each table is
-/// one index page followed by data pages holding rows. This writer covers
-/// tracks, artists, albums, genres, labels, playlists and playlist entries;
-/// the remaining tables are written empty.
+/// The format is the undocumented "DeviceSQL" page database. The layout here
+/// follows the evidence-labelled reference in the rbxport project
+/// (`docs/reference/usb-export-db.md`), which was checked against
+/// rekordbox 7 exports. It is a fixed-size-page file: page 0 lists the
+/// tables, and each table is one index page followed by data pages of rows.
 ///
-/// This has been checked only against the published format descriptions and
-/// our own reader in the tests, not against real hardware.
+/// Checked against that reference and our own reader in the tests, not
+/// against real hardware.
 public enum RekordboxPDBWriter {
     static let pageSize = 4096
     static let pageHeaderSize = 0x28
     static let rowGroupSize = 0x24
     static let tableCount = 20
+    /// The value an index page names in place of a first data page when its table has none.
+    static let noPage: UInt32 = 0x03ff_ffff
 
-    enum TableType: UInt32 {
-        case tracks = 0, genres, artists, albums, labels, keys, colors
-        case playlistTree, playlistEntries
+    enum TableType {
+        static let tracks: UInt32 = 0
+        static let genres: UInt32 = 1
+        static let artists: UInt32 = 2
+        static let albums: UInt32 = 3
+        static let labels: UInt32 = 4
+        static let keys: UInt32 = 5
+        static let colors: UInt32 = 6
+        static let playlistTree: UInt32 = 7
+        static let playlistEntries: UInt32 = 8
+        static let columns: UInt32 = 16
+        static let categorySettings: UInt32 = 17
+        static let sortSettings: UInt32 = 18
+        static let property: UInt32 = 19
     }
 
-    public static func build(tracks: [CDJExportTrack], playlists: [CDJExportPlaylist]) -> Data {
+    /// Tables whose rows open with a u16 subtype and carry their on-page slot
+    /// (times 32) in the next u16.
+    private static let slottedTables: Set<UInt32> = [
+        TableType.tracks, TableType.artists, TableType.albums, TableType.property
+    ]
+
+    public static func build(
+        tracks: [CDJExportTrack],
+        playlists: [CDJExportPlaylist],
+        deviceName: String = "",
+        createdDate: String = "1970-01-01",
+        libraryID: UInt32 = 1
+    ) -> Data {
         var names = NameTables()
         var trackRows: [Data] = []
         for track in tracks.sorted(by: { $0.id < $1.id }) {
@@ -141,20 +165,20 @@ public enum RekordboxPDBWriter {
             let genreID = names.genreID(track.genre)
             let labelID = names.labelID(track.label)
             trackRows.append(trackRow(
-                track, artistID: artistID, albumID: albumID, genreID: genreID, labelID: labelID))
+                track, artistID: artistID, albumID: albumID, genreID: genreID,
+                labelID: labelID, libraryID: libraryID))
         }
 
         var tableRows: [UInt32: [Data]] = [:]
-        tableRows[TableType.tracks.rawValue] = trackRows
-        tableRows[TableType.genres.rawValue] = names.genres.map { idNameRow(id: $0.id, name: $0.name) }
-        tableRows[TableType.labels.rawValue] = names.labels.map { idNameRow(id: $0.id, name: $0.name) }
-        tableRows[TableType.artists.rawValue] = names.artists.enumerated().map {
-            artistRow(id: $0.element.id, name: $0.element.name, index: $0.offset)
+        tableRows[TableType.tracks] = trackRows
+        tableRows[TableType.genres] = names.genres.map { idNameRow(id: $0.id, name: $0.name) }
+        tableRows[TableType.labels] = names.labels.map { idNameRow(id: $0.id, name: $0.name) }
+        tableRows[TableType.artists] = names.artists.map { artistRow(id: $0.id, name: $0.name) }
+        tableRows[TableType.albums] = names.albums.map {
+            albumRow(id: $0.id, artistID: $0.artistID, name: $0.name)
         }
-        tableRows[TableType.albums.rawValue] = names.albums.enumerated().map {
-            albumRow(id: $0.element.id, artistID: $0.element.artistID, name: $0.element.name, index: $0.offset)
-        }
-        tableRows[TableType.playlistTree.rawValue] = playlists.sorted { $0.id < $1.id }.map(playlistTreeRow)
+        tableRows[TableType.colors] = colorNames.enumerated().map { colorRow(id: UInt16($0.offset + 1), name: $0.element) }
+        tableRows[TableType.playlistTree] = playlists.sorted { $0.id < $1.id }.map(playlistTreeRow)
         var entryRows: [Data] = []
         for playlist in playlists where !playlist.isFolder {
             for (index, trackID) in playlist.trackIDs.enumerated() {
@@ -162,163 +186,206 @@ public enum RekordboxPDBWriter {
                     entryIndex: UInt32(index + 1), trackID: trackID, playlistID: playlist.id))
             }
         }
-        tableRows[TableType.playlistEntries.rawValue] = entryRows
+        tableRows[TableType.playlistEntries] = entryRows
+        tableRows[TableType.columns] = RekordboxFixedRows.columns
+        tableRows[TableType.categorySettings] = RekordboxFixedRows.categorySettings
+        tableRows[TableType.sortSettings] = RekordboxFixedRows.sortSettings
+        tableRows[TableType.property] = [propertyRow(
+            contents: tracks.count, createdDate: createdDate, deviceName: deviceName)]
 
         return assemble(tableRows: tableRows)
     }
 
-    // MARK: - File and page layout
+    private static let colorNames = ["Pink", "Red", "Orange", "Yellow", "Green", "Aqua", "Blue", "Purple"]
 
+    // MARK: - File layout
+
+    /// Lays the file out the way rekordbox does: the header page; then every
+    /// table's index page followed by its first data page (or, for an empty
+    /// table, one zeroed page the header names as its empty candidate); then
+    /// each table's remaining pages and its empty candidate in write order,
+    /// `property` first.
     private static func assemble(tableRows: [UInt32: [Data]]) -> Data {
-        struct Layout {
-            var firstPage: UInt32 = 0
-            var lastPage: UInt32 = 0
-            var emptyCandidate: UInt32 = 0
+        struct Entry {
+            var type: UInt32
+            var first: UInt32
+            var last: UInt32
+            var candidate: UInt32
         }
-        var pages: [Data] = [Data(count: pageSize)]  // page 0 is filled in last
-        var layouts: [Layout] = []
-        // Index and data pages are finished after every table's extent is known.
-        var pendingIndexPages: [(table: UInt32, indexPage: UInt32, dataPages: [UInt32])] = []
-
-        for table in 0..<UInt32(tableCount) {
-            let packed = packPages(rows: tableRows[table] ?? [])
-            let indexPageNumber = UInt32(pages.count)
-            let firstDataPage = indexPageNumber + 1
-            let dataPageNumbers = (0..<UInt32(packed.count)).map { firstDataPage + $0 }
-            pages.append(Data(count: pageSize))  // index page, filled in below
-            pages.append(contentsOf: packed)
-            layouts.append(Layout(
-                firstPage: indexPageNumber,
-                lastPage: dataPageNumbers.last ?? indexPageNumber))
-            pendingIndexPages.append((table, indexPageNumber, dataPageNumbers))
-        }
-
-        let nextUnused = UInt32(pages.count) + UInt32(tableCount)
-        for index in 0..<tableCount {
-            layouts[index].emptyCandidate = UInt32(pages.count) + UInt32(index)
-        }
-        // Reserve one blank page per table for the "next free page" pointer.
-        for _ in 0..<tableCount { pages.append(Data(count: pageSize)) }
-
-        for (table, indexPage, dataPages) in pendingIndexPages {
-            let empty = layouts[Int(table)].emptyCandidate
-            for (position, pageNumber) in dataPages.enumerated() {
-                let next = position + 1 < dataPages.count ? dataPages[position + 1] : empty
-                finalizeDataPage(&pages[Int(pageNumber)], pageNumber: pageNumber, table: table, next: next)
-            }
-            pages[Int(indexPage)] = indexPageData(
-                pageNumber: indexPage, table: table,
-                next: dataPages.first ?? empty, dataPages: dataPages)
-        }
-
-        var header = Data()
-        header.appendLE(UInt32(0))
-        header.appendLE(UInt32(pageSize))
-        header.appendLE(UInt32(tableCount))
-        header.appendLE(nextUnused)
-        header.appendLE(UInt32(5))
-        header.appendLE(UInt32(1))
-        header.appendLE(UInt32(0))
-        for (table, layout) in layouts.enumerated() {
-            header.appendLE(UInt32(table))
-            header.appendLE(layout.emptyCandidate)
-            header.appendLE(layout.firstPage)
-            header.appendLE(layout.lastPage)
-        }
-        header.append(Data(count: pageSize - header.count))
-        pages[0] = header
-
-        return pages.reduce(into: Data()) { $0.append($1) }
-    }
-
-    /// Packs rows into data pages. Each page's header is completed later, once
-    /// its page number and successor are known.
-    private static func packPages(rows: [Data]) -> [Data] {
         var pages: [Data] = []
-        var current: [Data] = []
-        var heapUsed = 0
+        var entries: [Entry] = []
+        var nextIndex: UInt32 = 1
+        var sequence: UInt32 = 1
+        var held: [(entry: Int, rest: [Data])] = []
 
-        func capacityNeeded(rowCount: Int, heap: Int) -> Int {
-            let groups = (rowCount + 15) / 16
-            return pageHeaderSize + heap + groups * rowGroupSize
-        }
-        func flush() {
-            guard !current.isEmpty else { return }
-            pages.append(dataPageBody(rows: current))
-            current = []
-            heapUsed = 0
+        func append(_ page: Data) -> UInt32 {
+            pages.append(page)
+            defer { nextIndex += 1 }
+            return nextIndex
         }
 
-        for row in rows {
-            if capacityNeeded(rowCount: current.count + 1, heap: heapUsed + row.count) > pageSize {
-                flush()
+        for type in 0..<UInt32(tableCount) {
+            let rows = tableRows[type] ?? []
+            let indexAt = nextIndex
+            if rows.isEmpty {
+                let candidate = indexAt + 1
+                _ = append(indexPage(index: indexAt, type: type, next: candidate, firstDataPage: nil))
+                _ = append(Data(count: pageSize))
+                entries.append(Entry(type: type, first: indexAt, last: indexAt, candidate: candidate))
+            } else {
+                var dataPages = paginate(rows, slotted: slottedTables.contains(type))
+                let firstData = indexAt + 1
+                _ = append(indexPage(index: indexAt, type: type, next: firstData, firstDataPage: firstData))
+                var first = dataPages.removeFirst()
+                first.writeLE(firstData, at: 0x04)
+                first.writeLE(type, at: 0x08)
+                _ = append(first)
+                entries.append(Entry(type: type, first: indexAt, last: firstData, candidate: .max))
+                held.append((entries.count - 1, dataPages))
             }
-            current.append(row)
-            heapUsed += row.count
         }
-        flush()
-        return pages
-    }
 
-    /// A data page with its heap and row index filled in; the header fields
-    /// that depend on neighbours are set by `finalizeDataPage`.
-    private static func dataPageBody(rows: [Data]) -> Data {
-        var page = Data(count: pageSize)
-        var heapOffset = 0
-        var offsets: [Int] = []
-        for row in rows {
-            page.replaceSubrange(
-                (pageHeaderSize + heapOffset)..<(pageHeaderSize + heapOffset + row.count), with: row)
-            offsets.append(heapOffset)
-            heapOffset += row.count
-        }
-        for (group, start) in stride(from: 0, to: rows.count, by: 16).enumerated() {
-            let flagsPos = pageSize - group * rowGroupSize - 4
-            var presence: UInt16 = 0
-            for slot in 0..<min(16, rows.count - start) {
-                page.writeLE(UInt16(offsets[start + slot]), at: flagsPos - 2 * (slot + 1))
-                presence |= 1 << UInt16(slot)
+        // `property` is written first; the rest follow in table order.
+        held.sort { lhs, rhs in
+            func rank(_ entry: Int) -> (Int, UInt32) {
+                entries[entry].type == TableType.property ? (0, 0) : (1, entries[entry].type)
             }
-            page.writeLE(presence, at: flagsPos)
-            page.writeLE(UInt16(0), at: flagsPos + 2)
+            return rank(lhs.entry) < rank(rhs.entry)
         }
-        let groups = (rows.count + 15) / 16
-        let free = pageSize - pageHeaderSize - heapOffset - groups * rowGroupSize
-        page[0x18] = UInt8(truncatingIfNeeded: rows.count)
-        page[0x1b] = 0x34
-        page.writeLE(UInt16(free), at: 0x1c)
-        page.writeLE(UInt16(heapOffset), at: 0x1e)
-        page.writeLE(UInt16(rows.count), at: 0x22)
-        return page
+        for (entryAt, rest) in held {
+            let type = entries[entryAt].type
+            var lastPage = Int(entries[entryAt].last) - 1
+            sequence += 1
+            pages[lastPage].writeLE(sequence, at: 0x10)
+            for var page in rest {
+                let index = nextIndex
+                page.writeLE(index, at: 0x04)
+                page.writeLE(type, at: 0x08)
+                sequence += 1
+                page.writeLE(sequence, at: 0x10)
+                pages[lastPage].writeLE(index, at: 0x0c)
+                _ = append(page)
+                lastPage = pages.count - 1
+                entries[entryAt].last = index
+            }
+            let candidate = append(Data(count: pageSize))
+            pages[lastPage].writeLE(candidate, at: 0x0c)
+            entries[entryAt].candidate = candidate
+        }
+
+        // Trailing zeroed pages aren't written; the header still names them.
+        while let last = pages.last, last.allSatisfy({ $0 == 0 }) { pages.removeLast() }
+
+        var header = Data(count: pageSize)
+        header.writeLE(UInt32(pageSize), at: 0x04)
+        header.writeLE(UInt32(tableCount), at: 0x08)
+        header.writeLE(nextIndex, at: 0x0c)
+        header.writeLE(UInt32(1), at: 0x10)
+        // One past every page's sequence: a player rolls back pages carrying the header's.
+        header.writeLE(sequence + 1, at: 0x14)
+        for (position, entry) in entries.enumerated() {
+            let base = 0x1c + position * 16
+            header.writeLE(entry.type, at: base)
+            header.writeLE(entry.candidate, at: base + 4)
+            header.writeLE(entry.first, at: base + 8)
+            header.writeLE(entry.last, at: base + 12)
+        }
+        return pages.reduce(into: header) { $0.append($1) }
     }
 
-    private static func finalizeDataPage(_ page: inout Data, pageNumber: UInt32, table: UInt32, next: UInt32) {
-        page.writeLE(UInt32(0), at: 0x00)
-        page.writeLE(pageNumber, at: 0x04)
-        page.writeLE(table, at: 0x08)
-        page.writeLE(next, at: 0x0c)
-        page.writeLE(UInt32(1), at: 0x10)
-    }
-
-    private static func indexPageData(pageNumber: UInt32, table: UInt32, next: UInt32, dataPages: [UInt32]) -> Data {
+    /// The page that heads every table: flags `0x64`, no rows, `0x1fff` in both
+    /// row-count words, `0x03ec` at `0x24`, and a body naming itself and the
+    /// first data page, then a run of `ff 1f f8 ff`. A file whose tables start
+    /// with a plain data page is read as corrupted.
+    static func indexPage(index: UInt32, type: UInt32, next: UInt32, firstDataPage: UInt32?) -> Data {
         var page = Data(count: pageSize)
-        page.writeLE(pageNumber, at: 0x04)
-        page.writeLE(table, at: 0x08)
+        page.writeLE(index, at: 0x04)
+        page.writeLE(type, at: 0x08)
         page.writeLE(next, at: 0x0c)
         page.writeLE(UInt32(1), at: 0x10)
         page[0x1b] = 0x64
-        page.writeLE(UInt16(0x1fff), at: 0x28)
-        page.writeLE(UInt16(0x1fff), at: 0x2a)
-        page.writeLE(UInt16(0x03ec), at: 0x2c)
-        page.writeLE(pageNumber, at: 0x30)
-        page.writeLE(next, at: 0x34)
-        page.writeLE(UInt32(0x03ff_ffff), at: 0x38)
-        // Index entries: (page << 3) per data page, the rest marked unused.
-        let entriesStart = 0x44
-        let capacity = (pageSize - entriesStart) / 4
-        for slot in 0..<capacity {
-            let value: UInt32 = slot < dataPages.count ? dataPages[slot] << 3 : 0x1fff_ffff
-            page.writeLE(value, at: entriesStart + slot * 4)
+        page.writeLE(UInt16(0x1fff), at: 0x20)
+        page.writeLE(UInt16(0x1fff), at: 0x22)
+        page.writeLE(UInt16(0x03ec), at: 0x24)
+        page.writeLE(index, at: pageHeaderSize)
+        page.writeLE(firstDataPage ?? noPage, at: pageHeaderSize + 4)
+        page.writeLE(noPage, at: pageHeaderSize + 8)
+        var position = pageHeaderSize + 18
+        for _ in 0..<1004 where position + 4 <= pageSize {
+            page.replaceSubrange(position..<(position + 4), with: [0xff, 0x1f, 0xf8, 0xff])
+            position += 4
+        }
+        if position + 2 <= pageSize { page.replaceSubrange(position..<(position + 2), with: [0xff, 0x1f]) }
+        return page
+    }
+
+    /// Splits rows into data pages. A page takes another row while it has room
+    /// for the row plus eight bytes.
+    private static func paginate(_ rows: [Data], slotted: Bool) -> [Data] {
+        var pages: [Data] = []
+        var current: [Data] = []
+        var heap = 0
+
+        func free(rowCount: Int, heap: Int) -> Int {
+            pageSize - pageHeaderSize - heap - max(1, (rowCount + 15) / 16) * rowGroupSize
+        }
+        for row in rows {
+            if !current.isEmpty, free(rowCount: current.count, heap: heap) < row.count + 8 {
+                pages.append(dataPage(rows: current, slotted: slotted))
+                current = []
+                heap = 0
+            }
+            heap = (heap + 3) / 4 * 4 + row.count
+            current.append(row)
+        }
+        if !current.isEmpty { pages.append(dataPage(rows: current, slotted: slotted)) }
+        return pages
+    }
+
+    /// One data page, without its page index, type, successor or sequence.
+    private static func dataPage(rows: [Data], slotted: Bool) -> Data {
+        var page = Data(count: pageSize)
+        var heap = 0
+        var offsets: [Int] = []
+        for (slot, original) in rows.enumerated() {
+            var row = original
+            if slotted { row.writeLE(UInt16(truncatingIfNeeded: slot * 32), at: 2) }
+            heap = (heap + 3) / 4 * 4
+            page.replaceSubrange((pageHeaderSize + heap)..<(pageHeaderSize + heap + row.count), with: row)
+            offsets.append(heap)
+            heap += row.count
+        }
+        let count = rows.count
+        let groups = (count + 15) / 16
+        // A page of more than 255 rows records only its last row as touched by
+        // the last write; rekordbox crashed on pages that put the count in both words.
+        let lastRowMarked = count > 0xff
+
+        let used = (heap + 3) / 4 * 4
+        let packed = UInt32(count & 0x1fff) | UInt32(count & 0x7ff) << 13
+        page.replaceSubrange(0x18..<0x1b, with: [UInt8(packed & 0xff), UInt8((packed >> 8) & 0xff), UInt8((packed >> 16) & 0xff)])
+        page[0x1b] = 0x24
+        let free = max(0, pageSize - pageHeaderSize - used - (2 * count + 4 * groups))
+        page.writeLE(UInt16(free), at: 0x1c)
+        page.writeLE(UInt16(used), at: 0x1e)
+        if lastRowMarked {
+            page.writeLE(UInt16(1), at: 0x20)
+            page.writeLE(UInt16(count - 1), at: 0x22)
+        } else {
+            page.writeLE(UInt16(count), at: 0x20)
+        }
+
+        for group in 0..<groups {
+            let base = pageSize - group * rowGroupSize
+            let inGroup = min(16, count - group * 16)
+            var present: UInt16 = 0
+            for slot in 0..<inGroup {
+                present |= 1 << UInt16(slot)
+                page.writeLE(UInt16(offsets[group * 16 + slot]), at: base - (6 + 2 * slot))
+            }
+            let second: UInt16 = !lastRowMarked ? present : (group == groups - 1 ? 1 << UInt16(inGroup - 1) : 0)
+            page.writeLE(present, at: base - 4)
+            page.writeLE(second, at: base - 2)
         }
         return page
     }
@@ -326,20 +393,22 @@ public enum RekordboxPDBWriter {
     // MARK: - Rows
 
     private static func trackRow(
-        _ track: CDJExportTrack, artistID: UInt32, albumID: UInt32, genreID: UInt32, labelID: UInt32
+        _ track: CDJExportTrack, artistID: UInt32, albumID: UInt32, genreID: UInt32,
+        labelID: UInt32, libraryID: UInt32
     ) -> Data {
-        let headerSize = 0x5E + 21 * 2
-        var row = Data(count: headerSize)
+        let fixed = 0x5E
+        var row = Data(count: fixed + 21 * 2)
+        // The subtype and both trailer words are part of the record layout: with
+        // them zero a CDJ-3000 shows playlists with no tracks in them.
         row.writeLE(UInt16(0x24), at: 0x00)
-        row.writeLE(UInt16(truncatingIfNeeded: Int(track.id - 1) * 0x20), at: 0x02)
-        row.writeLE(UInt32(0x000c_0700), at: 0x04)
         row.writeLE(UInt32(track.sampleRate), at: 0x08)
-        row.writeLE(UInt32(track.fileSize), at: 0x10)
-        row.writeLE(UInt32(2), at: 0x14)
+        row.writeLE(UInt32(clamping: track.fileSize), at: 0x10)
+        row.writeLE(track.id, at: 0x14)  // master content id
+        row.writeLE(libraryID, at: 0x18)  // master db id
         row.writeLE(labelID, at: 0x28)
         row.writeLE(UInt32(track.bitrate), at: 0x30)
         row.writeLE(UInt32(track.trackNumber), at: 0x34)
-        row.writeLE(UInt32((track.bpm * 100).rounded()), at: 0x38)
+        row.writeLE(UInt32(max(0, (track.bpm * 100).rounded())), at: 0x38)
         row.writeLE(genreID, at: 0x3c)
         row.writeLE(albumID, at: 0x40)
         row.writeLE(artistID, at: 0x44)
@@ -347,60 +416,60 @@ public enum RekordboxPDBWriter {
         row.writeLE(UInt16(clamping: track.year), at: 0x50)
         row.writeLE(UInt16(16), at: 0x52)
         row.writeLE(UInt16(clamping: track.durationSeconds), at: 0x54)
-        row.writeLE(UInt16(41), at: 0x56)
+        row.writeLE(UInt16(0x29), at: 0x56)
         row.writeLE(track.fileType.rawValue, at: 0x5a)
         row.writeLE(UInt16(3), at: 0x5c)
 
-        // 21 string slots; only some carry data, the rest point at an empty string.
         var strings = [String](repeating: "", count: 21)
         if !track.analyzePath.isEmpty {
             strings[7] = "ON"
             strings[14] = track.analyzePath
-            strings[15] = track.dateAdded
         }
         strings[10] = track.dateAdded
-        strings[11] = track.dateAdded
         strings[16] = track.comment
         strings[17] = track.title
         strings[19] = track.fileName
         strings[20] = track.stickPath
         for (slot, value) in strings.enumerated() {
-            row.writeLE(UInt16(row.count), at: 0x5E + slot * 2)
-            row.append(DeviceSQLString.encode(value))
+            let at = DeviceSQLString.push(value, onto: &row)
+            row.writeLE(UInt16(at), at: fixed + slot * 2)
         }
-        return padded(row)
+        return row
     }
 
-    private static func artistRow(id: UInt32, name: String, index: Int) -> Data {
-        var row = Data()
-        row.appendLE(UInt16(0x60))
-        row.appendLE(UInt16(truncatingIfNeeded: index * 0x20))
-        row.appendLE(id)
-        row.append(0x03)
-        row.append(0x0a)
-        row.append(DeviceSQLString.encode(name))
-        return padded(row)
+    private static func artistRow(id: UInt32, name: String) -> Data {
+        var row = Data(count: 10)
+        row.writeLE(UInt16(0x60), at: 0)
+        row.writeLE(id, at: 4)
+        row[8] = 0x03
+        row[9] = UInt8(DeviceSQLString.push(name, onto: &row))
+        return row
     }
 
-    private static func albumRow(id: UInt32, artistID: UInt32, name: String, index: Int) -> Data {
-        var row = Data()
-        row.appendLE(UInt16(0x80))
-        row.appendLE(UInt16(truncatingIfNeeded: index * 0x20))
-        row.appendLE(UInt32(0))
-        row.appendLE(artistID)
-        row.appendLE(id)
-        row.appendLE(UInt32(0))
-        row.append(0x03)
-        row.append(0x16)
-        row.append(DeviceSQLString.encode(name))
-        return padded(row)
+    private static func albumRow(id: UInt32, artistID: UInt32, name: String) -> Data {
+        var row = Data(count: 0x16)
+        row.writeLE(UInt16(0x80), at: 0)
+        row.writeLE(artistID, at: 8)
+        row.writeLE(id, at: 0x0c)
+        row[0x14] = 0x03
+        row[0x15] = UInt8(DeviceSQLString.push(name, onto: &row))
+        return row
     }
 
     private static func idNameRow(id: UInt32, name: String) -> Data {
         var row = Data()
         row.appendLE(id)
         row.append(DeviceSQLString.encode(name))
-        return padded(row)
+        return row
+    }
+
+    /// Four zero bytes, the id as one byte, the id again as two, a pad byte, then the name.
+    private static func colorRow(id: UInt16, name: String) -> Data {
+        var row = Data(count: 8)
+        row[4] = UInt8(id)
+        row.writeLE(id, at: 5)
+        row.append(DeviceSQLString.encode(name))
+        return row
     }
 
     private static func playlistTreeRow(_ playlist: CDJExportPlaylist) -> Data {
@@ -411,7 +480,7 @@ public enum RekordboxPDBWriter {
         row.appendLE(playlist.id)
         row.appendLE(UInt32(playlist.isFolder ? 1 : 0))
         row.append(DeviceSQLString.encode(playlist.name))
-        return padded(row)
+        return row
     }
 
     private static func playlistEntryRow(entryIndex: UInt32, trackID: UInt32, playlistID: UInt32) -> Data {
@@ -422,8 +491,16 @@ public enum RekordboxPDBWriter {
         return row
     }
 
-    private static func padded(_ row: Data) -> Data {
-        var row = row
+    /// The device library's `property` row: track count, date, version and name.
+    private static func propertyRow(contents: Int, createdDate: String, deviceName: String) -> Data {
+        var row = Data([0x80, 0x02, 0x00, 0x00])
+        row.appendLE(UInt32(contents))
+        row.append(contentsOf: [0x00, 0x00, 0x00, 0x00])  // constant, background colour (default), constant
+        row.append(DeviceSQLString.encode(createdDate))
+        row.append(contentsOf: [0x19, 0x1e])
+        row.append(DeviceSQLString.encode("1000"))
+        row.append(DeviceSQLString.encode(deviceName))
+        row.append(Data(count: 8))
         while row.count % 4 != 0 { row.append(0) }
         return row
     }
@@ -460,22 +537,42 @@ public enum RekordboxPDBWriter {
     }
 }
 
-/// Pioneer's string encoding: a one-byte header for short ASCII, or a
-/// length-prefixed UTF-16LE form for anything else.
+/// Pioneer's string encoding: a one-byte header for short ASCII, a
+/// length-prefixed form for longer ASCII, and length-prefixed UTF-16LE (with
+/// no terminator) for anything else.
 enum DeviceSQLString {
     static func encode(_ value: String) -> Data {
-        if value.isEmpty { return Data([0x03]) }
-        if value.utf8.count <= 126, value.unicodeScalars.allSatisfy({ $0.isASCII }) {
-            var data = Data([UInt8(((value.utf8.count + 1) << 1) | 1)])
-            data.append(contentsOf: value.utf8)
+        if value.unicodeScalars.allSatisfy({ $0.isASCII }) {
+            let bytes = Array(value.utf8)
+            if bytes.count < 0x7e {
+                return Data([UInt8((bytes.count + 1) * 2 + 1)] + bytes)
+            }
+            let clipped = bytes.prefix(0xfff0)
+            var data = Data([0x40])
+            data.appendLE(UInt16(clipped.count + 4))
+            data.append(0x00)
+            data.append(contentsOf: clipped)
             return data
         }
-        let units = Array(value.utf16.prefix(8_000))
+        let units = Array(value.utf16.prefix(0x7ff0))
         var data = Data([0x90])
         data.appendLE(UInt16(units.count * 2 + 4))
         data.append(0x00)
         for unit in units { data.appendLE(unit) }
         return data
+    }
+
+    /// Appends `value` to a row and returns the row offset it starts at. A long
+    /// string (ASCII or UTF-16) starts on a four-byte boundary of the row, with
+    /// zero bytes filling the gap; a short one follows what is already there.
+    static func push(_ value: String, onto row: inout Data) -> Int {
+        let encoded = encode(value)
+        if let flag = encoded.first, flag == 0x40 || flag == 0x90 {
+            while row.count % 4 != 0 { row.append(0) }
+        }
+        let at = row.count
+        row.append(encoded)
+        return at
     }
 }
 

@@ -56,8 +56,17 @@ public enum CDJStickFormat: String, Sendable {
 
 public struct CDJExportPlan: Sendable {
     public struct Item: Sendable {
+        /// The Serato library path the track is identified by.
+        public let key: String
         public let source: URL
+        public let sourceModified: Double
         public let export: CDJExportTrack
+    }
+
+    /// A file from an earlier export that this one no longer wants.
+    public struct Removal: Sendable, Equatable {
+        public let stickPath: String
+        public let analyzePath: String
     }
 
     public var items: [Item]
@@ -66,6 +75,14 @@ public struct CDJExportPlan: Sendable {
     public var missing: [Track]
     /// Tracks in a file type CDJs can't play.
     public var unsupported: [Track]
+    /// `PIONEER` or `.PIONEER`: the folder the stick keeps its library in.
+    public var root: String = "PIONEER"
+    /// The manifest this plan was made against, to notice the stick changing under it.
+    public var previous: CDJExportManifest?
+    /// The manifest to write if the export succeeds.
+    public var manifest: CDJExportManifest
+    /// Tracks from an earlier export that are no longer selected, and will be removed.
+    public var removals: [Removal] = []
 
     public var totalBytes: Int { items.reduce(0) { $0 + $1.export.fileSize } }
 }
@@ -80,6 +97,10 @@ public struct CDJExportResult: Sendable, Equatable {
     /// Tracks with no Serato cues, loops or beatgrid to carry over (never
     /// analysed in Serato), so they got a waveform only.
     public var tracksWithoutSeratoAnalysis: Int = 0
+    /// Tracks from an earlier export taken off the stick because they were unticked.
+    public var tracksRemoved: Int = 0
+    /// An earlier export was interrupted; the stick was put back before this one started.
+    public var recoveredInterruptedExport: Bool = false
 }
 
 public enum CDJExportError: LocalizedError {
@@ -87,6 +108,9 @@ public enum CDJExportError: LocalizedError {
     case unusableFormat(String)
     case notEnoughSpace(needed: Int, available: Int)
     case nothingToExport
+    case conflictingRoots
+    case stickChanged
+    case verificationFailed(String)
 
     public var errorDescription: String? {
         switch self {
@@ -100,6 +124,12 @@ public enum CDJExportError: LocalizedError {
                 + "but the stick has \(format.string(fromByteCount: Int64(available))) free."
         case .nothingToExport:
             return "None of the selected crates contain playable tracks."
+        case .conflictingRoots:
+            return "This stick has a library under both PIONEER and .PIONEER, so it isn't clear which to update."
+        case .stickChanged:
+            return "The stick changed while the export was being prepared."
+        case .verificationFailed(let detail):
+            return "The export didn't verify, so the stick was left as it was. \(detail)"
         }
     }
 
@@ -109,50 +139,132 @@ public enum CDJExportError: LocalizedError {
         case .unusableFormat: return "Reformat the stick in Disk Utility, then try again."
         case .notEnoughSpace: return "Pick fewer crates or use a larger stick."
         case .nothingToExport: return "Pick crates that contain tracks."
+        case .conflictingRoots: return "Remove one of the two folders, then try again."
+        case .stickChanged: return "Close anything else using the stick and export again."
+        case .verificationFailed: return "Try again. If it keeps failing, report the message above."
         }
     }
 }
 
+/// The parts of the outside world an export touches, so tests can stand in for a stick.
+struct CDJExportEnvironment: Sendable {
+    var requireVolumePath = true
+    var detectFormat: @Sendable (URL) -> CDJStickFormat = { CDJStickFormat.detect(at: $0) }
+    var freeBytes: @Sendable (URL) -> Int = {
+        (try? $0.resourceValues(forKeys: [.volumeAvailableCapacityKey]).volumeAvailableCapacity) ?? Int.max
+    }
+
+    static let live = CDJExportEnvironment()
+}
+
 /// Copies Serato crates onto a USB stick in the layout Pioneer CDJs and XDJs
-/// browse: audio under `Contents/`, and a database at
-/// `PIONEER/rekordbox/export.pdb` so each crate shows up as a playlist.
+/// browse: audio under `Contents/`, analysis files (beat grid, cues, waveforms)
+/// under `PIONEER/USBANLZ/`, and a database at `PIONEER/rekordbox/export.pdb`
+/// so each crate shows up as a playlist.
 ///
-/// Read-only with respect to Serato: nothing in the library is modified.
-/// Phase 1 writes tracks and playlists. Hot cues, beatgrids and waveforms
-/// (the ANLZ analysis files) are not written yet, so decks analyse tracks on
-/// load.
+/// Read-only with respect to Serato: nothing in the library is modified. Each
+/// run is staged on the stick, verified, then published with a journal so an
+/// interruption can be undone; track ids stay the same from one run to the next.
 public enum CDJSeratoExport {
-    static let databaseRelativePath = "PIONEER/rekordbox/export.pdb"
+    static func databasePath(root: String) -> String { "\(root)/rekordbox/export.pdb" }
+
+    /// Reads what a previous export left on `volume`, and which root it uses.
+    public static func stickState(at volume: URL) throws -> (root: String, manifest: CDJExportManifest?) {
+        let format = CDJStickFormat.detect(at: volume)
+        let root = try CDJExportRoot.select(on: volume, format: format)
+        return (root, CDJExportManifest.load(from: volume, root: root))
+    }
 
     /// Works out what an export would do, without touching the stick.
-    public static func plan(crates: [Crate], library tracks: [Track]) -> CDJExportPlan {
+    public static func plan(
+        crates: [Crate], library tracks: [Track],
+        previous: CDJExportManifest? = nil, root: String = "PIONEER"
+    ) -> CDJExportPlan {
         let byPath = Dictionary(tracks.map { ($0.seratoStoredPath, $0) }, uniquingKeysWith: { first, _ in first })
         let fileManager = FileManager.default
+        let previousTracks = Dictionary(
+            (previous?.tracks ?? []).map { ($0.key, $0) }, uniquingKeysWith: { first, _ in first })
+        let previousPlaylists = Dictionary(
+            (previous?.playlists ?? []).map { ($0.key, $0.id) }, uniquingKeysWith: { first, _ in first })
+        let sortedCrates = crates.sorted { $0.pathComponents.lexicographicallyPrecedes($1.pathComponents) }
 
-        var idsByPath: [String: UInt32] = [:]
-        var items: [CDJExportPlan.Item] = []
+        // 1. The distinct playable tracks, in the order the crates first use them.
+        var ordered: [(track: Track, type: CDJFileType)] = []
+        var seen = Set<String>()
         var missing: [Track] = []
         var unsupported: [Track] = []
-        var usedStickPaths = Set<String>()
+        for crate in sortedCrates {
+            for path in crate.trackPaths {
+                guard let track = byPath[path], seen.insert(path).inserted else { continue }
+                guard let type = CDJFileType(pathExtension: track.fileURL.pathExtension) else {
+                    unsupported.append(track)
+                    continue
+                }
+                guard fileManager.fileExists(atPath: track.fileURL.path) else {
+                    missing.append(track)
+                    continue
+                }
+                ordered.append((track, type))
+            }
+        }
 
-        func exportID(for track: Track) -> UInt32? {
-            if let known = idsByPath[track.seratoStoredPath] { return known }
-            guard let type = CDJFileType(pathExtension: track.fileURL.pathExtension) else {
-                unsupported.append(track)
-                return nil
+        // 2. Ids and paths. Tracks already on the stick keep both, so decks keep their caches.
+        var nextTrackID = previous?.nextTrackID ?? 1
+        var usedStickPaths = Set<String>()
+        var usedAnalyzePaths = Set<String>()
+        var stickPaths: [String: String] = [:]
+        var analyzePaths: [String: String] = [:]
+        var ids: [String: UInt32] = [:]
+
+        func claim(_ track: Track, preferred: CDJExportManifest.TrackRecord?) {
+            let key = track.seratoStoredPath
+            let id: UInt32
+            if let preferred { id = preferred.id } else { id = nextTrackID; nextTrackID += 1 }
+            ids[key] = id
+            var stickPath: String
+            if let preferred, sameExtension(preferred.stickPath, track),
+               !usedStickPaths.contains(preferred.stickPath.lowercased()) {
+                stickPath = preferred.stickPath
+                usedStickPaths.insert(stickPath.lowercased())
+            } else {
+                stickPath = uniqueStickPath(for: track, used: &usedStickPaths)
             }
-            guard fileManager.fileExists(atPath: track.fileURL.path) else {
-                missing.append(track)
-                return nil
+            var analyzePath = RekordboxAnalysisPath.datPath(forAudioPath: stickPath, root: root)
+            // Two audio paths that hash to the same folder would share analysis files.
+            var attempt = 0
+            while !usedAnalyzePaths.insert(analyzePath).inserted {
+                attempt += 1
+                stickPath = withSuffix("-\(id)" + (attempt > 1 ? "-\(attempt)" : ""), to: stickPath)
+                usedStickPaths.insert(stickPath.lowercased())
+                analyzePath = RekordboxAnalysisPath.datPath(forAudioPath: stickPath, root: root)
             }
-            let id = UInt32(idsByPath.count + 1)
-            idsByPath[track.seratoStoredPath] = id
-            let size = (try? track.fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-            let stickPath = uniqueStickPath(for: track, used: &usedStickPaths)
+            stickPaths[key] = stickPath
+            analyzePaths[key] = analyzePath
+        }
+        // Existing tracks first, so a new track can't take a path an old one is keeping.
+        for entry in ordered where previousTracks[entry.track.seratoStoredPath] != nil {
+            claim(entry.track, preferred: previousTracks[entry.track.seratoStoredPath])
+        }
+        for entry in ordered where previousTracks[entry.track.seratoStoredPath] == nil {
+            claim(entry.track, preferred: nil)
+        }
+
+        var items: [CDJExportPlan.Item] = []
+        var records: [CDJExportManifest.TrackRecord] = []
+        let libraryID = previous?.libraryID ?? UInt32.random(in: 1...UInt32.max)
+        for (track, type) in ordered {
+            let key = track.seratoStoredPath
+            guard let id = ids[key], let stickPath = stickPaths[key], let analyzePath = analyzePaths[key] else { continue }
+            // A URL caches file attributes, and library URLs live a long time: read through a fresh one.
+            let values = try? URL(fileURLWithPath: track.fileURL.path)
+                .resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+            let size = values?.fileSize ?? 0
+            let modified = values?.contentModificationDate?.timeIntervalSince1970 ?? 0
+            let title = track.title.isEmpty ? track.fileURL.deletingPathExtension().lastPathComponent : track.title
             items.append(CDJExportPlan.Item(
-                source: track.fileURL,
+                key: key, source: track.fileURL, sourceModified: modified,
                 export: CDJExportTrack(
-                    id: id, title: track.title.isEmpty ? track.fileURL.deletingPathExtension().lastPathComponent : track.title,
+                    id: id, title: title,
                     artist: track.artist, album: track.album, genre: track.genre,
                     label: track.label, comment: track.comment, year: track.year ?? 0,
                     durationSeconds: Int(track.duration ?? 0), bpm: track.bpm ?? 0,
@@ -160,36 +272,72 @@ public enum CDJSeratoExport {
                     sampleRate: Int(track.sampleRate?.filter(\.isNumber) ?? "") ?? 44_100,
                     fileSize: size, trackNumber: track.trackNumber ?? 0, fileType: type,
                     stickPath: stickPath, dateAdded: dateString(track.dateAdded),
-                    analyzePath: analyzePath(forTrackID: id))))
-            return id
+                    analyzePath: analyzePath)))
+            records.append(CDJExportManifest.TrackRecord(
+                key: key, id: id, stickPath: stickPath, analyzePath: analyzePath,
+                sourceSize: size, sourceModified: modified, copySize: size))
         }
 
+        // 3. Playlists, numbered from 0 among their siblings and keeping their ids.
+        var nextPlaylistID = previous?.nextPlaylistID ?? 1
         var playlists: [CDJExportPlaylist] = []
+        var playlistRecords: [CDJExportManifest.PlaylistRecord] = []
         var folderIDs: [[String]: UInt32] = [:]
+        var usedPlaylistIDs = Set<UInt32>()
+        var siblingCounts: [UInt32: UInt32] = [:]
 
-        func nextPlaylistID() -> UInt32 { UInt32(playlists.count + 1) }
+        func playlistID(kind: String, path: [String]) -> UInt32 {
+            let key = kind + path.joined(separator: Crate.nestingDelimiter)
+            var id = previousPlaylists[key] ?? 0
+            if id == 0 || !usedPlaylistIDs.insert(id).inserted {
+                repeat { id = nextPlaylistID; nextPlaylistID += 1 } while !usedPlaylistIDs.insert(id).inserted
+            }
+            playlistRecords.append(.init(key: key, id: id))
+            return id
+        }
+        func nextSortOrder(parent: UInt32) -> UInt32 {
+            defer { siblingCounts[parent, default: 0] += 1 }
+            return siblingCounts[parent, default: 0]
+        }
 
-        for crate in crates.sorted(by: { $0.pathComponents.lexicographicallyPrecedes($1.pathComponents) }) {
+        for crate in sortedCrates {
             var parentID: UInt32 = 0
             for depth in 1..<max(crate.pathComponents.count, 1) {
                 let path = Array(crate.pathComponents.prefix(depth))
                 if let existing = folderIDs[path] {
                     parentID = existing
                 } else {
-                    let id = nextPlaylistID()
+                    let id = playlistID(kind: "f:", path: path)
                     playlists.append(CDJExportPlaylist(
                         id: id, parentID: parentID, name: path[depth - 1], isFolder: true,
-                        sortOrder: UInt32(playlists.count)))
+                        sortOrder: nextSortOrder(parent: parentID)))
                     folderIDs[path] = id
                     parentID = id
                 }
             }
-            let trackIDs = crate.trackPaths.compactMap { byPath[$0] }.compactMap(exportID)
+            let trackIDs = crate.trackPaths.compactMap { byPath[$0] }.compactMap { ids[$0.seratoStoredPath] }
             playlists.append(CDJExportPlaylist(
-                id: nextPlaylistID(), parentID: parentID, name: crate.name,
-                sortOrder: UInt32(playlists.count), trackIDs: trackIDs))
+                id: playlistID(kind: "p:", path: crate.pathComponents), parentID: parentID, name: crate.name,
+                sortOrder: nextSortOrder(parent: parentID), trackIDs: trackIDs))
         }
-        return CDJExportPlan(items: items, playlists: playlists, missing: missing, unsupported: unsupported)
+
+        // 4. Whatever the last export put on the stick that this one drops or moves.
+        let keptPaths = Set(items.flatMap { [$0.export.stickPath.lowercased(), $0.export.analyzePath.lowercased()] })
+        let removals = (previous?.tracks ?? []).filter { old in
+            let kept = ids[old.key] != nil
+            return !kept || old.stickPath != stickPaths[old.key] || old.analyzePath != analyzePaths[old.key]
+        }.map { CDJExportPlan.Removal(stickPath: $0.stickPath, analyzePath: $0.analyzePath) }
+            .filter { !keptPaths.contains($0.stickPath.lowercased()) }
+
+        let manifest = CDJExportManifest(
+            libraryID: libraryID, nextTrackID: nextTrackID, nextPlaylistID: nextPlaylistID,
+            tracks: records, playlists: playlistRecords)
+        var plan = CDJExportPlan(
+            items: items, playlists: playlists, missing: missing, unsupported: unsupported, manifest: manifest)
+        plan.root = root
+        plan.previous = previous
+        plan.removals = removals
+        return plan
     }
 
     /// Writes `plan` to the stick mounted at `volume`.
@@ -198,56 +346,142 @@ public enum CDJSeratoExport {
         to volume: URL,
         progress: (@Sendable (Int, Int) -> Void)? = nil
     ) async throws -> CDJExportResult {
-        guard volume.standardizedFileURL.path.hasPrefix("/Volumes/") else {
+        try await export(plan, to: volume, environment: .live, progress: progress)
+    }
+
+    static func export(
+        _ plan: CDJExportPlan,
+        to volume: URL,
+        environment: CDJExportEnvironment,
+        progress: (@Sendable (Int, Int) -> Void)? = nil
+    ) async throws -> CDJExportResult {
+        if environment.requireVolumePath, !volume.standardizedFileURL.path.hasPrefix("/Volumes/") {
             throw CDJExportError.notAVolume(volume)
         }
         guard !plan.items.isEmpty else { throw CDJExportError.nothingToExport }
-        let format = CDJStickFormat.detect(at: volume)
+        let format = environment.detectFormat(volume)
         if let problem = format.blockingProblem { throw CDJExportError.unusableFormat(problem) }
 
-        let fileManager = FileManager.default
-        let free = (try? volume.resourceValues(forKeys: [.volumeAvailableCapacityKey]).volumeAvailableCapacity) ?? Int.max
-        let needed = plan.items.filter { !alreadyOnStick($0, volume: volume) }.reduce(0) { $0 + $1.export.fileSize }
-        guard needed <= free else { throw CDJExportError.notEnoughSpace(needed: needed, available: free) }
+        let publication = CDJExportPublication(volume: volume)
+        let recovered = try publication.recoverInterruptedPublication()
 
-        var copied = 0
-        var skipped = 0
-        var analysed = 0
-        var withoutAnalysis = 0
-        for (index, item) in plan.items.enumerated() {
-            let destination = volume.appendingPathComponent(String(item.export.stickPath.dropFirst()))
-            if alreadyOnStick(item, volume: volume) {
-                skipped += 1
-            } else {
-                try fileManager.createDirectory(
-                    at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
-                if fileManager.fileExists(atPath: destination.path) { try fileManager.removeItem(at: destination) }
-                try fileManager.copyItem(at: item.source, to: destination)
-                copied += 1
-            }
-            if try await writeAnalysis(for: item, volume: volume) {
-                analysed += 1
-            } else {
-                withoutAnalysis += 1
-            }
-            progress?(index + 1, plan.items.count)
+        // The plan was made against a particular stick; make sure it is still that stick.
+        let root = try CDJExportRoot.select(on: volume, format: format)
+        let onStick = CDJExportManifest.load(from: volume, root: root)
+        guard root == plan.root, onStick == plan.previous else { throw CDJExportError.stickChanged }
+
+        let fileManager = FileManager.default
+        let previousByKey = Dictionary(
+            (plan.previous?.tracks ?? []).map { ($0.key, $0) }, uniquingKeysWith: { first, _ in first })
+        func audioIsCurrent(_ item: CDJExportPlan.Item) -> Bool {
+            guard let old = previousByKey[item.key], old.stickPath == item.export.stickPath,
+                  old.sourceSize == item.export.fileSize, old.sourceModified == item.sourceModified else { return false }
+            let copy = volume.appendingPathComponent(String(item.export.stickPath.dropFirst()))
+            return ((try? copy.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1) == old.copySize
+        }
+        func analysisIsCurrent(_ item: CDJExportPlan.Item) -> Bool {
+            guard audioIsCurrent(item), previousByKey[item.key]?.analyzePath == item.export.analyzePath else { return false }
+            let dat = volume.appendingPathComponent(String(item.export.analyzePath.dropFirst()))
+            let ext = dat.deletingPathExtension().appendingPathExtension("EXT")
+            return fileManager.fileExists(atPath: dat.path) && fileManager.fileExists(atPath: ext.path)
         }
 
-        // Database goes last: a stick interrupted mid-copy keeps its old
-        // database rather than pointing at files that aren't there yet.
-        let database = RekordboxPDBWriter.build(tracks: plan.items.map(\.export), playlists: plan.playlists)
-        let databaseURL = volume.appendingPathComponent(databaseRelativePath)
-        try fileManager.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try AtomicFileWriter.write(database, to: databaseURL)
+        let needed = plan.items.filter { !audioIsCurrent($0) }.reduce(0) { $0 + $1.export.fileSize }
+            + plan.items.count * 600_000 + 16_000_000  // analysis files and some headroom
+        let free = environment.freeBytes(volume)
+        guard needed <= free else { throw CDJExportError.notEnoughSpace(needed: needed, available: free) }
+
+        // Stage everything new; nothing on the stick is touched yet.
+        try publication.prepare()
+        var placements: [String] = []
+        var copied = 0
+        var reused = 0
+        var analysed = 0
+        var withoutAnalysis = 0
+        do {
+            for (index, item) in plan.items.enumerated() {
+                try Task.checkCancellation()
+                let audioRelative = String(item.export.stickPath.dropFirst())
+                if audioIsCurrent(item) {
+                    reused += 1
+                } else {
+                    let staged = publication.stagedURL(audioRelative)
+                    try fileManager.createDirectory(at: staged.deletingLastPathComponent(), withIntermediateDirectories: true)
+                    try fileManager.copyItem(at: item.source, to: staged)
+                    placements.append(audioRelative)
+                    copied += 1
+                }
+                if !analysisIsCurrent(item) {
+                    let hadSeratoData = try await writeAnalysis(
+                        for: item, into: publication.stage, placements: &placements)
+                    if hadSeratoData { analysed += 1 } else { withoutAnalysis += 1 }
+                }
+                progress?(index + 1, plan.items.count)
+            }
+
+            let database = RekordboxPDBWriter.build(
+                tracks: plan.items.map(\.export), playlists: plan.playlists,
+                deviceName: volume.lastPathComponent, createdDate: dateString(Date()),
+                libraryID: plan.manifest.libraryID)
+            let databaseRelative = databasePath(root: plan.root)
+            let manifestRelative = CDJExportManifest.relativePath(root: plan.root)
+            try writeStaged(database, relative: databaseRelative, in: publication)
+            try writeStaged(try plan.manifest.encoded(), relative: manifestRelative, in: publication)
+
+            let removalPaths = removalRelativePaths(plan.removals)
+            try RekordboxExportVerifier.verify(
+                database: database, plan: plan,
+                analysis: { path in
+                    let relative = String(path.dropFirst())
+                    let candidates = [publication.stagedURL(relative), volume.appendingPathComponent(relative)]
+                    return candidates.lazy.compactMap { try? Data(contentsOf: $0) }.first
+                },
+                fileExists: { path in
+                    let relative = String(path.dropFirst())
+                    return !removalPaths.contains(relative)
+                        && (fileManager.fileExists(atPath: publication.stagedURL(relative).path)
+                            || fileManager.fileExists(atPath: volume.appendingPathComponent(relative).path))
+                })
+
+            // Last chance to back out cleanly, and a check the stick didn't change meanwhile.
+            try Task.checkCancellation()
+            guard CDJExportManifest.load(from: volume, root: plan.root) == plan.previous else {
+                throw CDJExportError.stickChanged
+            }
+
+            // The databases go last, so a stick never points at files that aren't there yet.
+            let journal = CDJExportPublication.Journal(
+                placements: placements + [databaseRelative, manifestRelative],
+                removals: removalPaths.sorted())
+            try publication.commit(journal)
+            do {
+                let published = try Data(contentsOf: volume.appendingPathComponent(databaseRelative))
+                _ = try RekordboxPDBFile(published).rowOffsets(inTable: RekordboxPDBWriter.TableType.tracks)
+            } catch {
+                try? publication.abandon(journal)
+                throw CDJExportError.verificationFailed("The published database couldn't be read back.")
+            }
+            publication.pruneEmptyFolders(after: journal, stopAt: ["Contents", "USBANLZ", "PIONEER", ".PIONEER"])
+            publication.finish()
+        } catch {
+            // Undo anything half-published. If that fails the backups are kept, and the
+            // next run finishes the job, rather than deleting the only copy of the old files.
+            _ = try? publication.recoverInterruptedPublication()
+            throw error
+        }
 
         return CDJExportResult(
-            tracksWritten: plan.items.count, filesCopied: copied, filesAlreadyOnStick: skipped,
+            tracksWritten: plan.items.count, filesCopied: copied, filesAlreadyOnStick: reused,
             playlistCount: plan.playlists.filter { !$0.isFolder }.count,
-            analysisFilesWritten: analysed, tracksWithoutSeratoAnalysis: withoutAnalysis)
+            analysisFilesWritten: analysed, tracksWithoutSeratoAnalysis: withoutAnalysis,
+            tracksRemoved: plan.removals.count, recoveredInterruptedExport: recovered)
     }
 
-    /// Writes the track's ANLZ files. Returns whether Serato had any cues, loops or beatgrid for the track.
-    static func writeAnalysis(for item: CDJExportPlan.Item, volume: URL) async throws -> Bool {
+    /// Writes the track's ANLZ files into the stage. Returns whether Serato had any
+    /// cues, loops or beatgrid for the track.
+    static func writeAnalysis(
+        for item: CDJExportPlan.Item, into stage: URL, placements: inout [String]
+    ) async throws -> Bool {
         let seratoAnalysis = SeratoAnalysisTagReader.analysis(forFileAt: item.source)
         let durationMs = item.export.durationSeconds * 1000
         // A track we can't draw a waveform for still gets its cues and beat grid.
@@ -260,25 +494,42 @@ public enum CDJSeratoExport {
             analysis: seratoAnalysis ?? SeratoTrackAnalysis(),
             peaks: waveform?.peaks ?? [])
 
-        let datURL = volume.appendingPathComponent(String(item.export.analyzePath.dropFirst()))
-        let extURL = datURL.deletingPathExtension().appendingPathExtension("EXT")
-        try FileManager.default.createDirectory(at: datURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try AtomicFileWriter.write(RekordboxAnalysisWriter.datFile(input), to: datURL)
-        try AtomicFileWriter.write(RekordboxAnalysisWriter.extFile(input), to: extURL)
+        let datRelative = String(item.export.analyzePath.dropFirst())
+        let extRelative = String(datRelative.dropLast(3)) + "EXT"
+        for (relative, data) in [
+            (datRelative, RekordboxAnalysisWriter.datFile(input)),
+            (extRelative, RekordboxAnalysisWriter.extFile(input))
+        ] {
+            let url = stage.appendingPathComponent(relative)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: url)
+            placements.append(relative)
+        }
         return seratoAnalysis?.isEmpty == false
-    }
-
-    /// Where a track's ANLZ files go: unique per track, in rekordbox's `Pxxx/xxxxxxxx` layout.
-    static func analyzePath(forTrackID id: UInt32) -> String {
-        String(format: "/PIONEER/USBANLZ/P%03X/%08X/ANLZ0000.DAT", Int(id >> 8) & 0xFFF, id)
     }
 
     // MARK: - Helpers
 
-    private static func alreadyOnStick(_ item: CDJExportPlan.Item, volume: URL) -> Bool {
-        let destination = volume.appendingPathComponent(String(item.export.stickPath.dropFirst()))
-        let size = (try? destination.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1
-        return size == item.export.fileSize
+    private static func writeStaged(_ data: Data, relative: String, in publication: CDJExportPublication) throws {
+        let url = publication.stagedURL(relative)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: url)
+    }
+
+    /// The stick files an export's removals delete: each audio file and its analysis pair.
+    private static func removalRelativePaths(_ removals: [CDJExportPlan.Removal]) -> Set<String> {
+        var paths = Set<String>()
+        for removal in removals {
+            paths.insert(String(removal.stickPath.dropFirst()))
+            let dat = String(removal.analyzePath.dropFirst())
+            paths.insert(dat)
+            paths.insert(String(dat.dropLast(3)) + "EXT")
+        }
+        return paths
+    }
+
+    private static func sameExtension(_ stickPath: String, _ track: Track) -> Bool {
+        (stickPath as NSString).pathExtension.lowercased() == track.fileURL.pathExtension.lowercased()
     }
 
     /// `/Contents/Artist/Album/File.ext`, made safe for FAT32 and unique within the export.
@@ -294,6 +545,14 @@ public enum CDJSeratoExport {
             counter += 1
         }
         return candidate
+    }
+
+    /// `/a/b/file.mp3` with `suffix` added to the file's name before its extension.
+    static func withSuffix(_ suffix: String, to path: String) -> String {
+        let url = URL(fileURLWithPath: path)
+        let stem = url.deletingPathExtension().lastPathComponent
+        let name = url.pathExtension.isEmpty ? stem + suffix : "\(stem)\(suffix).\(url.pathExtension)"
+        return url.deletingLastPathComponent().appendingPathComponent(name).path
     }
 
     static func sanitize(_ name: String, fallback: String) -> String {
