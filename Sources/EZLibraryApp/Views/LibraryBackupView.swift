@@ -18,7 +18,7 @@ struct LibraryBackupView: View {
 
     // Remembered across tab switches and launches; empty means "not chosen yet"
     // and falls back to the home folder.
-    @AppStorage("LibraryBackupDestinationPath") private var destinationPath = ""
+    @AppStorage(BackgroundBackupModel.destinationDefaultsKey) private var destinationPath = ""
     @AppStorage("LibraryBackupMode") private var selectedMode: LibraryBackupService.BackupMode = .full
     @State private var selectedCrateID: UUID?
     // Crate IDs are regenerated on every library load, so the choice is
@@ -104,6 +104,17 @@ struct LibraryBackupView: View {
             Text("Create a timestamped SeratoBackups folder at the destination you choose. Full backups copy the whole Serato library and all track files, incremental backups top up new tracks, and single-crate backups package one crate with its tracks.")
                 .font(.body)
                 .foregroundStyle(.secondary)
+
+            if let notice = backupJob.deviceNotice {
+                HStack(spacing: 8) {
+                    Image(systemName: "externaldrive.badge.checkmark")
+                    Text(notice).font(.callout)
+                    Spacer(minLength: 0)
+                    Button("Dismiss") { backupJob.dismissDeviceNotice() }
+                        .controlSize(.small)
+                }
+                .foregroundStyle(.secondary)
+            }
 
             if let successMessage {
                 SuccessBanner(message: successMessage) {

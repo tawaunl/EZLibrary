@@ -8,6 +8,7 @@
 // any later version. It is distributed WITHOUT ANY WARRANTY; see the GNU
 // General Public License (LICENSE) for more details.
 
+import AppKit
 import SwiftUI
 import EZLibraryCore
 
@@ -33,9 +34,34 @@ final class BackgroundBackupModel: ObservableObject {
         var rootDirectory: URL
     }
 
+    /// The key the Backup view's destination field is stored under. The model
+    /// writes it directly when a known drive appears, and the view's
+    /// `@AppStorage` picks the change up, so switching works even while the
+    /// Backup tab isn't open.
+    static let destinationDefaultsKey = "LibraryBackupDestinationPath"
+
     @Published private(set) var isRunning = false
+    /// Set when plugging in a known drive moved the destination; shown in the
+    /// Backup view until the user dismisses it or starts a backup.
+    @Published private(set) var deviceNotice: String?
     @Published private(set) var successMessage: String?
     @Published private(set) var errorMessage: String?
+
+    private let deviceMemory = BackupDeviceMemory()
+
+    /// The model lives for the whole app session, so the observer is never
+    /// removed; it holds `self` weakly.
+    init() {
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didMountNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            let mounted = notification.userInfo?[NSWorkspace.volumeURLUserInfoKey] as? URL
+            MainActor.assumeIsolated { self?.driveMounted(at: mounted) }
+        }
+        adoptMountedDeviceIfDestinationMissing()
+    }
 
     /// Starts a backup. Ignored while one is already running.
     func start(_ request: Request) {
@@ -43,6 +69,7 @@ final class BackgroundBackupModel: ObservableObject {
         isRunning = true
         successMessage = nil
         errorMessage = nil
+        deviceNotice = nil
 
         Task {
             do {
@@ -58,12 +85,49 @@ final class BackgroundBackupModel: ObservableObject {
                     )
                 }.value
                 let note = result.note.map { " \($0)" } ?? ""
+                if let volume = BackupDeviceMemory.externalVolume(containing: request.destinationFolderURL) {
+                    deviceMemory.record(destination: request.destinationFolderURL, on: volume)
+                }
                 successMessage = "Backup created at \(result.backupRootURL.path).\(note)"
             } catch {
                 errorMessage = error.localizedDescription
             }
             isRunning = false
         }
+    }
+
+    func dismissDeviceNotice() { deviceNotice = nil }
+
+    /// A drive was plugged in. If it has been used for backups before, point
+    /// the destination at it; otherwise leave the last-used destination alone.
+    /// Never moves the destination under a running backup.
+    private func driveMounted(at mountURL: URL?) {
+        guard !isRunning, let mountURL,
+              let volume = BackupDeviceMemory.externalVolume(containing: mountURL),
+              let destination = deviceMemory.destination(for: volume) else { return }
+        guard UserDefaults.standard.string(forKey: Self.destinationDefaultsKey) != destination.path else { return }
+        UserDefaults.standard.set(destination.path, forKey: Self.destinationDefaultsKey)
+        deviceNotice = "Switched the backup destination to \(volume.name), which you've backed up to before."
+    }
+
+    /// At launch the last-used drive may be unplugged while another known drive
+    /// is connected. Only acts when the saved destination is unreachable, so a
+    /// working choice is never overridden.
+    private func adoptMountedDeviceIfDestinationMissing() {
+        let saved = UserDefaults.standard.string(forKey: Self.destinationDefaultsKey) ?? ""
+        guard !saved.isEmpty, !FileManager.default.fileExists(atPath: saved) else { return }
+        let mounted = FileManager.default.mountedVolumeURLs(
+            includingResourceValuesForKeys: nil, options: [.skipHiddenVolumes]
+        ) ?? []
+        let candidates = mounted.compactMap { url -> (BackupDeviceMemory.Volume, Date)? in
+            guard let volume = BackupDeviceMemory.externalVolume(containing: url),
+                  let device = deviceMemory.device(forVolumeUUID: volume.uuid) else { return nil }
+            return (volume, device.lastUsed)
+        }
+        guard let best = candidates.max(by: { $0.1 < $1.1 })?.0,
+              let destination = deviceMemory.destination(for: best) else { return }
+        UserDefaults.standard.set(destination.path, forKey: Self.destinationDefaultsKey)
+        deviceNotice = "Switched the backup destination to \(best.name), which you've backed up to before."
     }
 
     /// Dismisses the last result, e.g. when the user reconfigures the backup.
