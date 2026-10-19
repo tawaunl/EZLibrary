@@ -9,6 +9,14 @@ version (`CFBundleShortVersionString.CFBundleVersion`) and are used verbatim by
 > the highest priority — see [SECURITY.md](../SECURITY.md). This changelog is kept
 > up to date so you can see exactly what changed and when.
 
+## 1.0.11
+
+### Serato reads the release year again
+- The release year was being saved in an ID3 frame (`TYER`) that doesn't belong
+  in the tag version EZLibrary writes, so Serato ignored it. It's now saved in
+  the correct frame (`TDRC`). Tracks you've already tagged pick up the fix the
+  next time they're saved.
+
 ## 1.0.10
 
 ### Backup remembers your settings and your drives

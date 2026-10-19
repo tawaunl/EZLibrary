@@ -164,4 +164,18 @@ struct SeratoTrackMetadataUpdateTests {
         #expect(title == "Dump Truck")
         #expect(artist == "E-40 & Too $hort")
     }
+
+    @Test func writesYearAsTDRCNotTYERInV24Tag() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("year-\(UUID().uuidString).mp3")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try Data(repeating: 0xFF, count: 64).write(to: url)
+
+        try SeratoTrackMetadataEditor.writeID3Tags(fileURL: url, metadata: padded())
+
+        let bytes = try Data(contentsOf: url)
+        #expect(bytes[3] == 0x04)
+        #expect(bytes.range(of: Data("TDRC".utf8)) != nil)
+        #expect(bytes.range(of: Data("TYER".utf8)) == nil)
+    }
 }

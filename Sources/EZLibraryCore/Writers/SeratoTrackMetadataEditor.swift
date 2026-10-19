@@ -443,7 +443,9 @@ public enum SeratoTrackMetadataEditor {
         frames.append(makeTextFrame(id: "TCON", value: metadata.genre))
         frames.append(makeTextFrame(id: "TKEY", value: metadata.key))
         frames.append(makeTextFrame(id: "TBPM", value: metadata.bpm.map { String(format: "%.0f", $0) } ?? ""))
-        frames.append(makeTextFrame(id: "TYER", value: metadata.year.map(String.init) ?? ""))
+        // v2.4 replaced TYER with TDRC; a TYER frame in a v2.4 tag is invalid and
+        // strict readers ignore it.
+        frames.append(makeTextFrame(id: "TDRC", value: metadata.year.map(String.init) ?? ""))
         frames.append(makeCommentFrame(value: metadata.comment))
 
         return frames
