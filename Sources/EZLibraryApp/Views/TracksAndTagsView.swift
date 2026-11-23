@@ -106,6 +106,9 @@ struct TracksAndTagsView: View {
     @State private var showTopHitConfirmation = false
     @State private var pendingWhitespaceFindings: [TagWhitespaceCleanupService.Finding] = []
     @State private var showWhitespaceCleanupConfirmation = false
+    @State private var pendingYearRepairURLs: [URL] = []
+    @State private var showYearRepairConfirmation = false
+    @State private var isScanningYearTags = false
     @State private var showOnlyFillEmptyPrompt = false
     @State private var showAITagVerification = false
     /// Owned at the app level (environment) so a verification keeps running when
@@ -271,6 +274,23 @@ struct TracksAndTagsView: View {
                 "Title, Artist, Album, Genre, and Year will be updated on "
                 + "\(pendingTopHitUpdates.count) track\(pendingTopHitUpdates.count == 1 ? "" : "s"). "
                 + "Version wording such as \u{201C}(Extended Mix)\u{201D} is preserved.")
+        }
+        .confirmationDialog(
+            "Repair Year Tags",
+            isPresented: $showYearRepairConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Repair \(pendingYearRepairURLs.count) File\(pendingYearRepairURLs.count == 1 ? "" : "s")") {
+                applyYearTagRepair()
+            }
+            Button("Cancel", role: .cancel) {
+                pendingYearRepairURLs = []
+            }
+        } message: {
+            Text(
+                "\(pendingYearRepairURLs.count) MP3 file\(pendingYearRepairURLs.count == 1 ? "" : "s") "
+                + "saved the release year in a way Serato can't read. Only that one tag label is "
+                + "corrected, in place; the audio, other tags, cover art, and cues aren't touched.")
         }
         .confirmationDialog(
             "Clean Tag Whitespace",
@@ -677,6 +697,14 @@ struct TracksAndTagsView: View {
 
                 Divider()
                     .frame(height: 16)
+
+                Button(isScanningYearTags ? "Scanning…" : "Repair Year Tags") {
+                    prepareYearTagRepair()
+                }
+                .disabled(scopeTracks.isEmpty || isBulkLookupRunning || isScanningYearTags)
+                .help(
+                    "Find MP3s in \(selectedScopeTitle) tagged by an older EZLibrary whose year "
+                    + "Serato can't read, and fix them in place. Shows the count first.")
 
                 // Scoped, not selection-based: this is a sweep, and the point
                 // is to find padding you can't see well enough to select.
@@ -1364,6 +1392,43 @@ struct TracksAndTagsView: View {
         }
     }
 
+
+    // MARK: - Year tag repair
+
+    private func prepareYearTagRepair() {
+        operationErrorMessage = nil
+        let urls = scopeTracks.map(\.fileURL)
+        isScanningYearTags = true
+        Task {
+            let needing = await Task.detached {
+                urls.filter { ID3YearTagRepair.needsRepair(fileURL: $0) }
+            }.value
+            isScanningYearTags = false
+            guard !needing.isEmpty else {
+                bulkLookupMessage = "No year tags to repair in \(selectedScopeTitle)."
+                return
+            }
+            pendingYearRepairURLs = needing
+            showYearRepairConfirmation = true
+        }
+    }
+
+    private func applyYearTagRepair() {
+        let urls = pendingYearRepairURLs
+        pendingYearRepairURLs = []
+        bulkLookupMessage = nil
+        isScanningYearTags = true
+        Task {
+            let result = await Task.detached { ID3YearTagRepair.repair(fileURLs: urls) }.value
+            isScanningYearTags = false
+            if let first = result.failures.first {
+                operationErrorMessage = "Repaired \(result.repaired), but \(result.failures.count) failed. "
+                    + first.1.localizedDescription
+            } else {
+                bulkLookupMessage = "Repaired the year tag on \(result.repaired) file\(result.repaired == 1 ? "" : "s")."
+            }
+        }
+    }
 
     // MARK: - Tag whitespace cleanup
 
